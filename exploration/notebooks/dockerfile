@@ -1,0 +1,41 @@
+# Dockerfile for Jupyter Notebook in Cursor
+
+# Use the official Python 3.12 image as the base image
+FROM python:3.12
+
+# Install the required system packages
+RUN apt-get update
+RUN apt-get install -y ffmpeg git cmake libdbus-1-dev libgirepository1.0-dev gfortran libopenblas-dev
+RUN apt-get clean
+
+# Install pip dependencies
+RUN pip install --upgrade pip
+RUN pip install --upgrade yt-dlp cython Cython
+RUN pip install git+https://github.com/CPJKU/madmom
+
+# Create a working directory
+WORKDIR /app
+
+# Install the Python packages from the requirements.txt file
+COPY requirements.txt /app/requirements.txt
+RUN pip install -r requirements.txt
+
+# Install Jupyter Notebook, ipykernel
+# --no-cache-dir is recommended to reduce image size
+RUN pip install --no-cache-dir jupyter notebook ipykernel
+
+# [Optional but Highly Recommended for Cursor Users]
+# Install cursor-lsp for better Python Language Server Protocol support in Cursor within Docker
+# This improves code completion, go-to-definition, etc.
+# RUN pip install --no-cache-dir cursor-lsp
+
+# Expose the port Jupyter Notebook runs on
+EXPOSE 8888
+
+# Command to run when the container starts
+# --ip=0.0.0.0 allows access from outside the container
+# --port=8888 specifies the port
+# --allow-root is sometimes necessary in Docker containers
+# --no-browser prevents Jupyter from trying to open a browser in the container
+CMD ["jupyter", "notebook", "--ip=0.0.0.0", "--port=8888", "--allow-root", "--no-browser"]
+

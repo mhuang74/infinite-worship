@@ -172,3 +172,10 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Ignore 3rd-party projects for reference
+REFERENCE/
+
+# Audio files
+*.mp3
+*.wav
