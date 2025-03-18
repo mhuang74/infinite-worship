@@ -179,4 +179,5 @@ REFERENCE/
 # Audio files
 *.mp3
 *.wav
+*.ogg
 **/uploads/
