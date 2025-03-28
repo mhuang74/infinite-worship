@@ -88,7 +88,7 @@ export default function Home() {
   };
 
   // Update current segment based on playback time
-  const handleTimeUpdate = (currentTime: number) => {
+  const handleTimeUpdate = (currentTime: number, beatsUntilJump: number) => {
     if (!songData) return;
     
     // Find the current segment based on time
@@ -106,8 +106,6 @@ export default function Home() {
     // Calculate beats until jump (for demo purposes)
     const segment = songData.segments[currentSegmentIndex];
     const nextSegmentIndex = segment.next;
-    const segmentProgress = (currentTime - (accumulatedTime - segment.duration)) / segment.duration;
-    const beatsUntilJump = Math.max(0, Math.floor((1 - segmentProgress) * 4));
     
     setPlaybackState({
       currentSegment: currentSegmentIndex,

@@ -31,6 +31,12 @@ export default function PlaybackProgress({
     }
   }, [progressPercentage]);
 
+
+  useEffect(() => {
+    console.log('beatsUntilJump updated:', beatsUntilJump);
+  }, [beatsUntilJump]);
+
+
   return (
     <div className="w-full bg-white rounded-lg shadow-md p-6 mb-8">
       <h3 className="text-lg font-medium text-gray-800 mb-4">

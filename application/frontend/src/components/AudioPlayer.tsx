@@ -4,12 +4,19 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 import { Segment } from '@/types';
 
+// Extended AudioBufferSourceNode interface with our custom properties
+interface ExtendedAudioBufferSourceNode extends AudioBufferSourceNode {
+  startTime?: number;
+  endTime?: number;
+  segmentIndex?: number;
+}
+
 interface AudioPlayerProps {
   audioFile: File | null;
   currentSegment: number;
   nextSegment: number;
   segments?: Segment[];
-  onTimeUpdate: (currentTime: number) => void;
+  onTimeUpdate: (currentTime: number, beatsUntilJump: number) => void;
   onSegmentChange?: (segmentIndex: number) => void;
 }
 
@@ -27,7 +34,7 @@ export default function AudioPlayer({
   const audioUrlRef = useRef<string | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioBufferRef = useRef<AudioBuffer | null>(null);
-  const sourceNodesRef = useRef<AudioBufferSourceNode[]>([]);
+  const sourceNodesRef = useRef<ExtendedAudioBufferSourceNode[]>([]);
   const gainNodeRef = useRef<GainNode | null>(null);
   const scheduledEndTimeRef = useRef<number>(0);
   const currentTimeRef = useRef<number>(0);
@@ -41,16 +48,29 @@ export default function AudioPlayer({
   const [useNativeAudio, setUseNativeAudio] = useState(false);
   const [useWebAudioAPI, setUseWebAudioAPI] = useState(true);
   const [audioDecoded, setAudioDecoded] = useState(false);
-  const [bufferAhead, setBufferAhead] = useState(3); // Number of segments to buffer ahead
+  const [bufferAhead, setBufferAhead] = useState(15); // Number of segments to buffer ahead
   const currentPlayingSegmentRef = useRef<number>(0);
   const lastReportedSegmentRef = useRef<number>(0);
   const [infiniteMode, setInfiniteMode] = useState(true);
+  const [jumpLikelihood, setJumpLikelihood] = useState(20); // Default 20% likelihood to jump
   const [displayedCurrentSegment, setDisplayedCurrentSegment] = useState(currentSegment);
   const [displayedNextSegment, setDisplayedNextSegment] = useState(nextSegment);
+  const [nextJumpTarget, setNextJumpTarget] = useState(nextSegment);
+  const [beatsUntilJump, setBeatsUntilJump] = useState(4);
+  const lastAudioFileRef = useRef<File | null>(null);
+  // Add a debounce ref to prevent multiple rapid reinitializations
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const initializingRef = useRef<boolean>(false);
 
   // Create audio URL from file
   useEffect(() => {
-    if (audioFile) {
+    // Only create a new URL if the audioFile changes or we don't have a URL yet
+    if (audioFile && (!audioUrlRef.current || audioFile !== lastAudioFileRef.current)) {
+      // Save the current audioFile reference to compare in the future
+      lastAudioFileRef.current = audioFile;
+      
+      console.log('Creating new audio URL for file:', audioFile.name);
+      
       // Revoke previous URL if it exists
       if (audioUrlRef.current) {
         URL.revokeObjectURL(audioUrlRef.current);
@@ -66,7 +86,7 @@ export default function AudioPlayer({
       setWavesurferReady(false);
       setAudioDecoded(false);
       
-      // Set native audio source
+      // Set native audio source - always initialize as a fallback
       if (audioRef.current) {
         audioRef.current.src = url;
         audioRef.current.load();
@@ -76,34 +96,70 @@ export default function AudioPlayer({
       if (useWebAudioAPI) {
         initializeWebAudio(url);
       }
-      
-      return () => {
-        if (audioUrlRef.current) {
-          URL.revokeObjectURL(audioUrlRef.current);
-          audioUrlRef.current = null;
-        }
+    }
+    
+    // Cleanup function
+    return () => {
+      // Only revoke the URL when the component unmounts or audioFile changes
+      if (audioUrlRef.current && audioFile !== lastAudioFileRef.current) {
+        console.log('Revoking audio URL');
+        URL.revokeObjectURL(audioUrlRef.current);
+        audioUrlRef.current = null;
         
         // Clean up audio nodes
         cleanupAudioNodes();
-      };
-    }
-  }, [audioFile]);
+      }
+    };
+  }, [audioFile, useWebAudioAPI]);
 
   // Initialize Web Audio API
   const initializeWebAudio = useCallback((url: string) => {
+    // Skip if already decoded for this file
+    if (audioDecoded && audioBufferRef.current) {
+      console.log('Audio already decoded, skipping initialization');
+      return;
+    }
+
     try {
       // Create audio context if it doesn't exist
       if (!audioContextRef.current) {
-        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-        gainNodeRef.current = audioContextRef.current.createGain();
-        gainNodeRef.current.connect(audioContextRef.current.destination);
-        gainNodeRef.current.gain.value = volume / 100;
+        // Use a try-catch for creating the AudioContext
+        try {
+          console.log('Creating new AudioContext');
+          audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+          gainNodeRef.current = audioContextRef.current.createGain();
+          gainNodeRef.current.connect(audioContextRef.current.destination);
+          gainNodeRef.current.gain.value = volume / 100;
+        } catch (error) {
+          console.error('Failed to create AudioContext:', error);
+          setUseWebAudioAPI(false);
+          setUseNativeAudio(true);
+          return;
+        }
       }
       
+      console.log('Fetching and decoding audio data');
+      
+      // Add a timeout to the fetch operation to prevent hanging requests
+      const controller = new AbortController();
+      const signal = controller.signal;
+      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+      
       // Fetch and decode audio data
-      fetch(url)
-        .then(response => response.arrayBuffer())
-        .then(arrayBuffer => audioContextRef.current!.decodeAudioData(arrayBuffer))
+      fetch(url, { signal })
+        .then(response => {
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+          clearTimeout(timeoutId);
+          return response.arrayBuffer();
+        })
+        .then(arrayBuffer => {
+          if (!audioContextRef.current) {
+            throw new Error('AudioContext not available');
+          }
+          return audioContextRef.current.decodeAudioData(arrayBuffer);
+        })
         .then(audioBuffer => {
           audioBufferRef.current = audioBuffer;
           setDuration(audioBuffer.duration);
@@ -111,7 +167,8 @@ export default function AudioPlayer({
           console.log('Audio decoded successfully, duration:', audioBuffer.duration);
         })
         .catch(error => {
-          console.error('Error decoding audio data:', error);
+          clearTimeout(timeoutId);
+          console.error('Error fetching or decoding audio data:', error);
           setUseWebAudioAPI(false);
           setUseNativeAudio(true);
         });
@@ -120,10 +177,16 @@ export default function AudioPlayer({
       setUseWebAudioAPI(false);
       setUseNativeAudio(true);
     }
-  }, [volume]);
+  }, [volume, audioDecoded]);
 
   // Clean up audio nodes
   const cleanupAudioNodes = useCallback(() => {
+
+    console.debug('>>>>> Cleaning up audio nodes');
+    console.debug('Current source nodes:', sourceNodesRef.current);
+    console.debug('Current scheduled segments:', scheduledSegmentsRef.current);
+    console.debug('Current playing segment:', currentPlayingSegmentRef.current);
+
     // Stop and disconnect all source nodes
     sourceNodesRef.current.forEach(node => {
       try {
@@ -142,87 +205,206 @@ export default function AudioPlayer({
     currentPlayingSegmentRef.current = currentSegment;
   }, [currentSegment]);
 
+  // Add a function to stop specific audio nodes
+  const stopAudioNodesBeforeTime = useCallback((time: number) => {
+    if (sourceNodesRef.current.length === 0) return;
+
+    // Find nodes that started before the given time and stop them
+    const indexesToRemove: number[] = [];
+    
+    const startTime = performance.now();
+    sourceNodesRef.current.forEach((node, index) => {
+      if (node.endTime && node.endTime < time) {
+        try {
+          node.stop();
+          node.disconnect();
+          indexesToRemove.push(index);
+        } catch (e) {
+          // Ignore errors if node is already stopped
+        }
+      }
+    });
+    
+    // Remove stopped nodes from the array (in reverse order to maintain correct indices)
+    for (let i = indexesToRemove.length - 1; i >= 0; i--) {
+      sourceNodesRef.current.splice(indexesToRemove[i], 1);
+      scheduledSegmentsRef.current.splice(indexesToRemove[i], 1); // Also remove from scheduledSegmentsRef
+    }
+    
+    if (indexesToRemove.length > 0) {
+      console.log(`Stopped and removed ${indexesToRemove.length} audio nodes that started before ${time.toFixed(2)}`);
+    }
+
+    const endTime = performance.now();
+    console.log(`stopAudioNodesBeforeTime Execution time: ${(endTime - startTime).toFixed(2)} milliseconds`);
+
+  }, []);
+
   // Initialize WaveSurfer
   useEffect(() => {
-    if (waveformRef.current && audioFile) {
-      // Destroy previous instance if it exists
-      if (wavesurferRef.current) {
-        wavesurferRef.current.destroy();
+    let wavesurfer: WaveSurfer | null = null;
+    let isComponentMounted = true;
+    
+    // Define a function to handle the initialization
+    const initializeWaveSurfer = () => {
+      // Prevent multiple simultaneous initializations
+      if (initializingRef.current) {
+        console.log('WaveSurfer initialization already in progress, skipping');
+        return;
       }
-
-      try {
-        console.log('Initializing WaveSurfer with audio file:', audioFile);
+      
+      initializingRef.current = true;
+      
+      // Add a check to prevent reinitializing if already created with the same file
+      if (waveformRef.current && audioFile && !wavesurferReady) {
+        // Store a reference to the current file to avoid recreating for the same file
+        const fileUrl = audioUrlRef.current;
         
-        // Create new WaveSurfer instance
-        const wavesurfer = WaveSurfer.create({
-          container: waveformRef.current,
-          waveColor: '#4F46E5',
-          progressColor: '#818CF8',
-          cursorColor: '#4F46E5',
-          barWidth: 2,
-          barRadius: 3,
-          cursorWidth: 1,
-          height: 80,
-          barGap: 2,
-          normalize: true,
-          backend: 'WebAudio'
-        });
-
-        // Load audio file
-        if (audioUrlRef.current) {
-          console.log('Loading audio from URL:', audioUrlRef.current);
-          wavesurfer.load(audioUrlRef.current);
-        } else {
-          console.log('Loading audio from Blob');
-          wavesurfer.loadBlob(audioFile);
+        // Destroy previous instance if it exists
+        if (wavesurferRef.current) {
+          console.log('Destroying previous WaveSurfer instance');
+          wavesurferRef.current.destroy();
+          wavesurferRef.current = null;
         }
 
-        // Set up event listeners
-        wavesurfer.on('ready', () => {
-          console.log('WaveSurfer is ready');
-          wavesurferRef.current = wavesurfer;
-          setDuration(wavesurfer.getDuration());
-          wavesurfer.setVolume(volume / 100);
-          setWavesurferReady(true);
-        });
+        try {
+          console.log('Initializing WaveSurfer with audio file:', audioFile);
+          
+          // Create new WaveSurfer instance
+          wavesurfer = WaveSurfer.create({
+            container: waveformRef.current,
+            waveColor: '#4F46E5',
+            progressColor: '#818CF8',
+            cursorColor: '#4F46E5',
+            barWidth: 2,
+            barRadius: 3,
+            cursorWidth: 1,
+            height: 80,
+            barGap: 2,
+            normalize: true,
+            backend: 'WebAudio'
+          });
 
-        wavesurfer.on('audioprocess', () => {
-          const time = wavesurfer.getCurrentTime();
-          setCurrentTime(time);
-          currentTimeRef.current = time;
-          onTimeUpdate(time);
-        });
+          // Load audio file
+          if (fileUrl) {
+            console.log('Loading audio from URL:', fileUrl);
+            
+            // Add loading check to prevent AbortError
+            const loadPromise = wavesurfer.load(fileUrl);
+            loadPromise.catch(err => {
+              // Only handle the error if the component is still mounted
+              if (isComponentMounted) {
+                console.error('WaveSurfer error:', err);
+                setUseNativeAudio(true);
+                initializingRef.current = false;
+              }
+            });
+          } else {
+            console.log('Loading audio from Blob');
+            
+            // Add loading check to prevent AbortError
+            const loadPromise = wavesurfer.loadBlob(audioFile);
+            loadPromise.catch(err => {
+              // Only handle the error if the component is still mounted
+              if (isComponentMounted) {
+                console.error('WaveSurfer error:', err);
+                setUseNativeAudio(true);
+                initializingRef.current = false;
+              }
+            });
+          }
 
-        wavesurfer.on('play', () => {
-          console.log('WaveSurfer play event');
-          setIsPlaying(true);
-        });
-        
-        wavesurfer.on('pause', () => {
-          console.log('WaveSurfer pause event');
-          setIsPlaying(false);
-        });
-        
-        wavesurfer.on('finish', () => {
-          console.log('WaveSurfer finish event');
-          setIsPlaying(false);
-        });
+          // Set up event listeners
+          wavesurfer.on('ready', () => {
+            if (isComponentMounted) {
+              console.log('WaveSurfer is ready');
+              wavesurferRef.current = wavesurfer;
+              if (wavesurfer) {
+                setDuration(wavesurfer.getDuration());
+                wavesurfer.setVolume(volume / 100);
+              }
+              setWavesurferReady(true);
+              initializingRef.current = false;
+            }
+          });
 
-        wavesurfer.on('error', (err) => {
-          console.error('WaveSurfer error:', err);
-          setUseNativeAudio(true);
-        });
+          wavesurfer.on('audioprocess', () => {
+            if (isComponentMounted && wavesurfer) {
+              const time = wavesurfer.getCurrentTime();
+              setCurrentTime(time);
+              currentTimeRef.current = time;
+              onTimeUpdate(time, beatsUntilJump);
+            }
+          });
 
-        // Clean up on unmount
-        return () => {
-          wavesurfer.destroy();
-        };
-      } catch (error) {
-        console.error('Error initializing WaveSurfer:', error);
-        setUseNativeAudio(true);
+          wavesurfer.on('play', () => {
+            if (isComponentMounted) {
+              console.log('WaveSurfer play event');
+              setIsPlaying(true);
+            }
+          });
+          
+          wavesurfer.on('pause', () => {
+            if (isComponentMounted) {
+              console.log('WaveSurfer pause event');
+              setIsPlaying(false);
+            }
+          });
+          
+          wavesurfer.on('finish', () => {
+            if (isComponentMounted) {
+              console.log('WaveSurfer finish event');
+              setIsPlaying(false);
+            }
+          });
+
+          wavesurfer.on('error', (err) => {
+            if (isComponentMounted) {
+              console.error('WaveSurfer error:', err);
+              setUseNativeAudio(true);
+              initializingRef.current = false;
+            }
+          });
+        } catch (error) {
+          if (isComponentMounted) {
+            console.error('Error initializing WaveSurfer:', error);
+            setUseNativeAudio(true);
+            initializingRef.current = false;
+          }
+        }
+      } else {
+        initializingRef.current = false;
       }
+    };
+    
+    // Clear any existing timer
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
     }
-  }, [audioFile, onTimeUpdate]);
+    
+    // Debounce the initialization to prevent rapid repeated calls
+    debounceTimerRef.current = setTimeout(() => {
+      initializeWaveSurfer();
+    }, 300); // 300ms debounce
+
+    // Clean up on unmount or when dependencies change
+    return () => {
+      isComponentMounted = false;
+      
+      // Clear debounce timer
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+      
+      if (wavesurfer) {
+        try {
+          wavesurfer.destroy();
+        } catch (e) {
+          console.log('Error during wavesurfer cleanup:', e);
+        }
+      }
+    };
+  }, [audioFile, onTimeUpdate, volume, wavesurferReady, beatsUntilJump]);
 
   // Update volume when it changes
   useEffect(() => {
@@ -245,7 +427,7 @@ export default function AudioPlayer({
         const time = audioElement.currentTime;
         setCurrentTime(time);
         currentTimeRef.current = time;
-        onTimeUpdate(time);
+        onTimeUpdate(time, beatsUntilJump);
       };
       
       const handleDurationChange = () => {
@@ -278,22 +460,42 @@ export default function AudioPlayer({
         audioElement.removeEventListener('ended', handleEnded);
       };
     }
-  }, [onTimeUpdate]);
+  }, [onTimeUpdate, beatsUntilJump]);
 
-  // Update displayed segments
+  // Update displayed segments and next jump target
   useEffect(() => {
-    if (infiniteMode) {
-      // In infinite mode, we display the currently playing segment from our internal tracking
+    if (infiniteMode && segments.length > 0 && currentPlayingSegmentRef.current < segments.length) {
+      const currentSegment = segments[currentPlayingSegmentRef.current];
       setDisplayedCurrentSegment(currentPlayingSegmentRef.current);
-      if (segments.length > 0 && currentPlayingSegmentRef.current < segments.length) {
-        setDisplayedNextSegment(segments[currentPlayingSegmentRef.current].next);
+      
+      // Calculate next jump target based on jump likelihood and available candidates
+      if (currentSegment.jump_candidates && currentSegment.jump_candidates.length > 0 && Math.random() * 100 < jumpLikelihood) {
+        // Pick a random jump candidate
+        const jumpCandidateIndex = Math.floor(Math.random() * currentSegment.jump_candidates.length);
+        const jumpTarget = currentSegment.jump_candidates[jumpCandidateIndex];
+        setNextJumpTarget(jumpTarget);
+      } else {
+        // Use sequential next segment if not jumping
+        setNextJumpTarget(currentSegment.next);
       }
     } else {
-      // In normal mode, we use the segments from props
+      // In normal mode, use the segments from props
       setDisplayedCurrentSegment(currentSegment);
-      setDisplayedNextSegment(nextSegment);
+      setNextJumpTarget(nextSegment);
     }
-  }, [currentSegment, nextSegment, infiniteMode, segments, currentPlayingSegmentRef.current]);
+  }, [currentSegment, nextSegment, infiniteMode, segments, currentPlayingSegmentRef.current, jumpLikelihood]);
+
+  // Update beats until jump
+  useEffect(() => {
+    if (segments.length > 0 && currentPlayingSegmentRef.current < segments.length) {
+      const currentSegment = segments[currentPlayingSegmentRef.current];
+      const segmentDuration = currentSegment.duration;
+      const segmentStart = currentSegment.start;
+      const segmentProgress = (currentTimeRef.current - segmentStart) / segmentDuration;
+      const beatsUntilJump = Math.max(0, Math.floor((1 - segmentProgress) * 4));
+      setBeatsUntilJump(beatsUntilJump);
+    }
+  }, [currentTimeRef.current, segments]);
 
   // Report current segment to parent component
   useEffect(() => {
@@ -302,7 +504,7 @@ export default function AudioPlayer({
         // Only report if the segment has changed
         if (currentPlayingSegmentRef.current !== lastReportedSegmentRef.current) {
           lastReportedSegmentRef.current = currentPlayingSegmentRef.current;
-          onTimeUpdate(currentTimeRef.current);
+          onTimeUpdate(currentTimeRef.current, beatsUntilJump);
           // Notify parent component about segment change
           if (onSegmentChange) {
             onSegmentChange(currentPlayingSegmentRef.current);
@@ -312,7 +514,7 @@ export default function AudioPlayer({
       
       return () => clearInterval(reportInterval);
     }
-  }, [infiniteMode, isPlaying, segments.length, onTimeUpdate, onSegmentChange]);
+  }, [infiniteMode, isPlaying, segments.length, onTimeUpdate, onSegmentChange, beatsUntilJump]);
 
   // Schedule audio segments for playback
   const scheduleSegments = useCallback(() => {
@@ -323,13 +525,10 @@ export default function AudioPlayer({
     const context = audioContextRef.current;
     const buffer = audioBufferRef.current;
     const currentTime = context.currentTime;
-    
-    // If we have already scheduled enough audio, don't schedule more yet
-    if (scheduledEndTimeRef.current > currentTime + 1.0 && scheduledSegmentsRef.current.length >= bufferAhead) {
-      return;
-    }
-    
-    // Start scheduling from the current scheduled end time or current time
+      
+    // Calculate how far ahead we've scheduled in seconds
+    const scheduledAheadTime = scheduledEndTimeRef.current - currentTime;
+        // Start scheduling from the current scheduled end time or current time
     const startTime = Math.max(currentTime, scheduledEndTimeRef.current);
     let scheduleTime = startTime;
     
@@ -347,13 +546,15 @@ export default function AudioPlayer({
       currentPlayingSegmentRef.current = currentSegment;
     }
     
-    // Calculate how many more segments we need to schedule
-    const segmentsToSchedule = Math.max(0, bufferAhead - scheduledSegmentsRef.current.length);
+    // Calculate how many more segments we need to schedule - limit by buffer length
+    let segmentsToSchedule = Math.max(0, bufferAhead - scheduledSegmentsRef.current.length);
     
-    console.log(`Scheduling ${segmentsToSchedule} more segments, starting with segment ${nextSegmentToSchedule}`);
+    console.log(`Scheduling up to ${segmentsToSchedule} more segments, starting with segment ${nextSegmentToSchedule}. Currently have ${scheduledSegmentsRef.current.length} segments in queue`);
     
     // Schedule multiple segments ahead
     for (let i = 0; i < segmentsToSchedule; i++) {
+      // Check if we've reached the time horizon limit
+      
       if (nextSegmentToSchedule >= segments.length) {
         // We've reached the end of the song, loop back to the beginning
         nextSegmentToSchedule = 0;
@@ -365,15 +566,21 @@ export default function AudioPlayer({
         break;
       }
       
-      const sourceNode = context.createBufferSource();
+      // Create source node with our extended type
+      const sourceNode = context.createBufferSource() as ExtendedAudioBufferSourceNode;
       sourceNode.buffer = buffer;
       sourceNode.connect(gainNodeRef.current!);
+      
+      // Store the start time directly on the node for easier cleanup
+      sourceNode.startTime = scheduleTime;
+      sourceNode.endTime = scheduleTime + segment.duration;
+      sourceNode.segmentIndex = nextSegmentToSchedule;
       
       // Calculate segment start and duration
       const segmentStart = segment.start;
       const segmentDuration = segment.duration;
       
-      // Schedule this segment
+      // Make sure we schedule with proper stop time to avoid overlaps
       sourceNode.start(scheduleTime, segmentStart, segmentDuration);
       
       // Create an event to update the current playing segment
@@ -382,6 +589,8 @@ export default function AudioPlayer({
       // Schedule a timeout to update the current playing segment
       const timeUntilSegmentStarts = (scheduleTime - context.currentTime) * 1000;
       setTimeout(() => {
+        if (!isPlaying) return; // Skip update if we're not playing anymore
+        
         currentPlayingSegmentRef.current = segmentIndex;
         // Force a re-render to update the displayed segment
         setDisplayedCurrentSegment(segmentIndex);
@@ -390,7 +599,7 @@ export default function AudioPlayer({
         }
       }, timeUntilSegmentStarts);
       
-      console.log(`Scheduled segment ${nextSegmentToSchedule} at time ${scheduleTime.toFixed(2)}, duration: ${segmentDuration.toFixed(2)}, starts at: ${segmentStart.toFixed(2)}`);
+      console.log(`Scheduled segment ${nextSegmentToSchedule} at time ${scheduleTime.toFixed(2)}, duration: ${segmentDuration.toFixed(2)}, starts at song location: ${segmentStart.toFixed(2)}, horizon: ${(scheduleTime - currentTime).toFixed(2)}s ahead`);
       
       // Keep track of the scheduled end time
       scheduleTime += segmentDuration;
@@ -402,28 +611,31 @@ export default function AudioPlayer({
       // Add this segment to our scheduled segments list
       scheduledSegmentsRef.current.push(nextSegmentToSchedule);
       
-      // Move to the next segment - for infinite remix, follow the "next" property
-      nextSegmentToSchedule = infiniteMode ? segment.next : (nextSegmentToSchedule + 1) % segments.length;
-    }
-    
-    // Schedule the next check
-    nextScheduleTimeRef.current = startTime + 0.25; // Check again in 250ms
-  }, [isPlaying, useWebAudioAPI, audioDecoded, bufferAhead, segments, currentSegment, infiniteMode]);
-
-  // Reset scheduled segments when currentSegment changes from parent
-  useEffect(() => {
-    if (!infiniteMode && useWebAudioAPI && audioDecoded) {
-      // Only reset if we're not in infinite mode
-      cleanupAudioNodes();
-      
-      // If playing, schedule new segments starting from the current segment
-      if (isPlaying) {
-        scheduleSegments();
+      // Move to the next segment 
+      if (infiniteMode) {
+        // Use jump likelihood to decide whether to use the defined next segment or pick a jump candidate
+        if (Math.random() * 100 < jumpLikelihood && segment.jump_candidates && segment.jump_candidates.length > 0) {
+          // Pick a random jump candidate
+          const jumpCandidateIndex = Math.floor(Math.random() * segment.jump_candidates.length);
+          const jumpTarget = segment.jump_candidates[jumpCandidateIndex];
+          console.log(`Jumped to similar segment ${jumpTarget} instead of ${segment.next} (${jumpLikelihood}% likelihood)`);
+          nextSegmentToSchedule = jumpTarget;
+        } else {
+          // Follow the predefined next segment
+          nextSegmentToSchedule = segment.next;
+        }
+      } else {
+        // Sequential mode
+        nextSegmentToSchedule = (nextSegmentToSchedule + 1) % segments.length;
       }
     }
-  }, [currentSegment, isPlaying, useWebAudioAPI, audioDecoded, cleanupAudioNodes, scheduleSegments, infiniteMode]);
+    
+    // Schedule the next check - make it more responsive when we have few segments scheduled
+    const nextCheckDelay = scheduledSegmentsRef.current.length < bufferAhead / 2 ? 0.1 : 0.5;
+    nextScheduleTimeRef.current = startTime + nextCheckDelay;
+  }, [isPlaying, useWebAudioAPI, audioDecoded, bufferAhead, segments, currentSegment, infiniteMode, jumpLikelihood, stopAudioNodesBeforeTime]);
 
-  // Periodically check if we need to schedule more audio
+  // Periodically check if we need to schedule more audio 
   useEffect(() => {
     if (!isPlaying || !useWebAudioAPI || !audioDecoded) {
       return;
@@ -434,15 +646,59 @@ export default function AudioPlayer({
     
     // Set up interval to check if we need to schedule more segments
     const intervalId = setInterval(() => {
-      if (audioContextRef.current && audioContextRef.current.currentTime >= nextScheduleTimeRef.current) {
-        scheduleSegments();
+      if (audioContextRef.current) {
+
+        const currentTime = audioContextRef.current.currentTime;
+        console.debug('Calling stopAudioNodesBeforeTime with currentTime:', currentTime);
+        // Stop any nodes that should be finished by now
+        stopAudioNodesBeforeTime(currentTime);
+       
+        // Calculate time ahead
+        const timeAhead = scheduledEndTimeRef.current - currentTime;
+        const remainingSegments = scheduledSegmentsRef.current.length;
+        
+        // Check if we need to schedule more segments based on time and count
+        const needMoreSegments = 
+          remainingSegments < bufferAhead / 2 || // Below half capacity
+          timeAhead < 3.0 || // Less than 3 seconds ahead
+          audioContextRef.current.currentTime >= nextScheduleTimeRef.current; // Reached scheduled check time
+          
+        if (needMoreSegments) {
+
+          console.debug('More segments need to be scheduled:', {
+            timeAhead: scheduledEndTimeRef.current - currentTime,
+            remainingSegments: scheduledSegmentsRef.current.length,
+            bufferAhead,
+            nextScheduleTime: nextScheduleTimeRef.current,
+            currentTime: audioContextRef.current.currentTime,
+            needMoreSegments
+          });
+
+          scheduleSegments();
+        }
       }
-    }, 100); // Check every 100ms
+    }, 250); 
     
     return () => {
       clearInterval(intervalId);
     };
-  }, [isPlaying, useWebAudioAPI, audioDecoded, scheduleSegments]);
+  }, [isPlaying, useWebAudioAPI, audioDecoded, scheduleSegments, segments, bufferAhead, stopAudioNodesBeforeTime]);
+  
+  // Reset scheduled segments when currentSegment changes from parent
+  useEffect(() => {
+    if (!infiniteMode && useWebAudioAPI && audioDecoded) {
+
+      console.debug('Resetting scheduled segments due to currentSegment change:', { currentSegment, isPlaying, useWebAudioAPI, audioDecoded });
+
+      // Only reset if we're not in infinite mode
+      cleanupAudioNodes();
+      
+      // If playing, schedule new segments starting from the current segment
+      if (isPlaying) {
+        scheduleSegments();
+      }
+    }
+  }, [currentSegment, isPlaying, useWebAudioAPI, audioDecoded, cleanupAudioNodes, scheduleSegments, infiniteMode]);
 
   // Handle play/pause
   const togglePlayPause = () => {
@@ -457,7 +713,9 @@ export default function AudioPlayer({
         setIsPlaying(false);
         cleanupAudioNodes();
       } else {
-        // Resume or start playback
+        // Resume or start playback - make sure we have a clean slate
+        cleanupAudioNodes();
+        
         audioContextRef.current.resume();
         setIsPlaying(true);
         // Schedule segments immediately
@@ -477,7 +735,9 @@ export default function AudioPlayer({
       if (isPlaying) {
         wavesurferRef.current.pause();
       } else {
-        wavesurferRef.current.play().catch(err => {
+        // Adding a non-null assertion to fix TypeScript errors
+        const wavesurfer = wavesurferRef.current!;
+        wavesurfer.play().catch(err => {
           console.error('Error playing wavesurfer:', err);
           // Fall back to native audio
           setUseNativeAudio(true);
@@ -489,7 +749,14 @@ export default function AudioPlayer({
         });
       }
     } else {
-      console.warn('No playback method is ready');
+      console.warn('No playback method is ready, trying native audio as fallback');
+      setUseNativeAudio(true);
+      if (audioRef.current && audioUrlRef.current) {
+        audioRef.current.src = audioUrlRef.current;
+        audioRef.current.play().catch(err => {
+          console.error('Error playing fallback audio:', err);
+        });
+      }
     }
   };
 
@@ -497,6 +764,12 @@ export default function AudioPlayer({
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newVolume = parseInt(e.target.value);
     setVolume(newVolume);
+  };
+
+  // Handle jump likelihood change
+  const handleJumpLikelihoodChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newLikelihood = parseInt(e.target.value);
+    setJumpLikelihood(newLikelihood);
   };
 
   // Format time (seconds to MM:SS)
@@ -549,14 +822,14 @@ export default function AudioPlayer({
         <span className="text-sm text-gray-500">{formatTime(duration)}</span>
       </div>
       
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between mb-4">
         <div className="text-sm">
           <span className="font-medium text-gray-700">Current Segment:</span>
           <span className="ml-2 text-indigo-600">{displayedCurrentSegment}</span>
         </div>
         <div className="text-sm">
           <span className="font-medium text-gray-700">Next Jump:</span>
-          <span className="ml-2 text-indigo-600">{displayedNextSegment}</span>
+          <span className="ml-2 text-indigo-600">{nextJumpTarget}</span>
         </div>
         <div className="text-sm">
           <label className="inline-flex items-center">
@@ -570,6 +843,22 @@ export default function AudioPlayer({
           </label>
         </div>
       </div>
+      
+      {/* Jump Likelihood Slider */}
+      {infiniteMode && (
+        <div className="flex items-center mb-4">
+          <span className="text-sm font-medium text-gray-700 mr-2">Jump Likelihood:</span>
+          <input
+            type="range"
+            min="0"
+            max="100"
+            value={jumpLikelihood}
+            onChange={handleJumpLikelihoodChange}
+            className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+          />
+          <span className="ml-2 text-sm text-indigo-600">{jumpLikelihood}%</span>
+        </div>
+      )}
       
       {useNativeAudio && (
         <div className="mt-4 p-2 bg-yellow-50 rounded-md text-sm text-yellow-700">
@@ -587,7 +876,7 @@ export default function AudioPlayer({
         </div>
         <div className="mt-1 flex justify-between text-xs text-gray-500">
           <span>Current Segment: {displayedCurrentSegment}</span>
-          <span>Next Jump: {displayedNextSegment}</span>
+          <span>Next Jump: {nextJumpTarget}</span>
         </div>
       </div>
       
@@ -612,6 +901,7 @@ export default function AudioPlayer({
                 <p><span className="font-bold">Duration:</span> {formatTime(duration)}</p>
                 <p><span className="font-bold">Buffer Ahead:</span> {bufferAhead} segments</p>
                 <p><span className="font-bold">Infinite Mode:</span> {infiniteMode ? 'Yes' : 'No'}</p>
+                <p><span className="font-bold">Jump Likelihood:</span> {jumpLikelihood}%</p>
                 <p><span className="font-bold">Scheduled Segments:</span> {scheduledSegmentsRef.current.length}</p>
                 <p><span className="font-bold">Current Playing Segment:</span> {currentPlayingSegmentRef.current}</p>
               </div>
@@ -668,6 +958,22 @@ export default function AudioPlayer({
                 className="px-2 py-1 bg-gray-200 text-gray-700 text-xs rounded hover:bg-gray-300"
               >
                 Toggle Infinite Mode
+              </button>
+              <button 
+                onClick={() => {
+                  setJumpLikelihood(Math.min(100, jumpLikelihood + 10));
+                }}
+                className="px-2 py-1 bg-gray-200 text-gray-700 text-xs rounded hover:bg-gray-300"
+              >
+                More Jumps
+              </button>
+              <button 
+                onClick={() => {
+                  setJumpLikelihood(Math.max(0, jumpLikelihood - 10));
+                }}
+                className="px-2 py-1 bg-gray-200 text-gray-700 text-xs rounded hover:bg-gray-300"
+              >
+                Fewer Jumps
               </button>
             </div>
           </div>
