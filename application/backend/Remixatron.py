@@ -80,7 +80,7 @@ def symmetrize_matrix(matrix):
         return matrix
 
 
-def check_matrix(self, matrix):
+def check_matrix(matrix):
     print(f"matrix dtype: {matrix.dtype}")
     print(f"matrix shape: {matrix.shape}")
     
@@ -361,7 +361,7 @@ class InfiniteJukebox(object):
             print("Rf has been symmetrized. Now check matrix Rf...")
             check_matrix(Rf)
         except Exception as e:
-            raise ValueError(int(f"Error in recurrence matrix calculation: {e}"))
+            raise ValueError(f"Error in recurrence matrix calculation: {e}")
             
         # Build the sequence matrix using mfcc-similarity
         self.__report_progress( .5, "building sequence matrix..." )
@@ -856,7 +856,7 @@ class InfiniteJukebox(object):
         # we need at least 3 clusters for any song and shouldn't need to calculate more than
         # 48 clusters for even a really complicated peice of music.
 
-        for n_clusters in range(48, 2, -1):
+        for n_clusters in range(24, 2, -1):
 
             self.__report_progress(.51, "Testing a cluster value of %d..." % n_clusters)
 
