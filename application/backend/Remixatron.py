@@ -856,7 +856,7 @@ class InfiniteJukebox(object):
         # we need at least 3 clusters for any song and shouldn't need to calculate more than
         # 48 clusters for even a really complicated peice of music.
 
-        for n_clusters in range(24, 2, -1):
+        for n_clusters in range(48, 2, -1):
 
             self.__report_progress(.51, "Testing a cluster value of %d..." % n_clusters)
 
