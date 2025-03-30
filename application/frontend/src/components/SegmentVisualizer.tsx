@@ -41,6 +41,15 @@ export default function SegmentVisualizer({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    if (ctx) {
+      // Increase canvas size
+      canvas.width = 1000; // Adjust width as needed
+      canvas.height = 300; // Adjust height as needed
+
+      // Increase line width
+      ctx.lineWidth = 3;
+    }
+
     // Clear the canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -60,14 +69,14 @@ export default function SegmentVisualizer({
       // Highlight current and next segments
       let color;
       if (index === currentSegment) {
-        color = `hsl(${hue}, 100%, 50%)`; // Bright color for current segment
+        color = `hsl(${hue}, 100%, 10%)`; // Bright color for current segment
       } else if (index === nextSegment) {
-        color = `hsl(${hue}, 80%, 70%)`; // Lighter color for next segment
+        color = `hsl(${hue}, 90%, 30%)`; // Lighter color for next segment
       } else if (infiniteMode && segment.jump_candidates && segment.jump_candidates.includes(currentSegment)) {
         // Highlight segments that are jump candidates for the current segment
-        color = `hsl(${hue}, 90%, 60%)`; // Medium bright for jump candidates
+        color = `hsl(${hue}, 90%, 40%)`; // Medium bright for jump candidates
       } else {
-        color = `hsl(${hue}, 70%, 85%)`; // Even lighter for other segments
+        color = `hsl(${hue}, 40%, 80%)`; // Even lighter for other segments
       }
       
       // Draw the segment
@@ -75,9 +84,9 @@ export default function SegmentVisualizer({
       ctx.fillRect(xPosition, 0, width, canvas.height);
       
       // Add a border
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 1;
-      ctx.strokeRect(xPosition, 0, width, canvas.height);
+      // ctx.strokeStyle = '#ffffff';
+      // ctx.lineWidth = 1;
+      // ctx.strokeRect(xPosition, 0, width, canvas.height);
       
       // Move to the next position
       xPosition += width;
@@ -103,7 +112,7 @@ export default function SegmentVisualizer({
         // Draw an arc from current to next
         ctx.beginPath();
         ctx.strokeStyle = 'rgba(79, 70, 229, 0.7)'; // Indigo with transparency
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 6;
         
         // Calculate control points for a curved line
         const controlY = canvas.height * 1.5;
@@ -130,8 +139,8 @@ export default function SegmentVisualizer({
         <canvas 
           ref={canvasRef} 
           width={1000} 
-          height={60}
-          className="w-full h-[60px]"
+          height={300}
+          className="w-full h-[150px]"
         />
         
         <div className="mt-2 flex justify-between text-xs text-gray-500">
