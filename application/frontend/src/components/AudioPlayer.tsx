@@ -231,12 +231,8 @@ export default function AudioPlayer({
       scheduledSegmentsRef.current.splice(indexesToRemove[i], 1); // Also remove from scheduledSegmentsRef
     }
     
-    if (indexesToRemove.length > 0) {
-      console.log(`Stopped and removed ${indexesToRemove.length} audio nodes that started before ${time.toFixed(2)}`);
-    }
-
     const endTime = performance.now();
-    console.log(`stopAudioNodesBeforeTime Execution time: ${(endTime - startTime).toFixed(2)} milliseconds`);
+    console.log(`stopAudioNodesBeforeTime removed ${indexesToRemove.length} audio nodes before time ${time.toFixed(2)} using ${(endTime - startTime).toFixed(2)} milliseconds`);
 
   }, []);
 
@@ -268,8 +264,7 @@ export default function AudioPlayer({
         }
 
         try {
-          console.log('Initializing WaveSurfer with audio file:', audioFile);
-          
+         
           // Create new WaveSurfer instance
           wavesurfer = WaveSurfer.create({
             container: waveformRef.current,
@@ -279,7 +274,7 @@ export default function AudioPlayer({
             barWidth: 2,
             barRadius: 3,
             cursorWidth: 1,
-            height: 80,
+            height: 50,
             barGap: 2,
             normalize: true,
             backend: 'WebAudio'
@@ -287,7 +282,7 @@ export default function AudioPlayer({
 
           // Load audio file
           if (fileUrl) {
-            console.log('Loading audio from URL:', fileUrl);
+            console.log('Initializing WaveSurfer with audio file URL:', fileUrl);
             
             // Add loading check to prevent AbortError
             const loadPromise = wavesurfer.load(fileUrl);
@@ -300,7 +295,7 @@ export default function AudioPlayer({
               }
             });
           } else {
-            console.log('Loading audio from Blob');
+            console.log('Initializing WaveSurfer with audio file blob:', audioFile.name);
             
             // Add loading check to prevent AbortError
             const loadPromise = wavesurfer.loadBlob(audioFile);
@@ -331,6 +326,7 @@ export default function AudioPlayer({
           wavesurfer.on('audioprocess', () => {
             if (isComponentMounted && wavesurfer) {
               const time = wavesurfer.getCurrentTime();
+              console.log('WaveSurfer audioprocess event, current time:', time); // Add debug log
               setCurrentTime(time);
               currentTimeRef.current = time;
               onTimeUpdate(time, beatsUntilJump);
@@ -387,6 +383,10 @@ export default function AudioPlayer({
       initializeWaveSurfer();
     }, 300); // 300ms debounce
 
+    // Initial scheduling
+    console.debug('Initial scheduling of segments');
+    scheduleSegments();
+
     // Clean up on unmount or when dependencies change
     return () => {
       isComponentMounted = false;
@@ -397,6 +397,12 @@ export default function AudioPlayer({
       }
       
       if (wavesurfer) {
+        console.debug('Cleaning up WaveSurfer instance');
+        console.debug('Current WaveSurfer state:', {
+          isPlaying: wavesurfer.isPlaying(),
+          duration: wavesurfer.getDuration(),
+          currentTime: wavesurfer.getCurrentTime(),
+        });
         try {
           wavesurfer.destroy();
         } catch (e) {
@@ -404,7 +410,7 @@ export default function AudioPlayer({
         }
       }
     };
-  }, [audioFile, onTimeUpdate, volume, wavesurferReady, beatsUntilJump]);
+  }, [audioFile]);
 
   // Update volume when it changes
   useEffect(() => {
@@ -526,11 +532,10 @@ export default function AudioPlayer({
     const buffer = audioBufferRef.current;
     const currentTime = context.currentTime;
       
-    // Calculate how far ahead we've scheduled in seconds
-    const scheduledAheadTime = scheduledEndTimeRef.current - currentTime;
-        // Start scheduling from the current scheduled end time or current time
+    // Start scheduling from the current scheduled end time or current time
     const startTime = Math.max(currentTime, scheduledEndTimeRef.current);
     let scheduleTime = startTime;
+    // let scheduleTime = scheduledEndTimeRef.current
     
     // Find the current segment based on playback time
     let nextSegmentToSchedule = currentPlayingSegmentRef.current;
@@ -599,7 +604,7 @@ export default function AudioPlayer({
         }
       }, timeUntilSegmentStarts);
       
-      console.log(`Scheduled segment ${nextSegmentToSchedule} at time ${scheduleTime.toFixed(2)}, duration: ${segmentDuration.toFixed(2)}, starts at song location: ${segmentStart.toFixed(2)}, horizon: ${(scheduleTime - currentTime).toFixed(2)}s ahead`);
+      console.log(`Scheduled segment ${nextSegmentToSchedule} at time ${scheduleTime.toFixed(2)}, duration: ${segmentDuration.toFixed(2)}, song location: ${segmentStart.toFixed(2)}, horizon: ${(scheduleTime - currentTime).toFixed(2)}s ahead, jump likelihood: ${jumpLikelihood}%`);
       
       // Keep track of the scheduled end time
       scheduleTime += segmentDuration;
@@ -642,6 +647,7 @@ export default function AudioPlayer({
     }
     
     // Initial scheduling
+    console.debug('Initial scheduling of segments');
     scheduleSegments();
     
     // Set up interval to check if we need to schedule more segments
@@ -649,7 +655,7 @@ export default function AudioPlayer({
       if (audioContextRef.current) {
 
         const currentTime = audioContextRef.current.currentTime;
-        console.debug('Calling stopAudioNodesBeforeTime with currentTime:', currentTime);
+        // console.debug('Calling stopAudioNodesBeforeTime with currentTime:', currentTime);
         // Stop any nodes that should be finished by now
         stopAudioNodesBeforeTime(currentTime);
        
@@ -677,12 +683,12 @@ export default function AudioPlayer({
           scheduleSegments();
         }
       }
-    }, 250); 
+    }, 300); 
     
     return () => {
       clearInterval(intervalId);
     };
-  }, [isPlaying, useWebAudioAPI, audioDecoded, scheduleSegments, segments, bufferAhead, stopAudioNodesBeforeTime]);
+  }, [isPlaying, jumpLikelihood]);
   
   // Reset scheduled segments when currentSegment changes from parent
   useEffect(() => {
@@ -711,10 +717,10 @@ export default function AudioPlayer({
         // Pause playback
         audioContextRef.current.suspend();
         setIsPlaying(false);
-        cleanupAudioNodes();
+        // cleanupAudioNodes();
       } else {
-        // Resume or start playback - make sure we have a clean slate
-        cleanupAudioNodes();
+        // // Resume or start playback - make sure we have a clean slate
+        // cleanupAudioNodes();
         
         audioContextRef.current.resume();
         setIsPlaying(true);
@@ -785,7 +791,7 @@ export default function AudioPlayer({
       {/* Hidden native audio element as fallback */}
       <audio ref={audioRef} preload="metadata" className="hidden" />
       
-      <div className="mb-6" ref={waveformRef}></div>
+      <div className="mb-6" ref={waveformRef} style={{ height: '50px' }}></div>
       
       <div className="flex items-center justify-between mb-4">
         <span className="text-sm text-gray-500">{formatTime(currentTime)}</span>
@@ -822,30 +828,9 @@ export default function AudioPlayer({
         <span className="text-sm text-gray-500">{formatTime(duration)}</span>
       </div>
       
-      <div className="flex items-center justify-between mb-4">
-        <div className="text-sm">
-          <span className="font-medium text-gray-700">Current Segment:</span>
-          <span className="ml-2 text-indigo-600">{displayedCurrentSegment}</span>
-        </div>
-        <div className="text-sm">
-          <span className="font-medium text-gray-700">Next Jump:</span>
-          <span className="ml-2 text-indigo-600">{nextJumpTarget}</span>
-        </div>
-        <div className="text-sm">
-          <label className="inline-flex items-center">
-            <input
-              type="checkbox"
-              checked={infiniteMode}
-              onChange={() => setInfiniteMode(!infiniteMode)}
-              className="form-checkbox h-4 w-4 text-indigo-600"
-            />
-            <span className="ml-2 text-gray-700">Infinite Remix</span>
-          </label>
-        </div>
-      </div>
-      
+     
       {/* Jump Likelihood Slider */}
-      {infiniteMode && (
+      {(
         <div className="flex items-center mb-4">
           <span className="text-sm font-medium text-gray-700 mr-2">Jump Likelihood:</span>
           <input
@@ -866,119 +851,6 @@ export default function AudioPlayer({
         </div>
       )}
       
-      {/* Progress Bar */}
-      <div className="mt-4">
-        <div className="relative h-2 bg-gray-200 rounded-full overflow-hidden">
-          <div 
-            className="absolute h-full bg-indigo-600 transition-all duration-300 ease-in-out"
-            style={{ width: `${(currentTime / duration) * 100}%` }}
-          ></div>
-        </div>
-        <div className="mt-1 flex justify-between text-xs text-gray-500">
-          <span>Current Segment: {displayedCurrentSegment}</span>
-          <span>Next Jump: {nextJumpTarget}</span>
-        </div>
-      </div>
-      
-      {/* Debug Panel */}
-      <div className="mt-4 p-3 border border-gray-200 rounded-md bg-gray-50">
-        <details>
-          <summary className="text-sm font-medium text-gray-700 cursor-pointer">Debug Information</summary>
-          <div className="mt-2 text-xs font-mono">
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <p><span className="font-bold">Audio File:</span> {audioFile ? audioFile.name : 'None'}</p>
-                <p><span className="font-bold">File Size:</span> {audioFile ? (audioFile.size / 1024 / 1024).toFixed(2) + ' MB' : 'N/A'}</p>
-                <p><span className="font-bold">File Type:</span> {audioFile ? audioFile.type : 'N/A'}</p>
-                <p><span className="font-bold">URL Created:</span> {audioUrlRef.current ? 'Yes' : 'No'}</p>
-              </div>
-              <div>
-                <p><span className="font-bold">WaveSurfer Ready:</span> {wavesurferReady ? 'Yes' : 'No'}</p>
-                <p><span className="font-bold">Using Native Audio:</span> {useNativeAudio ? 'Yes' : 'No'}</p>
-                <p><span className="font-bold">Using Web Audio API:</span> {useWebAudioAPI ? 'Yes' : 'No'}</p>
-                <p><span className="font-bold">Audio Decoded:</span> {audioDecoded ? 'Yes' : 'No'}</p>
-                <p><span className="font-bold">Is Playing:</span> {isPlaying ? 'Yes' : 'No'}</p>
-                <p><span className="font-bold">Duration:</span> {formatTime(duration)}</p>
-                <p><span className="font-bold">Buffer Ahead:</span> {bufferAhead} segments</p>
-                <p><span className="font-bold">Infinite Mode:</span> {infiniteMode ? 'Yes' : 'No'}</p>
-                <p><span className="font-bold">Jump Likelihood:</span> {jumpLikelihood}%</p>
-                <p><span className="font-bold">Scheduled Segments:</span> {scheduledSegmentsRef.current.length}</p>
-                <p><span className="font-bold">Current Playing Segment:</span> {currentPlayingSegmentRef.current}</p>
-              </div>
-            </div>
-            <div className="mt-2 flex space-x-2">
-              <button 
-                onClick={() => {
-                  if (audioRef.current && audioUrlRef.current) {
-                    console.log('Forcing native audio playback');
-                    setUseWebAudioAPI(false);
-                    setUseNativeAudio(true);
-                    audioRef.current.play().catch(err => {
-                      console.error('Error forcing audio playback:', err);
-                    });
-                  }
-                }}
-                className="px-2 py-1 bg-gray-200 text-gray-700 text-xs rounded hover:bg-gray-300"
-              >
-                Force Native Audio
-              </button>
-              <button 
-                onClick={() => {
-                  setBufferAhead(prev => Math.min(prev + 1, 30));
-                }}
-                className="px-2 py-1 bg-gray-200 text-gray-700 text-xs rounded hover:bg-gray-300"
-              >
-                Increase Buffer
-              </button>
-              <button 
-                onClick={() => {
-                  setBufferAhead(prev => Math.max(prev - 1, 1));
-                }}
-                className="px-2 py-1 bg-gray-200 text-gray-700 text-xs rounded hover:bg-gray-300"
-              >
-                Decrease Buffer
-              </button>
-              <button 
-                onClick={() => {
-                  cleanupAudioNodes();
-                  scheduleSegments();
-                }}
-                className="px-2 py-1 bg-gray-200 text-gray-700 text-xs rounded hover:bg-gray-300"
-              >
-                Reset Buffer
-              </button>
-              <button 
-                onClick={() => {
-                  setInfiniteMode(!infiniteMode);
-                  cleanupAudioNodes();
-                  if (isPlaying) {
-                    setTimeout(() => scheduleSegments(), 0);
-                  }
-                }}
-                className="px-2 py-1 bg-gray-200 text-gray-700 text-xs rounded hover:bg-gray-300"
-              >
-                Toggle Infinite Mode
-              </button>
-              <button 
-                onClick={() => {
-                  setJumpLikelihood(Math.min(100, jumpLikelihood + 10));
-                }}
-                className="px-2 py-1 bg-gray-200 text-gray-700 text-xs rounded hover:bg-gray-300"
-              >
-                More Jumps
-              </button>
-              <button 
-                onClick={() => {
-                  setJumpLikelihood(Math.max(0, jumpLikelihood - 10));
-                }}
-                className="px-2 py-1 bg-gray-200 text-gray-700 text-xs rounded hover:bg-gray-300"
-              >
-                Fewer Jumps
-              </button>
-            </div>
-          </div>
-        </details>
-      </div>
     </div>
   );
 } 
