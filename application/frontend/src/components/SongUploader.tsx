@@ -55,75 +55,64 @@ export default function SongUploader({ onSongUpload }: SongUploaderProps) {
       
       setSelectedFile(file);
       setError(null);
+      handleSubmit(file); // Automatically submit the form
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (selectedFile) {
-      onSongUpload(selectedFile);
+  const handleSubmit = (file?: File) => {
+    if (file) {
+        onSongUpload(file);
     } else {
-      setError('Please select a file first.');
+        setError('Please select a file first.');
     }
   };
 
   return (
-    <div className="w-full bg-white rounded-lg shadow-md p-6 mb-8">
-      <h2 className="text-xl font-semibold text-gray-800 mb-4">Upload a Song</h2>
-      
-      <form onSubmit={handleSubmit}>
-        <div 
-          className={`border-2 border-dashed rounded-lg p-8 text-center ${
-            isDragging ? 'border-indigo-500 bg-indigo-50' : 'border-gray-300 hover:border-indigo-400'
-          } transition-colors cursor-pointer`}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-          onClick={() => fileInputRef.current?.click()}
-        >
-          <input 
-            type="file" 
-            ref={fileInputRef}
-            onChange={handleFileChange}
-            className="hidden"
-            accept="audio/*"
-          />
+      <div className="w-full bg-white rounded-lg shadow-md p-4 mb-4">
+          <h2 className="text-lg font-semibold text-gray-800 mb-2">Upload a Worship Song</h2>
           
-          <svg className="w-12 h-12 mx-auto text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"></path>
-          </svg>
-          
-          {selectedFile ? (
-            <div>
-              <p className="text-indigo-600 font-medium mb-1">{selectedFile.name}</p>
-              <p className="text-sm text-gray-500">
-                {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB
-              </p>
-            </div>
-          ) : (
-            <div>
-              <p className="text-gray-700 font-medium mb-1">Drag and drop your audio file here</p>
-              <p className="text-sm text-gray-500">or click to browse</p>
-            </div>
-          )}
-          {error && (
-            <div className="mt-4 text-sm text-red-600 font-medium">
-              {error}
-            </div>
-          )}
-        </div>
-        
-        {selectedFile && (
-          <div className="mt-4 flex justify-center">
-            <button
-              type="submit"
-              className="px-6 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors"
-            >
-              Process Song
-            </button>
-          </div>
-        )}
-      </form>
-    </div>
+          <form onSubmit={handleSubmit}>
+              <div 
+                  className={`border-2 border-dashed rounded-lg p-4 text-center ${
+                      isDragging ? 'border-indigo-500 bg-indigo-50' : 'border-gray-300 hover:border-indigo-400'
+                  } transition-colors cursor-pointer`}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  onClick={() => fileInputRef.current?.click()}
+              >
+                  <input 
+                      type="file" 
+                      ref={fileInputRef}
+                      onChange={handleFileChange}
+                      className="hidden"
+                      accept="audio/*"
+                  />
+                  
+                  <svg className="w-8 h-8 mx-auto text-gray-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"></path>
+                  </svg>
+                  
+                  {selectedFile ? (
+                      <div>
+                          <p className="text-indigo-600 font-medium mb-1 text-sm">{selectedFile.name}</p>
+                          <p className="text-xs text-gray-500">
+                              {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB
+                          </p>
+                      </div>
+                  ) : (
+                      <div>
+                          <p className="text-gray-700 font-medium mb-1 text-sm">Drag and drop your audio file here</p>
+                          <p className="text-xs text-gray-500">or click to browse</p>
+                      </div>
+                  )}
+                  {error && (
+                      <div className="mt-2 text-xs text-red-600 font-medium">
+                          {error}
+                      </div>
+                  )}
+              </div>
+          </form>
+      </div>
   );
 } 
