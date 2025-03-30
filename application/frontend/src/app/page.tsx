@@ -4,8 +4,7 @@ import { useState, useEffect } from 'react';
 import SongUploader from '@/components/SongUploader';
 import AudioPlayer from '@/components/AudioPlayer';
 import SegmentVisualizer from '@/components/SegmentVisualizer';
-import PlaybackProgress from '@/components/PlaybackProgress';
-import { uploadSong, generateMockSongData } from '@/services/api';
+import { uploadSong } from '@/services/api';
 import { SongData, PlaybackState, Segment } from '@/types';
 
 export default function Home() {
@@ -13,7 +12,6 @@ export default function Home() {
   const [songData, setSongData] = useState<SongData | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [useMockData, setUseMockData] = useState(false);
   const [playbackState, setPlaybackState] = useState<PlaybackState>({
     currentSegment: 0,
     nextSegment: 0,
@@ -27,7 +25,6 @@ export default function Home() {
     setAudioFile(file);
     setIsProcessing(true);
     setError(null);
-    setUseMockData(false);
     
     try {
       // Try to use the real API
@@ -55,33 +52,8 @@ export default function Home() {
         errorMessage = err.message;
       }
       
-      setError(`${errorMessage} Using mock data instead.`);
-      setUseMockData(true);
+      setError(`${errorMessage}`);
       
-      // Fallback to mock data
-      const audio = new Audio();
-      const objectUrl = URL.createObjectURL(file);
-      
-      audio.onloadedmetadata = () => {
-        const duration = audio.duration;
-        const mockData = generateMockSongData(duration);
-        setSongData(mockData);
-        
-        // Initialize playback state
-        if (mockData.segments.length > 0) {
-          const firstSegment = mockData.segments[0];
-          setPlaybackState({
-            currentSegment: 0,
-            nextSegment: firstSegment.next,
-            beatsUntilJump: 4, // Arbitrary initial value
-            currentTime: 0,
-          });
-        }
-        
-        URL.revokeObjectURL(objectUrl);
-      };
-      
-      audio.src = objectUrl;
     } finally {
       setIsProcessing(false);
     }
@@ -130,39 +102,6 @@ export default function Home() {
     }));
   };
 
-  // Handle retry with mock data
-  const handleUseMockData = () => {
-    if (!audioFile) return;
-    
-    setIsProcessing(true);
-    setError(null);
-    setUseMockData(true);
-    
-    const audio = new Audio();
-    const objectUrl = URL.createObjectURL(audioFile);
-    
-    audio.onloadedmetadata = () => {
-      const duration = audio.duration;
-      const mockData = generateMockSongData(duration);
-      setSongData(mockData);
-      
-      // Initialize playback state
-      if (mockData.segments.length > 0) {
-        const firstSegment = mockData.segments[0];
-        setPlaybackState({
-          currentSegment: 0,
-          nextSegment: firstSegment.next,
-          beatsUntilJump: 4, // Arbitrary initial value
-          currentTime: 0,
-        });
-      }
-      
-      URL.revokeObjectURL(objectUrl);
-      setIsProcessing(false);
-    };
-    
-    audio.src = objectUrl;
-  };
 
   return (
     <main className="flex min-h-screen flex-col items-center p-8 bg-gray-50">
@@ -181,20 +120,7 @@ export default function Home() {
           </div>
         )}
         
-        {error && (
-          <div className="w-full bg-red-50 border border-red-200 rounded-lg p-4 mb-8">
-            <p className="text-red-600 mb-2">{error}</p>
-            {!useMockData && (
-              <button 
-                onClick={handleUseMockData}
-                className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors"
-              >
-                Use Mock Data
-              </button>
-            )}
-          </div>
-        )}
-        
+   
         {audioFile && !isProcessing && (
           <AudioPlayer 
             audioFile={audioFile}
@@ -216,24 +142,9 @@ export default function Home() {
               infiniteMode={infinitePlaybackActive}
             />
             
-            <PlaybackProgress 
-              currentTime={playbackState.currentTime}
-              duration={songData.duration}
-              currentSegment={playbackState.currentSegment}
-              nextSegment={playbackState.nextSegment}
-              beatsUntilJump={playbackState.beatsUntilJump}
-              infiniteMode={infinitePlaybackActive}
-            />
             
             <div className="bg-white rounded-lg shadow-md p-6 mb-8">
-              <h3 className="text-lg font-medium text-gray-800 mb-4">Song Information</h3>
-              {useMockData && (
-                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4">
-                  <p className="text-yellow-700 text-sm">
-                    <span className="font-medium">Note:</span> Using mock data for visualization. The actual audio processing failed.
-                  </p>
-                </div>
-              )}
+              <h3 className="text-lg font-medium text-gray-800 mb-4">Song File: {audioFile.name}</h3>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <p className="text-sm text-gray-600">
