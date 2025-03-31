@@ -105,12 +105,12 @@ def upload_file():
                     for beat in jukebox.beats:
                         # Remove the buffer which is not JSON serializable
                         beat_copy = beat.copy()
-                        if 'buffer' in beat_copy:
-                            del beat_copy['buffer']
-                        if 'start_index' in beat_copy:
-                            del beat_copy['start_index']
-                        if 'stop_index' in beat_copy:
-                            del beat_copy['stop_index']
+                        # if 'buffer' in beat_copy:
+                        #     del beat_copy['buffer']
+                        # if 'start_index' in beat_copy:
+                        #     del beat_copy['start_index']
+                        # if 'stop_index' in beat_copy:
+                        #     del beat_copy['stop_index']
                         segments.append(beat_copy)
                     
                     # Store the processed data
