@@ -55,12 +55,14 @@ export default function AudioPlayer({
   const [jumpLikelihood, setJumpLikelihood] = useState(20); // Default 20% likelihood to jump
   const [displayedCurrentSegment, setDisplayedCurrentSegment] = useState(currentSegment);
   const [displayedNextSegment, setDisplayedNextSegment] = useState(nextSegment);
-  const [nextJumpTarget, setNextJumpTarget] = useState(nextSegment);
+  // const [nextJumpTarget, setNextJumpTarget] = useState(nextSegment);
   const [beatsUntilJump, setBeatsUntilJump] = useState(4);
   const lastAudioFileRef = useRef<File | null>(null);
   // Add a debounce ref to prevent multiple rapid reinitializations
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const initializingRef = useRef<boolean>(false);
+  const lastJumpTimeRef = useRef<number | null>(null);
+  const JUMP_GRACEPERIOD = 16; // Seconds
 
   // Create audio URL from file
   useEffect(() => {
@@ -232,7 +234,7 @@ export default function AudioPlayer({
     }
     
     const endTime = performance.now();
-    console.log(`stopAudioNodesBeforeTime removed ${indexesToRemove.length} audio nodes before time ${time.toFixed(2)} using ${(endTime - startTime).toFixed(2)} milliseconds`);
+    console.debug(`stopAudioNodesBeforeTime removed ${indexesToRemove.length} audio nodes before time ${time.toFixed(2)} using ${(endTime - startTime).toFixed(2)} milliseconds`);
 
   }, []);
 
@@ -277,7 +279,16 @@ export default function AudioPlayer({
             height: 50,
             barGap: 2,
             normalize: true,
-            backend: 'WebAudio'
+            backend: 'WebAudio', // Ensure the backend is set to 'WebAudio'
+            audioContext: new (window.AudioContext || window.webkitAudioContext)({
+              latencyHint: 'interactive',
+              sampleRate: 44100,
+            }),
+            audioScriptProcessor: {
+              bufferSize: 4096,
+              numberOfInputChannels: 1,
+              numberOfOutputChannels: 1,
+            },
           });
 
           // Load audio file
@@ -324,9 +335,10 @@ export default function AudioPlayer({
           });
 
           wavesurfer.on('audioprocess', () => {
+            console.debug('WaveSurfer event triggered: audioprocess');
             if (isComponentMounted && wavesurfer) {
               const time = wavesurfer.getCurrentTime();
-              console.log('WaveSurfer audioprocess event, current time:', time); // Add debug log
+              console.info('WaveSurfer audioprocess event, current time:', time); // Add debug log
               setCurrentTime(time);
               currentTimeRef.current = time;
               onTimeUpdate(time, beatsUntilJump);
@@ -334,22 +346,24 @@ export default function AudioPlayer({
           });
 
           wavesurfer.on('play', () => {
+            console.debug('WaveSurfer event triggered: play');
             if (isComponentMounted) {
-              console.log('WaveSurfer play event');
+              console.info('WaveSurfer play event');
               setIsPlaying(true);
             }
           });
           
           wavesurfer.on('pause', () => {
+            console.debug('WaveSurfer event triggered: pause');
             if (isComponentMounted) {
-              console.log('WaveSurfer pause event');
+              console.info('WaveSurfer pause event');
               setIsPlaying(false);
             }
           });
           
           wavesurfer.on('finish', () => {
             if (isComponentMounted) {
-              console.log('WaveSurfer finish event');
+              console.info('WaveSurfer finish event');
               setIsPlaying(false);
             }
           });
@@ -468,28 +482,28 @@ export default function AudioPlayer({
     }
   }, [onTimeUpdate, beatsUntilJump]);
 
-  // Update displayed segments and next jump target
-  useEffect(() => {
-    if (infiniteMode && segments.length > 0 && currentPlayingSegmentRef.current < segments.length) {
-      const currentSegment = segments[currentPlayingSegmentRef.current];
-      setDisplayedCurrentSegment(currentPlayingSegmentRef.current);
+  // // Update displayed segments and next jump target
+  // useEffect(() => {
+  //   if (infiniteMode && segments.length > 0 && currentPlayingSegmentRef.current < segments.length) {
+  //     const currentSegment = segments[currentPlayingSegmentRef.current];
+  //     setDisplayedCurrentSegment(currentPlayingSegmentRef.current);
       
-      // Calculate next jump target based on jump likelihood and available candidates
-      if (currentSegment.jump_candidates && currentSegment.jump_candidates.length > 0 && Math.random() * 100 < jumpLikelihood) {
-        // Pick a random jump candidate
-        const jumpCandidateIndex = Math.floor(Math.random() * currentSegment.jump_candidates.length);
-        const jumpTarget = currentSegment.jump_candidates[jumpCandidateIndex];
-        setNextJumpTarget(jumpTarget);
-      } else {
-        // Use sequential next segment if not jumping
-        setNextJumpTarget(currentSegment.next);
-      }
-    } else {
-      // In normal mode, use the segments from props
-      setDisplayedCurrentSegment(currentSegment);
-      setNextJumpTarget(nextSegment);
-    }
-  }, [currentSegment, nextSegment, infiniteMode, segments, currentPlayingSegmentRef.current, jumpLikelihood]);
+  //     // Calculate next jump target based on jump likelihood and available candidates
+  //     if (currentSegment.jump_candidates && currentSegment.jump_candidates.length > 0 && Math.random() * 100 < jumpLikelihood) {
+  //       // Pick a random jump candidate
+  //       const jumpCandidateIndex = Math.floor(Math.random() * currentSegment.jump_candidates.length);
+  //       const jumpTarget = currentSegment.jump_candidates[jumpCandidateIndex];
+  //       setNextJumpTarget(jumpTarget);
+  //     } else {
+  //       // Use sequential next segment if not jumping
+  //       setNextJumpTarget(currentSegment.next);
+  //     }
+  //   } else {
+  //     // In normal mode, use the segments from props
+  //     setDisplayedCurrentSegment(currentSegment);
+  //     setNextJumpTarget(nextSegment);
+  //   }
+  // }, [currentSegment, nextSegment, infiniteMode, segments, currentPlayingSegmentRef.current, jumpLikelihood]);
 
   // Update beats until jump
   useEffect(() => {
@@ -535,7 +549,6 @@ export default function AudioPlayer({
     // Start scheduling from the current scheduled end time or current time
     const startTime = Math.max(currentTime, scheduledEndTimeRef.current);
     let scheduleTime = startTime;
-    // let scheduleTime = scheduledEndTimeRef.current
     
     // Find the current segment based on playback time
     let nextSegmentToSchedule = currentPlayingSegmentRef.current;
@@ -554,7 +567,7 @@ export default function AudioPlayer({
     // Calculate how many more segments we need to schedule - limit by buffer length
     let segmentsToSchedule = Math.max(0, bufferAhead - scheduledSegmentsRef.current.length);
     
-    console.log(`Scheduling up to ${segmentsToSchedule} more segments, starting with segment ${nextSegmentToSchedule}. Currently have ${scheduledSegmentsRef.current.length} segments in queue`);
+    console.debug(`Scheduling up to ${segmentsToSchedule} more segments, starting with segment ${nextSegmentToSchedule}. Currently have ${scheduledSegmentsRef.current.length} segments in queue`);
     
     // Schedule multiple segments ahead
     for (let i = 0; i < segmentsToSchedule; i++) {
@@ -604,7 +617,7 @@ export default function AudioPlayer({
         }
       }, timeUntilSegmentStarts);
       
-      console.log(`Scheduled segment ${nextSegmentToSchedule} at time ${scheduleTime.toFixed(2)}, duration: ${segmentDuration.toFixed(2)}, song location: ${segmentStart.toFixed(2)}, horizon: ${(scheduleTime - currentTime).toFixed(2)}s ahead, jump likelihood: ${jumpLikelihood}%`);
+      console.info(`Scheduled segment ${nextSegmentToSchedule} at time ${scheduleTime.toFixed(2)}, duration: ${segmentDuration.toFixed(2)}, song location: ${segmentStart.toFixed(2)}, horizon: ${(scheduleTime - currentTime).toFixed(2)}s ahead, jump likelihood: ${jumpLikelihood}%`);
       
       // Keep track of the scheduled end time
       scheduleTime += segmentDuration;
@@ -618,16 +631,27 @@ export default function AudioPlayer({
       
       // Move to the next segment 
       if (infiniteMode) {
+        let dice = Math.random() * 100
+        let since_last_jump = Math.round(Math.abs(scheduleTime - (lastJumpTimeRef.current ?? 0)));
         // Use jump likelihood to decide whether to use the defined next segment or pick a jump candidate
-        if (Math.random() * 100 < jumpLikelihood && segment.jump_candidates && segment.jump_candidates.length > 0) {
+        let jump = (dice < jumpLikelihood) && 
+          (since_last_jump >= JUMP_GRACEPERIOD) && 
+          segment.jump_candidates && 
+          (segment.jump_candidates.length > 0);
+
+        let metadata = `Dice: ${dice.toFixed(2)}, Likelihood: ${jumpLikelihood}, Since Last Jump: ${since_last_jump}, Last Jump: ${lastJumpTimeRef.current?.toFixed(0)}, Schedule Time: ${scheduleTime.toFixed(0)}, Jump Grace: ${JUMP_GRACEPERIOD}`;
+        
+        if (jump) {
           // Pick a random jump candidate
           const jumpCandidateIndex = Math.floor(Math.random() * segment.jump_candidates.length);
           const jumpTarget = segment.jump_candidates[jumpCandidateIndex];
-          console.log(`Jumped to similar segment ${jumpTarget} instead of ${segment.next} (${jumpLikelihood}% likelihood)`);
+          console.info(`>>> Jumped to ${jumpTarget} instead of ${segment.next} from ${segment.jump_candidates.length} candidates. ` + metadata);
           nextSegmentToSchedule = jumpTarget;
+          lastJumpTimeRef.current = scheduleTime;
         } else {
           // Follow the predefined next segment
           nextSegmentToSchedule = segment.next;
+          console.debug(`No Jump. ` + metadata);
         }
       } else {
         // Sequential mode
@@ -658,7 +682,7 @@ export default function AudioPlayer({
         // console.debug('Calling stopAudioNodesBeforeTime with currentTime:', currentTime);
         // Stop any nodes that should be finished by now
         stopAudioNodesBeforeTime(currentTime);
-       
+
         // Calculate time ahead
         const timeAhead = scheduledEndTimeRef.current - currentTime;
         const remainingSegments = scheduledSegmentsRef.current.length;
@@ -683,7 +707,7 @@ export default function AudioPlayer({
           scheduleSegments();
         }
       }
-    }, 300); 
+    }, 250); 
     
     return () => {
       clearInterval(intervalId);
