@@ -167,11 +167,11 @@ export default function SegmentVisualizer({
         <div className="bg-white p-3 rounded-lg shadow-sm">
           <h4 className="text-sm font-medium text-gray-700">Current Segment</h4>
           <p className="text-2xl font-bold text-indigo-600">{currentSegment}</p>
-          { (nextJumpFrom > 0) && (nextJumpTo > 0) && (
-            <p className="text-xs text-gray-500">Next Jump: {nextJumpFrom} to {nextJumpTo}</p>
-          )}
+          <div className={`text-xs text-gray-500 ${ (nextJumpFrom > 0) && (nextJumpTo > 0) ? 'visible' : 'invisible' }`}>
+          Next Jump: {nextJumpFrom} to {nextJumpTo}
+          </div>
         </div>
       </div>
     </div>
   );
-} 
+}
