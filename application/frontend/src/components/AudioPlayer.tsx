@@ -647,7 +647,7 @@ export default function AudioPlayer({
         }
       }, timeUntilSegmentStarts);
       
-      console.info(`Scheduled segment ${nextSegmentToSchedule} at time ${scheduleTime.toFixed(2)}, duration: ${segmentDuration.toFixed(2)}, song location: ${segmentStart.toFixed(2)}, horizon: ${(scheduleTime - currentTime).toFixed(2)}s ahead, jump likelihood: ${jumpLikelihood}%`);
+      console.info(`Scheduled segment ${nextSegmentToSchedule} at time ${scheduleTime.toFixed(2)}, duration: ${segmentDuration.toFixed(2)}, song location: ${segmentStart.toFixed(2)}, horizon: ${(scheduleTime - currentTime).toFixed(2)}s ahead`);
       
       // Keep track of the scheduled end time
       scheduleTime += segmentDuration;
