@@ -107,7 +107,7 @@ export default function Home() {
     <main className="flex min-h-screen flex-col items-center p-8 bg-gray-50">
       <div className="max-w-4xl w-full">
         <h1 className="text-3xl font-bold text-center mb-2 text-indigo-800">Infinite Worship</h1>
-        <p className="text-center text-gray-600 mb-8">Upload a song, visualize segments, and experience intelligent playback</p>
+        <p className="text-center text-gray-600 mb-8">from everlasting to everlasting</p>
         
         <SongUploader onSongUpload={handleSongUpload} />
         
