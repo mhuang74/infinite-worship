@@ -20,6 +20,8 @@ export interface SongData {
 export interface PlaybackState {
   currentSegment: number;
   nextSegment: number;
+  nextJumpFrom: number,
+  nextJumpTo: number,
   beatsUntilJump: number;
   currentTime: number;
 } 

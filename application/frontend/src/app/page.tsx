@@ -15,7 +15,9 @@ export default function Home() {
   const [playbackState, setPlaybackState] = useState<PlaybackState>({
     currentSegment: 0,
     nextSegment: 0,
-    beatsUntilJump: 0,
+    nextJumpFrom: -1,
+    nextJumpTo: -1,
+    beatsUntilJump: -1,
     currentTime: 0,
   });
   const [infinitePlaybackActive, setInfinitePlaybackActive] = useState(false);
@@ -37,7 +39,9 @@ export default function Home() {
         setPlaybackState({
           currentSegment: 0,
           nextSegment: firstSegment.next,
-          beatsUntilJump: 4, // Arbitrary initial value
+          nextJumpFrom: -1,
+          nextJumpTo: -1,
+          beatsUntilJump: -1,
           currentTime: 0,
         });
       }
@@ -63,32 +67,32 @@ export default function Home() {
   const handleTimeUpdate = (currentTime: number, beatsUntilJump: number) => {
     if (!songData) return;
     
-    // Find the current segment based on time
-    let currentSegmentIndex = 0;
-    let accumulatedTime = 0;
+    // // Find the current segment based on time
+    // let currentSegmentIndex = 0;
+    // let accumulatedTime = 0;
     
-    for (let i = 0; i < songData.segments.length; i++) {
-      accumulatedTime += songData.segments[i].duration;
-      if (currentTime < accumulatedTime) {
-        currentSegmentIndex = i;
-        break;
-      }
-    }
+    // for (let i = 0; i < songData.segments.length; i++) {
+    //   accumulatedTime += songData.segments[i].duration;
+    //   if (currentTime < accumulatedTime) {
+    //     currentSegmentIndex = i;
+    //     break;
+    //   }
+    // }
     
-    // Calculate beats until jump (for demo purposes)
-    const segment = songData.segments[currentSegmentIndex];
-    const nextSegmentIndex = segment.next;
+    // // Calculate beats until jump (for demo purposes)
+    // const segment = songData.segments[currentSegmentIndex];
+    // const nextSegmentIndex = segment.next;
     
-    setPlaybackState({
-      currentSegment: currentSegmentIndex,
-      nextSegment: nextSegmentIndex,
-      beatsUntilJump,
-      currentTime,
-    });
+    // setPlaybackState({
+    //   currentSegment: currentSegmentIndex,
+    //   nextSegment: nextSegmentIndex,
+    //   beatsUntilJump,
+    //   currentTime,
+    // });
   };
 
   // Handle segment change from the AudioPlayer in infinite mode
-  const handleSegmentChange = (segmentIndex: number) => {
+  const handleSegmentChange = (segmentIndex: number, nextJumpFrom: number, nextJumpTo: number) => {
     if (!songData || segmentIndex >= songData.segments.length) return;
     
     const segment = songData.segments[segmentIndex];
@@ -98,7 +102,9 @@ export default function Home() {
       ...prev,
       currentSegment: segmentIndex,
       nextSegment: segment.next,
-      beatsUntilJump: 4, // Reset beats until jump
+      nextJumpFrom: nextJumpFrom,
+      nextJumpTo: nextJumpTo,
+      beatsUntilJump: -1, // Reset beats until jump
     }));
   };
 
@@ -138,6 +144,8 @@ export default function Home() {
               segments={songData.segments}
               currentSegment={playbackState.currentSegment}
               nextSegment={playbackState.nextSegment}
+              nextJumpFrom={playbackState.nextJumpFrom}
+              nextJumpTo={playbackState.nextJumpTo}
               currentTime={playbackState.currentTime}
               infiniteMode={infinitePlaybackActive}
             />

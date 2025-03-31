@@ -15,6 +15,8 @@ interface SegmentVisualizerProps {
   segments: Segment[];
   currentSegment: number;
   nextSegment: number;
+  nextJumpFrom: number,
+  nextJumpTo: number,
   currentTime: number;
   infiniteMode?: boolean;
 }
@@ -23,6 +25,8 @@ export default function SegmentVisualizer({
   segments,
   currentSegment,
   nextSegment,
+  nextJumpFrom,
+  nextJumpTo,
   currentTime,
   infiniteMode = false,
 }: SegmentVisualizerProps) {
@@ -127,7 +131,7 @@ export default function SegmentVisualizer({
         ctx.stroke();
       }
     }
-  }, [segments, currentSegment, nextSegment, currentTime, totalDuration, infiniteMode]);
+  }, [segments, currentSegment, nextSegment, nextJumpFrom, nextJumpTo, currentTime, totalDuration, infiniteMode]);
 
   return (
     <div className="w-full mb-8">
@@ -163,7 +167,9 @@ export default function SegmentVisualizer({
         <div className="bg-white p-3 rounded-lg shadow-sm">
           <h4 className="text-sm font-medium text-gray-700">Current Segment</h4>
           <p className="text-2xl font-bold text-indigo-600">{currentSegment}</p>
-          <p className="text-xs text-gray-500">Next: {nextSegment}</p>
+          { (nextJumpFrom > 0) && (nextJumpTo > 0) && (
+            <p className="text-xs text-gray-500">Next Jump: {nextJumpFrom} to {nextJumpTo}</p>
+          )}
         </div>
       </div>
     </div>
