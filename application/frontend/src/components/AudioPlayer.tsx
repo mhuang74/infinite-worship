@@ -63,6 +63,8 @@ export default function AudioPlayer({
   const initializingRef = useRef<boolean>(false);
   const lastJumpTimeRef = useRef<number | null>(null);
   const JUMP_GRACEPERIOD = 16; // Seconds
+  const [isScheduling, setIsScheduling] = useState(false); // Add this state
+
 
   // Create audio URL from file
   useEffect(() => {
@@ -538,7 +540,15 @@ export default function AudioPlayer({
 
   // Schedule audio segments for playback
   const scheduleSegments = useCallback(() => {
+    if (isScheduling) {
+      console.debug('scheduleSegments is already running, skipping this call');
+      return;
+    }
+
+    setIsScheduling(true); // Set the flag to indicate the function is running
+
     if (!audioContextRef.current || !audioBufferRef.current || !isPlaying || !useWebAudioAPI || !audioDecoded || segments.length === 0) {
+      setIsScheduling(false);  // Reset the flag if early return
       return;
     }
 
@@ -553,17 +563,6 @@ export default function AudioPlayer({
     // Find the current segment based on playback time
     let nextSegmentToSchedule = currentPlayingSegmentRef.current;
     
-    // If we've already scheduled some segments, start from the last one
-    if (scheduledSegmentsRef.current.length > 0) {
-      const lastScheduledSegment = scheduledSegmentsRef.current[scheduledSegmentsRef.current.length - 1];
-      // Move to the next segment
-      nextSegmentToSchedule = segments[lastScheduledSegment]?.next || 0;
-    } else if (nextSegmentToSchedule === 0 && currentSegment > 0) {
-      // If we're starting fresh and the parent component has a current segment, use that
-      nextSegmentToSchedule = currentSegment;
-      currentPlayingSegmentRef.current = currentSegment;
-    }
-    
     // Calculate how many more segments we need to schedule - limit by buffer length
     let segmentsToSchedule = Math.max(0, bufferAhead - scheduledSegmentsRef.current.length);
     
@@ -571,23 +570,54 @@ export default function AudioPlayer({
     
     // Schedule multiple segments ahead
     for (let i = 0; i < segmentsToSchedule; i++) {
-      // Check if we've reached the time horizon limit
-      
-      if (nextSegmentToSchedule >= segments.length) {
-        // We've reached the end of the song, loop back to the beginning
-        nextSegmentToSchedule = 0;
-      }
-      
-      const segment = segments[nextSegmentToSchedule];
-      if (!segment) {
-        console.warn(`Segment ${nextSegmentToSchedule} not found`);
-        break;
-      }
-      
+
+      /// Determine next segment to schedule
+
+      if (scheduledSegmentsRef.current.length > 0) {
+        const lastScheduledSegment = scheduledSegmentsRef.current[scheduledSegmentsRef.current.length - 1];
+        // look at last segment to determine to move forward or jump
+        let segment = segments[lastScheduledSegment];
+
+        if (infiniteMode) {
+          let dice = Math.random() * 100
+          let since_last_jump = Math.round(Math.abs(scheduleTime - (lastJumpTimeRef.current ?? 0)));
+          // Use jump likelihood to decide whether to use the defined next segment or pick a jump candidate
+          let jump = (dice < jumpLikelihood) && 
+            (since_last_jump >= JUMP_GRACEPERIOD) && 
+            segment.jump_candidates && 
+            (segment.jump_candidates.length > 0);
+
+          let metadata = `Dice: ${dice.toFixed(2)}, Likelihood: ${jumpLikelihood}, Since Last Jump: ${since_last_jump}, Last Jump: ${lastJumpTimeRef.current?.toFixed(0)}, Schedule Time: ${scheduleTime.toFixed(0)}, Jump Grace: ${JUMP_GRACEPERIOD}`;
+          
+          if (jump) {
+            // Pick a random jump candidate
+            const jumpCandidateIndex = Math.floor(Math.random() * segment.jump_candidates.length);
+            const jumpTarget = segment.jump_candidates[jumpCandidateIndex];
+            console.info(`>>> Jumped to ${jumpTarget} instead of ${segment.next} from ${segment.jump_candidates.length} candidates. ` + metadata);
+            nextSegmentToSchedule = jumpTarget;
+            lastJumpTimeRef.current = scheduleTime;
+          } else {
+            // Follow the predefined next segment
+            nextSegmentToSchedule = segment?.next || 0;
+            console.debug(`No Jump. ` + metadata);
+          }
+        } else {
+          // Sequential mode
+          nextSegmentToSchedule = (nextSegmentToSchedule + 1) % segments.length;
+        }
+
+      } else if (nextSegmentToSchedule === 0 && currentSegment > 0) {
+        // If we're starting fresh and the parent component has a current segment, use that
+        nextSegmentToSchedule = currentSegment;
+        currentPlayingSegmentRef.current = currentSegment;
+      }      
+
       // Create source node with our extended type
       const sourceNode = context.createBufferSource() as ExtendedAudioBufferSourceNode;
       sourceNode.buffer = buffer;
       sourceNode.connect(gainNodeRef.current!);
+
+      const segment = segments[nextSegmentToSchedule];
       
       // Store the start time directly on the node for easier cleanup
       sourceNode.startTime = scheduleTime;
@@ -629,40 +659,14 @@ export default function AudioPlayer({
       // Add this segment to our scheduled segments list
       scheduledSegmentsRef.current.push(nextSegmentToSchedule);
       
-      // Move to the next segment 
-      if (infiniteMode) {
-        let dice = Math.random() * 100
-        let since_last_jump = Math.round(Math.abs(scheduleTime - (lastJumpTimeRef.current ?? 0)));
-        // Use jump likelihood to decide whether to use the defined next segment or pick a jump candidate
-        let jump = (dice < jumpLikelihood) && 
-          (since_last_jump >= JUMP_GRACEPERIOD) && 
-          segment.jump_candidates && 
-          (segment.jump_candidates.length > 0);
-
-        let metadata = `Dice: ${dice.toFixed(2)}, Likelihood: ${jumpLikelihood}, Since Last Jump: ${since_last_jump}, Last Jump: ${lastJumpTimeRef.current?.toFixed(0)}, Schedule Time: ${scheduleTime.toFixed(0)}, Jump Grace: ${JUMP_GRACEPERIOD}`;
-        
-        if (jump) {
-          // Pick a random jump candidate
-          const jumpCandidateIndex = Math.floor(Math.random() * segment.jump_candidates.length);
-          const jumpTarget = segment.jump_candidates[jumpCandidateIndex];
-          console.info(`>>> Jumped to ${jumpTarget} instead of ${segment.next} from ${segment.jump_candidates.length} candidates. ` + metadata);
-          nextSegmentToSchedule = jumpTarget;
-          lastJumpTimeRef.current = scheduleTime;
-        } else {
-          // Follow the predefined next segment
-          nextSegmentToSchedule = segment.next;
-          console.debug(`No Jump. ` + metadata);
-        }
-      } else {
-        // Sequential mode
-        nextSegmentToSchedule = (nextSegmentToSchedule + 1) % segments.length;
-      }
     }
     
     // Schedule the next check - make it more responsive when we have few segments scheduled
     const nextCheckDelay = scheduledSegmentsRef.current.length < bufferAhead / 2 ? 0.1 : 0.5;
     nextScheduleTimeRef.current = startTime + nextCheckDelay;
-  }, [isPlaying, useWebAudioAPI, audioDecoded, bufferAhead, segments, currentSegment, infiniteMode, jumpLikelihood, stopAudioNodesBeforeTime]);
+
+    setIsScheduling(false); // Reset the flag after execution
+  }, [isPlaying, useWebAudioAPI, audioDecoded, bufferAhead, segments, currentSegment, jumpLikelihood, stopAudioNodesBeforeTime, isScheduling]);
 
   // Periodically check if we need to schedule more audio 
   useEffect(() => {
