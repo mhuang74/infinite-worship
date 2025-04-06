@@ -38,6 +38,9 @@ RUN npm install
 # Copy the rest of the frontend code
 COPY frontend/ .
 
+# Create a .env file with the specified content
+RUN echo "NEXT_PUBLIC_API_URL=http://35.83.167.212:5000" > .env
+
 # Build the frontend application
 RUN npm run build
 
