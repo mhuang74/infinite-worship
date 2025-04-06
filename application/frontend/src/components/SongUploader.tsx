@@ -59,11 +59,16 @@ export default function SongUploader({ onSongUpload }: SongUploaderProps) {
     }
   };
 
-  const handleSubmit = (file?: File) => {
-    if (file) {
-        onSongUpload(file);
+  const handleSubmit = (e: React.FormEvent<HTMLFormElement> | File) => {
+    if (e instanceof File) {
+      onSongUpload(e);
     } else {
+      e.preventDefault();
+      if (selectedFile) {
+        onSongUpload(selectedFile);
+      } else {
         setError('Please select a file first.');
+      }
     }
   };
 

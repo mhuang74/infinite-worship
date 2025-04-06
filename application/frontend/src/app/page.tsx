@@ -1,17 +1,16 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import SongUploader from '@/components/SongUploader';
 import AudioPlayer from '@/components/AudioPlayer';
 import SegmentVisualizer from '@/components/SegmentVisualizer';
 import { uploadSong } from '@/services/api';
-import { SongData, PlaybackState, Segment } from '@/types';
+import { SongData, PlaybackState } from '@/types';
 
 export default function Home() {
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [songData, setSongData] = useState<SongData | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [playbackState, setPlaybackState] = useState<PlaybackState>({
     currentSegment: 0,
     nextSegment: 0,
@@ -26,7 +25,6 @@ export default function Home() {
   const handleSongUpload = async (file: File) => {
     setAudioFile(file);
     setIsProcessing(true);
-    setError(null);
     
     try {
       // Try to use the real API
@@ -45,19 +43,9 @@ export default function Home() {
           currentTime: 0,
         });
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error processing song with API:', err);
-      
-      // Extract error message
-      let errorMessage = 'Failed to process song with API.';
-      if (err.response && err.response.data && err.response.data.error) {
-        errorMessage = err.response.data.error;
-      } else if (err.message) {
-        errorMessage = err.message;
-      }
-      
-      setError(`${errorMessage}`);
-      
+     
     } finally {
       setIsProcessing(false);
     }
@@ -65,30 +53,7 @@ export default function Home() {
 
   // Update current segment based on playback time
   const handleTimeUpdate = (currentTime: number, beatsUntilJump: number) => {
-    if (!songData) return;
-    
-    // // Find the current segment based on time
-    // let currentSegmentIndex = 0;
-    // let accumulatedTime = 0;
-    
-    // for (let i = 0; i < songData.segments.length; i++) {
-    //   accumulatedTime += songData.segments[i].duration;
-    //   if (currentTime < accumulatedTime) {
-    //     currentSegmentIndex = i;
-    //     break;
-    //   }
-    // }
-    
-    // // Calculate beats until jump (for demo purposes)
-    // const segment = songData.segments[currentSegmentIndex];
-    // const nextSegmentIndex = segment.next;
-    
-    // setPlaybackState({
-    //   currentSegment: currentSegmentIndex,
-    //   nextSegment: nextSegmentIndex,
-    //   beatsUntilJump,
-    //   currentTime,
-    // });
+    console.debug(`Current time: ${currentTime}, Beats Until Jump: ${beatsUntilJump}`);
   };
 
   // Handle segment change from the AudioPlayer in infinite mode
@@ -150,7 +115,7 @@ export default function Home() {
               infiniteMode={infinitePlaybackActive}
             />
             
-            
+            {audioFile && songData && ( 
             <div className="bg-white rounded-lg shadow-md p-6 mb-8">
               <h3 className="text-lg font-medium text-gray-800 mb-4">Song File: {audioFile.name}</h3>
               <div className="grid grid-cols-2 gap-4">
@@ -178,6 +143,7 @@ export default function Home() {
                 </div>
               </div>
             </div>
+            )}
           </>
         )}
       </div>

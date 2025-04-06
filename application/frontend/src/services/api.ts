@@ -47,40 +47,51 @@ export const uploadSong = async (file: File): Promise<SongData> => {
     });
     
     return response.data;
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error uploading song:', error);
     
     // Enhance error message based on the type of error
-    if (error.response) {
-      // The request was made and the server responded with a status code
-      // that falls out of the range of 2xx
-      const errorMessage = error.response.data?.error || 'Server error';
-      throw new Error(`Server error: ${errorMessage}`);
-    } else if (error.request) {
-      // The request was made but no response was received
-      throw new Error('No response from server. Please check if the backend is running.');
+    if (axios.isAxiosError(error)) {
+      if (error.response) {
+        // The request was made and the server responded with a status code
+        // that falls out of the range of 2xx
+        const errorMessage = error.response.data?.error || 'Server error';
+        throw new Error(`Server error: ${errorMessage}`);
+      } else if (error.request) {
+        // The request was made but no response was received
+        throw new Error('No response from server. Please check if the backend is running.');
+      }
     } else {
       // Something happened in setting up the request that triggered an Error
       throw error;
     }
   }
+  throw new Error('Unexpected error occurred during song upload.')
 };
 
 export const getSongSegments = async (songId: string): Promise<SongData> => {
   try {
     const response = await api.get(`/segments/${songId}`);
     return response.data;
-  } catch (error: any) {
-    console.error('Error fetching song segments:', error);
+  } catch (error: unknown) {
+    console.error('Error uploading song:', error);
     
-    if (error.response) {
-      const errorMessage = error.response.data?.error || 'Server error';
-      throw new Error(`Server error: ${errorMessage}`);
-    } else if (error.request) {
-      throw new Error('No response from server. Please check if the backend is running.');
+    // Enhance error message based on the type of error
+    if (axios.isAxiosError(error)) {
+      if (error.response) {
+        // The request was made and the server responded with a status code
+        // that falls out of the range of 2xx
+        const errorMessage = error.response.data?.error || 'Server error';
+        throw new Error(`Server error: ${errorMessage}`);
+      } else if (error.request) {
+        // The request was made but no response was received
+        throw new Error('No response from server. Please check if the backend is running.');
+      }
     } else {
+      // Something happened in setting up the request that triggered an Error
       throw error;
     }
   }
+  throw new Error('Unexpected error occurred during retrieving song segments.')
 };
 
