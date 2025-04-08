@@ -11,6 +11,7 @@ export interface Segment {
 }
 
 export interface SongData {
+  song_id: string;
   segments: Segment[];
   duration: number;
   tempo: number;

@@ -69,6 +69,7 @@ export const uploadSong = async (file: File): Promise<SongData> => {
   throw new Error('Unexpected error occurred during song upload.')
 };
 
+// Unused. In future, can get song data for previous processed songs.
 export const getSongSegments = async (songId: string): Promise<SongData> => {
   try {
     const response = await api.get(`/segments/${songId}`);

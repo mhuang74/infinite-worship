@@ -30,6 +30,8 @@ export default function Home() {
       // Try to use the real API
       const data = await uploadSong(file);
       setSongData(data);
+
+      console.info(`Successfully processed song. SongId: ${data.song_id}, Segments ${data.segments.length}`);
       
       // Initialize playback state
       if (data.segments.length > 0) {
