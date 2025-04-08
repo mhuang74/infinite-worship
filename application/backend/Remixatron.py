@@ -553,11 +553,10 @@ class InfiniteJukebox(object):
 
         fade = len(info) - 1
 
-        # HACK: keep the whole song, since not sure about 75% heuristics
-        # for b in reversed(info):
-        #     if b['amplitude'] >= (.75 * max_amplitude):
-        #         fade = info.index(b)
-        #         break
+        for b in reversed(info):
+            if b['amplitude'] >= (.75 * max_amplitude):
+                fade = info.index(b)
+                break
 
         # don't need the entire song, since it gets repetitive
         beats = info[self.__start_beat:fade + 1]
