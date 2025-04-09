@@ -55,7 +55,7 @@ export default function Home() {
 
   // Update current segment based on playback time
   const handleTimeUpdate = (currentTime: number, beatsUntilJump: number) => {
-    console.debug(`Current time: ${currentTime}, Beats Until Jump: ${beatsUntilJump}`);
+    console.debug(`handleTimeUpdate(). Current time: ${currentTime.toFixed(2)}, BeatsUntilJump: ${beatsUntilJump}`);
   };
 
   // Handle segment change from the AudioPlayer in infinite mode
@@ -95,7 +95,7 @@ export default function Home() {
         
    
         {audioFile && !isProcessing && (
-          <AudioPlayer 
+          <AudioPlayer
             audioFile={audioFile}
             currentSegment={playbackState.currentSegment}
             nextSegment={playbackState.nextSegment}
