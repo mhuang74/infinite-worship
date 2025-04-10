@@ -2,6 +2,7 @@ import os
 import sys
 import uuid
 import json
+import pickle
 import traceback
 import numpy as np
 from flask import Flask, request, jsonify
@@ -44,49 +45,72 @@ def upload_file():
             return jsonify({'error': 'No selected file'}), 400
         
         if file:
-            # Generate deterministic ID by hashing the file contents
-            file_contents = file.read()
-            # Generate deterministic ID using SHA-256 hash of file contents
-            import hashlib
-            song_id = hashlib.sha256(file_contents).hexdigest()
-            file.seek(0)  # Reset file pointer after reading
-            
-            # Save the file
-            # filename = secure_filename(file.filename)
-            file_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{song_id}")
-            file.save(file_path)
-            
-            print(f"File saved to {file_path}")
-            
+
+            safe_filename = secure_filename(file.filename)
+                        
             try:
+                # Generate deterministic ID by hashing the file contents
+                file_contents = file.read()
+                # Generate deterministic ID using SHA-256 hash of file contents
+                import hashlib
+                song_id = safe_filename + '_' + hashlib.sha256(file_contents).hexdigest()
+                file.seek(0)  # Reset file pointer after reading
+                
+                # Save the file
+                # filename = secure_filename(file.filename)
+                file_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{song_id}")
+                file.save(file_path)
+                
+                print(f"Song {file.filename} saved to {file_path}")
+
                 # Check if file exists and is readable
                 if not os.path.exists(file_path):
-                    return jsonify({'error': f'File not saved properly to {file_path}'}), 500
+                    return jsonify({'error': f'Song {file.filename} not saved properly to {file_path}'}), 500
                 
                 # Get file size
                 file_size = os.path.getsize(file_path)
                 print(f"File size: {file_size} bytes")
                 
                 if file_size == 0:
-                    return jsonify({'error': 'Uploaded file is empty'}), 400
+                    return jsonify({'error': 'Uploaded song {file.filename} is empty'}), 400
                 
-                # Load cached beats if available
-                beats_cache_filename = file_path + '.npy'
-                cached_beats = np.array([])
+            except Exception as e:
+                print(f"Error checking file: {str(e)}")
+                print(traceback.format_exc())
+                return jsonify({'error': f'Error reading or relocating song {file.filename}: {str(e)}'}), 500
+            
+            # Load cached beats if available
+            beats_cache_filename = file_path + '_beats.npy'
+            cached_beats = np.array([])
+        
+            try:
+                cached_beats = np.load(beats_cache_filename)
+                print(f"Loaded beat cache from {beats_cache_filename}")
+            except FileNotFoundError:
+                print(f"No beats cache file found: '{beats_cache_filename}'")
+            except Exception as e:
+                print(f"Warning: Error loading beat cache '{beats_cache_filename}': {e}")
 
-                try:
-                    cached_beats = np.load(beats_cache_filename)
-                    print(f"Loaded beat cache from {beats_cache_filename}")
-                except FileNotFoundError:
-                    print(f"No beats cache file found: '{beats_cache_filename}'")
-                except Exception as e:
-                    print(f"Warning: Error loading beat cache '{beats_cache_filename}': {e}")
 
-                # Process the song with InfiniteJukebox
-                print(f"Starting to process file with InfiniteJukebox...")
-                
-                # Use a try-except block specifically for the InfiniteJukebox processing
+            
+            # try to load pickled jukebox
+            jukebox_pickled_filename = file_path + '_jukebox.pkl'
+            jukebox = None
+
+            try:
+                with open(jukebox_pickled_filename, 'rb') as f:
+                    jukebox = pickle.load(f)
+                print(f"Loaded pickled jukebox for song {file.filename} from {jukebox_pickled_filename}")
+            except FileNotFoundError:
+                print(f"No pickled jukebox file found: '{jukebox_pickled_filename}'")
+            except Exception as e:
+                print(f"Warning: Error loading pickled jukebox '{jukebox_pickled_filename}': {e}")
+
+            if jukebox is None:
+                # Process song with InfiniteJukebox
                 try:
+                    print(f"Starting to process file with InfiniteJukebox...")
+
                     jukebox = InfiniteJukebox(
                         filename=file_path,
                         progress_callback=progress_callback,
@@ -98,47 +122,53 @@ def upload_file():
                     if not hasattr(jukebox, 'beats') or len(jukebox.beats) == 0:
                         return jsonify({'error': 'No beats detected in the audio file'}), 400
                     
-                    print(f"Successfully processed file. Found {len(jukebox.beats)} beats.")
+                    # Save the jukebox object as a pickled file for future use
+                    try:
+                        with open(jukebox_pickled_filename, 'wb') as f:
+                            pickle.dump(jukebox, f)
+                        print(f"Successfully saved pickled jukebox to {jukebox_pickled_filename}")
+                    except Exception as e:
+                        print(f"Warning: Error saving pickled jukebox '{jukebox_pickled_filename}': {e}")
                     
-                    # Convert beats to a serializable format
-                    segments = []
-                    for beat in jukebox.beats:
-                        # Remove the buffer which is not JSON serializable
-                        beat_copy = beat.copy()
-                        # if 'buffer' in beat_copy:
-                        #     del beat_copy['buffer']
-                        # if 'start_index' in beat_copy:
-                        #     del beat_copy['start_index']
-                        # if 'stop_index' in beat_copy:
-                        #     del beat_copy['stop_index']
-                        segments.append(beat_copy)
-                    
-                    # Store the processed data
-                    processed_songs[song_id] = {
-                        'segments': segments,
-                        'duration': jukebox.duration,
-                        'tempo': float(jukebox.tempo),
-                        'sample_rate': jukebox.sample_rate
-                    }
-                    
-                    return jsonify({
-                        'song_id': song_id,
-                        'segments': segments,
-                        'duration': jukebox.duration,
-                        'tempo': float(jukebox.tempo),
-                        'sample_rate': jukebox.sample_rate
-                    })
+                    print(f"Successfully processed song {file.filename}. Found {len(jukebox.beats)} beats.")
                 
                 except Exception as e:
                     print(f"Error in InfiniteJukebox processing: {str(e)}")
                     print(traceback.format_exc())
                     return jsonify({'error': f'Error processing audio: {str(e)}'}), 500
-                
-            except Exception as e:
-                print(f"Error checking or processing file: {str(e)}")
-                print(traceback.format_exc())
-                return jsonify({'error': f'Error processing file: {str(e)}'}), 500
-    
+
+
+            # Convert beats to a serializable format
+            segments = []
+            for beat in jukebox.beats:
+                # Remove the buffer which is not JSON serializable
+                beat_copy = beat.copy()
+                # if 'buffer' in beat_copy:
+                #     del beat_copy['buffer']
+                # if 'start_index' in beat_copy:
+                #     del beat_copy['start_index']
+                # if 'stop_index' in beat_copy:
+                #     del beat_copy['stop_index']
+                segments.append(beat_copy)
+            
+            # Store the processed data
+            processed_songs[song_id] = {
+                'filename': file.filename,
+                'segments': segments,
+                'duration': jukebox.duration,
+                'tempo': float(jukebox.tempo),
+                'sample_rate': jukebox.sample_rate
+            }
+            
+            return jsonify({
+                'filename': file.filename,
+                'song_id': song_id,
+                'segments': segments,
+                'duration': jukebox.duration,
+                'tempo': float(jukebox.tempo),
+                'sample_rate': jukebox.sample_rate
+            })
+
     except Exception as e:
         print(f"Unexpected error in upload_file: {str(e)}")
         print(traceback.format_exc())

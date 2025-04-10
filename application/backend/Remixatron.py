@@ -297,7 +297,7 @@ class InfiniteJukebox(object):
                     raise Exception("No downbeats detected with madmom")
                 
                 # write downbeat cache
-                beats_cache_filename = self.__filename + '.npy'
+                beats_cache_filename = self.__filename + '_beats.npy'
                 try:
                     np.save(beats_cache_filename, downbeats)
                 except Exception as e:
