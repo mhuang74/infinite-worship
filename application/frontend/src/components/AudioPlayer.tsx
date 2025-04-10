@@ -393,8 +393,10 @@ export default function AudioPlayer({
     }, 300); // 300ms debounce
 
     // Initial scheduling
-    console.debug('Initial scheduling of segments');
-    scheduleSegments();
+    if (audioFile !== lastAudioFileRef.current){
+      console.debug('Song changed. Initial scheduling of segments');
+      scheduleSegments();
+    }
 
     // Clean up on unmount or when dependencies change
     return () => {
@@ -419,7 +421,7 @@ export default function AudioPlayer({
         }
       }
     };
-  });
+  }, [audioFile]);
 
   // Update volume when it changes
   useEffect(() => {
@@ -515,16 +517,21 @@ export default function AudioPlayer({
   // Report current segment to parent component
   useEffect(() => {
     if (infiniteMode && isPlaying && segments.length > 0) {
+      console.debug(`inside useEffect add Interval to check segment change.`)
+
       const reportInterval = setInterval(() => {
+        // console.debug(`inside Interval to check segment change. Current: ${currentPlayingSegmentRef.current}, Last: ${lastReportedSegmentRef.current}`)
         // Only report if the segment has changed
         if (currentPlayingSegmentRef.current !== lastReportedSegmentRef.current) {
+
+          console.debug(`Updated current segment. Current: ${currentPlayingSegmentRef.current}, Last: ${lastReportedSegmentRef.current}`)
+
           lastReportedSegmentRef.current = currentPlayingSegmentRef.current;
-          onTimeUpdate(currentTimeRef.current, beatsUntilJump);
 
-          // console.debug('Reporting current segment:', currentPlayingSegmentRef.current);
-          // console.debug('Next jump from:', nextJumpFrom.current);
-          // console.debug('Next jump to:', nextJumpTo.current);
-
+          
+          if (audioContextRef.current) {
+            onTimeUpdate(audioContextRef.current.currentTime, 0);
+          }
           
           // if already passed JumpFrom point, clear jump info
           if (currentPlayingSegmentRef.current >= nextJumpFrom.current) {
@@ -538,11 +545,13 @@ export default function AudioPlayer({
             onSegmentChange(currentPlayingSegmentRef.current, nextJumpFrom.current, nextJumpTo.current);
           }
         }
-      }, 100);
+      }, 250);
       
       return () => clearInterval(reportInterval);
+    } else {
+      console.debug(`Early return, onSegmentChange not triggered. isPlaying: ${isPlaying}, segments: ${segments.length}`)
     }
-  }, [infiniteMode, isPlaying, segments.length, onTimeUpdate, onSegmentChange, beatsUntilJump]);
+  }, [isPlaying]);
 
   // Schedule audio segments for playback
   const scheduleSegments = useCallback(() => {
@@ -553,8 +562,16 @@ export default function AudioPlayer({
 
     setIsScheduling(true); // Set the flag to indicate the function is running
 
-    if (!audioContextRef.current || !audioBufferRef.current || !isPlaying || !useWebAudioAPI || !audioDecoded || segments.length === 0) {
+    if (!audioContextRef.current || !audioBufferRef.current || !useWebAudioAPI || !audioDecoded || segments.length === 0) {
       setIsScheduling(false);  // Reset the flag if early return
+      console.debug('scheduleSegments() returned early. conditions:', {
+        audioContext: audioContextRef.current,
+        audioBuffer: audioBufferRef.current,
+        isPlaying,
+        useWebAudioAPI,
+        audioDecoded,
+        segmentsLength: segments.length,
+      });
       return;
     }
 
@@ -593,13 +610,13 @@ export default function AudioPlayer({
             segment.jump_candidates && 
             (segment.jump_candidates.length > 0);
 
-          const metadata = `Dice: ${dice.toFixed(2)}, Likelihood: ${jumpLikelihood}, Since Last Jump: ${since_last_jump}, Last Jump: ${lastJumpTimeRef.current?.toFixed(0)}, Schedule Time: ${scheduleTime.toFixed(0)}, Jump Grace: ${JUMP_GRACEPERIOD}`;
+          const jump_context = `Candidates: [${segment.jump_candidates}], Dice: ${dice.toFixed(2)}, Likelihood: ${jumpLikelihood}, Since Last Jump: ${since_last_jump}, Last Jump: ${lastJumpTimeRef.current?.toFixed(0)}, Schedule Time: ${scheduleTime.toFixed(0)}, Jump Grace: ${JUMP_GRACEPERIOD}`;
           
           if (jump) {
             // Pick a random jump candidate
             const jumpCandidateIndex = Math.floor(Math.random() * segment.jump_candidates.length);
             const jumpTarget = segment.jump_candidates[jumpCandidateIndex];
-            console.info(`>>> Jump from ${lastScheduledSegment} to ${jumpTarget}. candidates: ${segment.jump_candidates.length}. ` + metadata);
+            console.info(`>>> Jump from ${lastScheduledSegment} to ${jumpTarget}. ` + jump_context);
             nextSegmentToSchedule = jumpTarget;
             lastJumpTimeRef.current = scheduleTime;
             nextJumpFrom.current = lastScheduledSegment;
@@ -607,7 +624,7 @@ export default function AudioPlayer({
           } else {
             // Follow the predefined next segment
             nextSegmentToSchedule = segment?.next || 0;
-            console.debug(`No Jump. ` + metadata);
+            console.debug(`No Jump. ` + jump_context);
           }
         } else {
           // Sequential mode
@@ -635,22 +652,19 @@ export default function AudioPlayer({
       // Calculate segment start and duration
       const segmentStart = segment.start;
       const segmentDuration = segment.duration;
+
+      // Update the current playing segment when starting to play
+      const segmentIndex = nextSegmentToSchedule;
+      sourceNode.onended = () => {
+        currentPlayingSegmentRef.current = segmentIndex;
+        // console.debug(`sourceNode.onended triggered for segment ${segmentIndex}. Current segment updated to: ${currentPlayingSegmentRef.current}`)
+      };
       
       // Make sure we schedule with proper stop time to avoid overlaps
       sourceNode.start(scheduleTime, segmentStart, segmentDuration);
       
-      // Create an event to update the current playing segment
-      const segmentIndex = nextSegmentToSchedule;
       
-      // Schedule a timeout to update the current playing segment
-      const timeUntilSegmentStarts = (scheduleTime - context.currentTime) * 1000;
-      setTimeout(() => {
-        if (!isPlaying) return; // Skip update if we're not playing anymore
-        
-        currentPlayingSegmentRef.current = segmentIndex;
-      }, timeUntilSegmentStarts);
-      
-      console.debug(`Scheduled segment ${nextSegmentToSchedule} at time ${scheduleTime.toFixed(2)}, duration: ${segmentDuration.toFixed(2)}, song location: ${segmentStart.toFixed(2)}, horizon: ${(scheduleTime - currentTime).toFixed(2)}s ahead`);
+      console.debug(`Scheduled segment ${nextSegmentToSchedule} at time ${scheduleTime.toFixed(2)}, duration: ${segmentDuration.toFixed(2)}, song location: ${segmentStart.toFixed(2)}s, horizon: ${(scheduleTime - currentTime).toFixed(2)}s ahead`);
       
       // Keep track of the scheduled end time
       scheduleTime += segmentDuration;
@@ -674,13 +688,21 @@ export default function AudioPlayer({
   // Periodically check if we need to schedule more audio 
   useEffect(() => {
     if (!isPlaying || !useWebAudioAPI || !audioDecoded) {
+      console.debug('early return for scheduling check:', {
+        isPlaying: isPlaying,
+        useWebAudioAPI: useWebAudioAPI,
+        audioDecoded: audioDecoded,
+        scheduledEndTime: scheduledEndTimeRef.current,
+        nextScheduleTime: nextScheduleTimeRef.current,
+        currentTime: audioContextRef.current ? audioContextRef.current.currentTime : null,
+      });
       return;
     }
     
-    // Initial scheduling
-    console.debug('Initial scheduling of segments');
-    scheduleSegments();
-    
+    // Setup check interval
+    const check_frequency = 250; // msec
+    console.debug(`Cleanup and scheduling done every ${check_frequency} msec`);
+
     // Set up interval to check if we need to schedule more segments
     const intervalId = setInterval(() => {
       if (audioContextRef.current) {
@@ -712,14 +734,16 @@ export default function AudioPlayer({
           });
 
           scheduleSegments();
+        } else {
+          console.debug(`Scheduling check. No new segments needed. Time: ${currentTime.toFixed(2)}`);
         }
       }
-    }, 250); 
+    }, check_frequency); 
     
     return () => {
       clearInterval(intervalId);
     };
-  });
+  }, [bufferAhead, isPlaying, jumpLikelihood]);
   
   // Reset scheduled segments when currentSegment changes from parent
   useEffect(() => {
@@ -742,7 +766,7 @@ export default function AudioPlayer({
     console.log('Toggle play/pause called. Current state:', { isPlaying, useNativeAudio, wavesurferReady, useWebAudioAPI });
     
     if (useWebAudioAPI && audioContextRef.current && audioDecoded) {
-      console.log('Using Web Audio API for playback');
+      console.debug('Using Web Audio API for playback');
       
       if (isPlaying) {
         // Pause playback
@@ -759,7 +783,7 @@ export default function AudioPlayer({
         setTimeout(() => scheduleSegments(), 0);
       }
     } else if (useNativeAudio && audioRef.current) {
-      console.log('Using native audio element for playback');
+      console.debug('Using native audio element for playback');
       if (isPlaying) {
         audioRef.current.pause();
       } else {
@@ -768,7 +792,7 @@ export default function AudioPlayer({
         });
       }
     } else if (wavesurferRef.current && wavesurferReady) {
-      console.log('Using WaveSurfer for playback');
+      console.debug('Using WaveSurfer for playback');
       if (isPlaying) {
         wavesurferRef.current.pause();
       } else {
