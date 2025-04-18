@@ -3,6 +3,7 @@ import sys
 import uuid
 import json
 import pickle
+import gzip
 import traceback
 import numpy as np
 from flask import Flask, request, jsonify
@@ -98,13 +99,13 @@ def upload_file():
             jukebox = None
 
             try:
-                with open(jukebox_pickled_filename, 'rb') as f:
+                with gzip.open(jukebox_pickled_filename + '.gz', 'rb') as f:
                     jukebox = pickle.load(f)
-                print(f"Loaded pickled jukebox for song {file.filename} from {jukebox_pickled_filename}")
+                print(f"Loaded compressed pickled jukebox for song {file.filename} from {jukebox_pickled_filename}.gz")
             except FileNotFoundError:
-                print(f"No pickled jukebox file found: '{jukebox_pickled_filename}'")
+                print(f"No compressed pickled jukebox file found: '{jukebox_pickled_filename}.gz'")
             except Exception as e:
-                print(f"Warning: Error loading pickled jukebox '{jukebox_pickled_filename}': {e}")
+                print(f"Warning: Error loading compressed pickled jukebox '{jukebox_pickled_filename}.gz': {e}")
 
             if jukebox is None:
                 # Process song with InfiniteJukebox
@@ -124,14 +125,14 @@ def upload_file():
                     
                     # Save the jukebox object as a pickled file for future use
                     try:
-                        with open(jukebox_pickled_filename, 'wb') as f:
-                            pickle.dump(jukebox, f)
-                        print(f"Successfully saved pickled jukebox to {jukebox_pickled_filename}")
+                        with gzip.open(jukebox_pickled_filename + '.gz', 'wb') as f:
+                            pickle.dump(jukebox, f, protocol=pickle.HIGHEST_PROTOCOL)
+                        print(f"Successfully saved compressed pickled jukebox to {jukebox_pickled_filename}.gz")
                     except Exception as e:
-                        print(f"Warning: Error saving pickled jukebox '{jukebox_pickled_filename}': {e}")
+                        print(f"Warning: Error saving compressed pickled jukebox '{jukebox_pickled_filename}.gz': {e}")
                     
                     print(f"Successfully processed song {file.filename}. Found {len(jukebox.beats)} beats.")
-                
+
                 except Exception as e:
                     print(f"Error in InfiniteJukebox processing: {str(e)}")
                     print(traceback.format_exc())
