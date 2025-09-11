@@ -33,7 +33,7 @@ Infinite Worship analyzes audio files to identify beats and segments, then creat
 
 1. Navigate to the frontend directory:
    ```
-   cd code/frontend
+   cd application/frontend
    ```
 
 2. Install dependencies:
@@ -52,7 +52,7 @@ Infinite Worship analyzes audio files to identify beats and segments, then creat
 
 1. Navigate to the backend directory:
    ```
-   cd code/backend
+   cd application/backend
    ```
 
 2. Install dependencies:
