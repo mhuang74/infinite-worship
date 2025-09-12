@@ -115,15 +115,14 @@ export class AudioEngine {
 
     // 1. Create GainNodes for fade-out and fade-in
     const fadeOutGain = this.audioContext.createGain();
-    fadeOutGain.connect(this.audioContext.destination);
+    fadeOutGain.connect(this.mainGain);
     const fadeInGain = this.audioContext.createGain();
-    fadeInGain.connect(this.audioContext.destination);
+    fadeInGain.connect(this.mainGain);
 
     // 2. Schedule the final 16 beats to fade out
     for (let i = 0; i < 16; i++) {
       const beatIndex = this.beats.length - 16 + i;
       const beat = this.beats[beatIndex];
-      this.onBeatChange(beat);
       this.playBeat(beatIndex, fadeTime, fadeOutGain);
       fadeTime += beat.duration;
     }
@@ -134,17 +133,19 @@ export class AudioEngine {
     fadeOutGain.gain.exponentialRampToValueAtTime(0.0001, fadeEndTime);
 
     // 4. Schedule the first 16 beats to fade in simultaneously
-    fadeTime = fadeStartTime;
+    let fadeInPlayTime = fadeStartTime;
     for (let i = 0; i < 16; i++) {
       const beat = this.beats[i];
-      // Don't call onBeatChange for the fade-in to avoid UI confusion
-      this.playBeat(i, fadeTime, fadeInGain);
-      fadeTime += beat.duration;
+      this.onBeatChange(beat);
+      this.playBeat(i, fadeInPlayTime, fadeInGain);
+      fadeInPlayTime += beat.duration;
     }
 
-    // 5. Schedule the exponential fade-in
+    // 5. Schedule a faster exponential fade-in over the first 8 beats
+    const fadeInDuration = this.beats.slice(0, 8).reduce((acc, beat) => acc + beat.duration, 0);
+    const fadeInEndTime = fadeStartTime + fadeInDuration;
     fadeInGain.gain.setValueAtTime(0.0001, fadeStartTime);
-    fadeInGain.gain.exponentialRampToValueAtTime(1.0, fadeEndTime);
+    fadeInGain.gain.exponentialRampToValueAtTime(1.0, fadeInEndTime);
 
     // 6. Continue playback from the 17th beat after the fade completes
     this.currentBeatIndex = 16;
@@ -170,22 +171,40 @@ export class AudioEngine {
       return null;
     }
 
+    const currentIndex = this.beats.indexOf(beat);
     const validCandidates = beat.jump_candidates.filter(beatId => {
       const candidateBeat = this.beats.find(b => b.id === beatId);
       if (!candidateBeat) return false;
-      const nextBeatIndex = this.beats.indexOf(candidateBeat) + 1;
-      if (nextBeatIndex >= this.beats.length) return false;
-      const nextBeat = this.beats[nextBeatIndex];
-      return nextBeat && nextBeat.jump_candidates && nextBeat.jump_candidates.length > 0;
+      const candidateIndex = this.beats.indexOf(candidateBeat);
+      return Math.abs(candidateIndex - currentIndex) >= 16;
     });
 
     if (validCandidates.length === 0) {
-      console.log(`No valid jump candidates that avoid dead ends for beat ${beat.id}.`);
+      console.log(`No valid jump candidates at least 16 beats away for beat ${beat.id}.`);
       return null;
     }
 
-    const randomBeatId = validCandidates[Math.floor(Math.random() * validCandidates.length)];
-    const chosenBeat = this.beats.find(b => b.id === randomBeatId);
+    // Assign weights: higher weight for earlier beats (lower index)
+    const candidatesWithWeights = validCandidates.map(beatId => {
+      const candidateBeat = this.beats.find(b => b.id === beatId)!;
+      const candidateIndex = this.beats.indexOf(candidateBeat);
+      const weight = this.beats.length - candidateIndex; // Higher for lower index
+      return { beatId, weight };
+    });
+
+    // Weighted random selection
+    const totalWeight = candidatesWithWeights.reduce((sum, c) => sum + c.weight, 0);
+    let random = Math.random() * totalWeight;
+    let chosenBeatId: number;
+    for (const candidate of candidatesWithWeights) {
+      random -= candidate.weight;
+      if (random <= 0) {
+        chosenBeatId = candidate.beatId;
+        break;
+      }
+    }
+
+    const chosenBeat = this.beats.find(b => b.id === chosenBeatId!);
 
     if (chosenBeat) {
       console.log(
