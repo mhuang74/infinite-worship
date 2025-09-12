@@ -627,7 +627,10 @@ class InfiniteJukebox(object):
         # to the earliest jump candidate rather than enter a section from which no
         # jumping is possible.
 
-        beats[last_chance]['next'] = min(beats[last_chance]['jump_candidates'])
+        if beats[last_chance]['jump_candidates']:
+            beats[last_chance]['next'] = min(beats[last_chance]['jump_candidates'])
+        else:
+            beats[last_chance]['next'] = 0
 
         # store the beats that start after the last jumpable point. That's
         # the outro to the song. We can use these
@@ -800,6 +803,8 @@ class InfiniteJukebox(object):
         # self.play_vector = play_vector
 
         self.__report_progress(1.0, "finished processing")
+
+        self._log_summary()
 
         if self.play_ready:
             self.play_ready.set()
@@ -1083,3 +1088,16 @@ class InfiniteJukebox(object):
         """Convenience method to add debug logging info for later"""
 
         self._extra_diag += line + "\n"
+
+    def _log_summary(self):
+        """Print a summary of the Remixatron output to the console."""
+        summary = {
+            "song name" : self.__filename,
+            "song_duration_seconds": self.duration,
+            "number_of_beats": len(self.beats),
+            "number_of_clusters": self.clusters,
+            "number_of_segments": self.segments
+        }
+        print("Remixatron Summary:")
+        for key, value in summary.items():
+            print(f"{key}: {value}")
