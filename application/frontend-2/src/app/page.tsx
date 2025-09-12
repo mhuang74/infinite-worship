@@ -60,6 +60,33 @@ export default function HomePage() {
     };
   }, [audioFile, songData]);
 
+  const handlePlayPause = useCallback(() => {
+    if (!audioEngineRef.current) return;
+    if (isPlaying) {
+      audioEngineRef.current.pause();
+      setIsPlaying(false);
+    } else {
+      audioEngineRef.current.play();
+      setIsPlaying(true);
+    }
+  }, [isPlaying]);
+
+  // Effect to handle spacebar play/pause
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.code === 'Space') {
+        event.preventDefault();
+        handlePlayPause();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [handlePlayPause]);
+
   const handleUploadSuccess = (data: any) => {
     // This will trigger the useEffect above to set up the new engine
     setSongData(data);
@@ -72,17 +99,6 @@ export default function HomePage() {
 
   const handleUploadError = (message: string) => {
     setError(message);
-  };
-
-  const handlePlayPause = () => {
-    if (!audioEngineRef.current) return;
-    if (isPlaying) {
-      audioEngineRef.current.pause();
-      setIsPlaying(false);
-    } else {
-      audioEngineRef.current.play();
-      setIsPlaying(true);
-    }
   };
 
   const handleRestart = () => {
