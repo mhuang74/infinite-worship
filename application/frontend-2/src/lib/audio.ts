@@ -55,6 +55,30 @@ export class AudioEngine {
     this.play();
   }
 
+  public seekToTime(time: number) {
+    // Find the beat that contains the target time
+    const targetBeatIndex = this.beats.findIndex(beat => beat.start <= time && time < beat.start + beat.duration);
+
+    if (targetBeatIndex === -1) {
+      console.warn(`No beat found for time ${time}`);
+      return;
+    }
+
+    // Update the current beat index
+    this.currentBeatIndex = targetBeatIndex;
+
+    // Calculate the next beat time based on the target time
+    this.nextBeatTime = this.audioContext.currentTime + (this.beats[targetBeatIndex].start + this.beats[targetBeatIndex].duration - time);
+
+    // Update the UI with the new current beat
+    this.onBeatChange(this.beats[targetBeatIndex]);
+
+    // If playing, restart the scheduling from the new position
+    if (this.isPlaying) {
+      this.scheduleNextBeat();
+    }
+  }
+
   private scheduleNextBeat() {
     if (!this.isPlaying) {
       return;

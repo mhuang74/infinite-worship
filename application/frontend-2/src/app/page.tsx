@@ -104,6 +104,16 @@ export default function HomePage() {
     }
   };
 
+  const handleSeek = (progress: number) => {
+    if (!audioEngineRef.current || !songData) return;
+
+    // Calculate the target time in seconds based on the progress (0-1)
+    const totalDuration = songData.segments.reduce((acc: number, beat: any) => acc + beat.duration, 0);
+    const targetTime = progress * totalDuration;
+
+    audioEngineRef.current.seekToTime(targetTime);
+  };
+
   return (
     <main className="flex min-h-screen flex-col items-center justify-between p-24">
       <div className="z-10 w-full max-w-5xl items-center justify-between font-mono text-sm lg:flex">
@@ -119,7 +129,7 @@ export default function HomePage() {
         {songData && (
           <>
             <div className="mb-8">
-              <Visualization audioFile={audioFile} beats={songData.segments} currentBeat={currentBeat} />
+              <Visualization audioFile={audioFile} beats={songData.segments} currentBeat={currentBeat} onSeek={handleSeek} />
             </div>
             <div>
               <PlaybackControls

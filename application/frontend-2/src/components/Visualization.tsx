@@ -1,18 +1,21 @@
 'use client';
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useCallback } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 
 interface VisualizationProps {
   audioFile: File | null;
   beats: any[];
   currentBeat: any | null;
+  onSeek?: (progress: number) => void;
 }
 
-const Visualization: React.FC<VisualizationProps> = ({ audioFile, beats, currentBeat }) => {
+const Visualization: React.FC<VisualizationProps> = ({ audioFile, beats, currentBeat, onSeek }) => {
   const waveformRef = useRef<HTMLDivElement>(null);
   const wavesurfer = useRef<WaveSurfer | null>(null);
+  const isReady = useRef<boolean>(false);
 
+  // Initialize WaveSurfer instance
   useEffect(() => {
     if (waveformRef.current && audioFile) {
       wavesurfer.current = WaveSurfer.create({
@@ -23,16 +26,51 @@ const Visualization: React.FC<VisualizationProps> = ({ audioFile, beats, current
 
       wavesurfer.current.load(URL.createObjectURL(audioFile));
 
+      // Mark as ready when audio is loaded
+      wavesurfer.current.on('ready', () => {
+        isReady.current = true;
+      });
+
       return () => {
-        wavesurfer.current?.destroy();
+        if (wavesurfer.current) {
+          wavesurfer.current.destroy();
+          wavesurfer.current = null;
+          isReady.current = false;
+        }
       };
     }
   }, [audioFile]);
 
+  // Handle seek functionality
+  const handleSeek = useCallback((progress: number) => {
+    if (onSeek) {
+      onSeek(progress);
+    }
+  }, [onSeek]);
+
+  // Add click handler for seeking
   useEffect(() => {
-    if (wavesurfer.current && currentBeat) {
-      const progress = currentBeat.start / wavesurfer.current.getDuration();
-      wavesurfer.current.seekTo(progress);
+    if (wavesurfer.current) {
+      wavesurfer.current.on('click', handleSeek);
+
+      return () => {
+        if (wavesurfer.current) {
+          wavesurfer.current.un('click', handleSeek);
+        }
+      };
+    }
+  }, [handleSeek]);
+
+  // Handle seeking to current beat
+  useEffect(() => {
+    if (wavesurfer.current && currentBeat && isReady.current) {
+      const duration = wavesurfer.current.getDuration();
+      if (duration > 0) {
+        const progress = currentBeat.start / duration;
+        if (isFinite(progress) && progress >= 0 && progress <= 1) {
+          wavesurfer.current.seekTo(progress);
+        }
+      }
     }
   }, [currentBeat]);
 
