@@ -11,7 +11,7 @@ export class AudioEngine {
   private audioBuffer: AudioBuffer;
   private beats: Beat[] = [];
   private onBeatChange: (beat: Beat) => void;
-  private jumpProbability = 0.25;
+  private jumpProbability = 0.15;
   private nextBeatTime = 0;
   private currentBeatIndex = 0;
   private isPlaying = false;
@@ -67,8 +67,8 @@ export class AudioEngine {
     // Update the current beat index
     this.currentBeatIndex = targetBeatIndex;
 
-    // Calculate the next beat time based on the target time
-    this.nextBeatTime = this.audioContext.currentTime + (this.beats[targetBeatIndex].start + this.beats[targetBeatIndex].duration - time);
+    // Set next beat time to current audio context time (immediate scheduling)
+    this.nextBeatTime = this.audioContext.currentTime;
 
     // Update the UI with the new current beat
     this.onBeatChange(this.beats[targetBeatIndex]);
@@ -77,6 +77,10 @@ export class AudioEngine {
     if (this.isPlaying) {
       this.scheduleNextBeat();
     }
+  }
+
+  public getDuration(): number {
+    return this.audioBuffer.duration;
   }
 
   private scheduleNextBeat() {
@@ -103,7 +107,8 @@ export class AudioEngine {
         )}s. Nominal time: ${currentBeat.start.toFixed(2)}s`
       );
 
-      const shouldJump = Math.random() < this.jumpProbability && this.beatsSinceLastJump >= 8;
+      const hasJumpCandidates = currentBeat.jump_candidates && currentBeat.jump_candidates.length > 0;
+      const shouldJump = hasJumpCandidates && Math.random() < this.jumpProbability && this.beatsSinceLastJump >= 8;
       let nextBeat;
 
       if (shouldJump) {

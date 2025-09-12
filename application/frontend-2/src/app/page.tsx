@@ -11,7 +11,7 @@ export default function HomePage() {
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [error, setError] = useState('');
   const [isPlaying, setIsPlaying] = useState(false);
-  const [jumpProbability, setJumpProbability] = useState(0.25);
+  const [jumpProbability, setJumpProbability] = useState(0.15);
   const [currentBeat, setCurrentBeat] = useState<any | null>(null);
 
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -123,8 +123,8 @@ export default function HomePage() {
   const handleSeek = (progress: number) => {
     if (!audioEngineRef.current || !songData) return;
 
-    // Calculate the target time in seconds based on the progress (0-1)
-    const totalDuration = songData.segments.reduce((acc: number, beat: any) => acc + beat.duration, 0);
+    // Get the precise duration from the audio buffer
+    const totalDuration = audioEngineRef.current.getDuration();
     const targetTime = progress * totalDuration;
 
     audioEngineRef.current.seekToTime(targetTime);
