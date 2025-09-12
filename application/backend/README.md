@@ -18,8 +18,29 @@ A Flask-based API for processing audio files, detecting beats, and identifying s
 
 ## Getting Started
 
-### Prerequisites
+### Development Setup with Docker
 
+This is the recommended setup for development, as it encapsulates the backend environment.
+
+**Build the development Docker image:**
+```bash
+docker build -t infinite-worship-app-dev -f dockerfile-dev .
+```
+
+**Start the development Docker container:**
+```bash
+docker run --rm --detach -p 5555:5000 --volume $(pwd):/app --name dev infinite-worship-app-dev
+```
+*Note: This command maps the backend's internal port 5000 to port 5555 on the host machine. Port 5555 is used by the `application-2` frontend because recent versions of macOS run an AirPlay Receiver service on port 5000, making it unavailable for development.*
+
+**Start the backend server inside the container:**
+```bash
+docker exec -it dev bash -c "cd /app && ./start-server.sh"
+```
+
+### Manual Setup
+
+#### Prerequisites
 - Python 3.8 or later
 - FFmpeg (for audio processing)
 
