@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import FileUpload from '@/components/FileUpload';
 import PlaybackControls from '@/components/PlaybackControls';
 import Visualization from '@/components/Visualization';
+import SongMetadata from '@/components/SongMetadata';
 import { AudioEngine, createAudioBuffer } from '@/lib/audio';
 
 export default function HomePage() {
@@ -131,33 +132,60 @@ export default function HomePage() {
   };
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-between p-24">
-      <div className="z-10 w-full max-w-5xl items-center justify-between font-mono text-sm lg:flex">
-        <h1 className="text-4xl font-bold">Infinite Worship</h1>
-      </div>
+    <main className="min-h-screen w-full px-4 py-8 sm:py-12">
+      <div className="mx-auto w-full max-w-6xl space-y-6 sm:space-y-8">
+        <header className="text-center">
+          <h1 className="text-3xl sm:text-4xl font-bold text-white">Infinite Worship</h1>
+          <p className="mt-1 text-sm text-white/80">Intelligent worship playback</p>
+        </header>
 
-      <div className="w-full max-w-5xl">
-        <div className="mb-8">
-          <FileUpload onUploadSuccess={handleUploadSuccess} onUploadError={handleUploadError} />
-          {error && <p className="text-red-500 mt-2">{error}</p>}
-        </div>
+        <section className="cdpanel p-3 sm:p-4">
+          <div className="cdpanel-inner p-4 sm:p-6">
+            <div className="engraved-label mb-2">Disc Tray</div>
+            <FileUpload onUploadSuccess={handleUploadSuccess} onUploadError={handleUploadError} />
+            {error && (
+              <div
+                role="alert"
+                className="mt-3 rounded-md border border-red-400/40 bg-red-500/20 text-white px-3 py-2 text-sm"
+              >
+                {error}
+              </div>
+            )}
+          </div>
+        </section>
 
         {songData && (
-          <>
-            <div className="mb-8">
-              <Visualization audioFile={audioFile} beats={songData.segments} currentBeat={currentBeat} onSeek={handleSeek} />
+          <section className="cdpanel p-3 sm:p-4">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
+              <div className="lg:col-span-2 space-y-4">
+                <Visualization
+                  audioFile={audioFile}
+                  beats={songData.segments}
+                  currentBeat={currentBeat}
+                  onSeek={handleSeek}
+                />
+
+                <PlaybackControls
+                  isPlaying={isPlaying}
+                  jumpProbability={jumpProbability}
+                  onPlayPause={handlePlayPause}
+                  onRestart={handleRestart}
+                  onStop={handleStop}
+                  onJumpProbabilityChange={handleJumpProbabilityChange}
+                />
+              </div>
+
+              <aside className="cdpanel-inner p-4 sm:p-6">
+                <SongMetadata
+                  fileName={audioFile ? audioFile.name : null}
+                  durationSec={audioEngineRef.current ? audioEngineRef.current.getDuration() : null}
+                  beatsCount={songData?.segments ? songData.segments.length : null}
+                  currentBeat={currentBeat}
+                  isPlaying={isPlaying}
+                />
+              </aside>
             </div>
-            <div>
-              <PlaybackControls
-                isPlaying={isPlaying}
-                jumpProbability={jumpProbability}
-                onPlayPause={handlePlayPause}
-                onRestart={handleRestart}
-                onStop={handleStop}
-                onJumpProbabilityChange={handleJumpProbabilityChange}
-              />
-            </div>
-          </>
+          </section>
         )}
       </div>
     </main>
