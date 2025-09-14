@@ -167,7 +167,8 @@ def upload_file():
                 'segments': segments,
                 'duration': jukebox.duration,
                 'tempo': float(jukebox.tempo),
-                'sample_rate': jukebox.sample_rate
+                'sample_rate': jukebox.sample_rate,
+                'clusters': jukebox.clusters
             })
 
     except Exception as e:
@@ -190,4 +191,4 @@ def health_check():
     return jsonify({'status': 'ok', 'message': 'Server is running'}), 200
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000) 
+    app.run(debug=True, host='0.0.0.0', port=5000)
