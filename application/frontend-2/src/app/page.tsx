@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import FileUpload from '@/components/FileUpload';
 import PlaybackControls from '@/components/PlaybackControls';
 import Visualization from '@/components/Visualization';
+import SongMetadata from '@/components/SongMetadata';
 import { AudioEngine, createAudioBuffer } from '@/lib/audio';
 
 export default function HomePage() {
@@ -131,35 +132,131 @@ export default function HomePage() {
   };
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-between p-24">
-      <div className="z-10 w-full max-w-5xl items-center justify-between font-mono text-sm lg:flex">
-        <h1 className="text-4xl font-bold">Infinite Worship</h1>
-      </div>
-
-      <div className="w-full max-w-5xl">
-        <div className="mb-8">
-          <FileUpload onUploadSuccess={handleUploadSuccess} onUploadError={handleUploadError} />
-          {error && <p className="text-red-500 mt-2">{error}</p>}
+    <div className="min-h-screen bg-gradient-to-br from-vintage-silver-200 to-vintage-silver-300 py-4 px-4 sm:py-8 sm:px-6 lg:px-8">
+      {/* Vintage Audio Equipment Housing */}
+      <div className="max-w-6xl mx-auto">
+        
+        {/* Church Branding Header */}
+        <div className="mb-8 text-center">
+          <div className="inline-block bg-church-gradient px-8 py-4 rounded-vintage shadow-vintage-panel">
+            <h1 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-white tracking-wide font-vintage">
+              INFINITE WORSHIP
+            </h1>
+            <div className="flex items-center justify-center mt-2 space-x-2">
+              <div className="w-2 h-2 bg-church-gold-400 rounded-full animate-vintage-glow"></div>
+              <p className="text-church-gold-400 text-sm uppercase tracking-widest font-vintage">
+                Digital Audio System
+              </p>
+              <div className="w-2 h-2 bg-church-gold-400 rounded-full animate-vintage-glow"></div>
+            </div>
+          </div>
         </div>
 
-        {songData && (
-          <>
-            <div className="mb-8">
-              <Visualization audioFile={audioFile} beats={songData.segments} currentBeat={currentBeat} onSeek={handleSeek} />
+        {/* Main Vintage Audio Equipment Panel */}
+        <div className="bg-vintage-brushed rounded-2xl shadow-vintage-panel border-4 border-vintage-silver-400 p-6 sm:p-8">
+          
+          {/* Top Equipment Panel */}
+          <div className="bg-vintage-metal rounded-vintage p-4 mb-6 border-2 border-vintage-silver-300 shadow-vintage-inset">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center space-x-2">
+                <div className="w-3 h-3 bg-red-500 rounded-full shadow-lg"></div>
+                <span className="text-vintage-label font-vintage text-vintage-silver-700 uppercase tracking-wider">POWER</span>
+              </div>
+              <div className="flex items-center space-x-4">
+                <div className="flex items-center space-x-1">
+                  <div className="w-2 h-2 bg-church-gold-400 rounded-full"></div>
+                  <span className="text-vintage-label font-vintage text-vintage-silver-700 uppercase">READY</span>
+                </div>
+                {isPlaying && (
+                  <div className="flex items-center space-x-1">
+                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                    <span className="text-vintage-label font-vintage text-vintage-silver-700 uppercase">PLAYING</span>
+                  </div>
+                )}
+              </div>
             </div>
-            <div>
-              <PlaybackControls
-                isPlaying={isPlaying}
-                jumpProbability={jumpProbability}
-                onPlayPause={handlePlayPause}
-                onRestart={handleRestart}
-                onStop={handleStop}
-                onJumpProbabilityChange={handleJumpProbabilityChange}
-              />
+            
+            {/* File Upload Section - Styled as Tape/CD Input */}
+            <FileUpload onUploadSuccess={handleUploadSuccess} onUploadError={handleUploadError} />
+            {error && (
+              <div className="mt-4 p-3 bg-red-100 border border-red-400 rounded-vintage">
+                <p className="text-red-700 text-sm font-vintage">{error}</p>
+              </div>
+            )}
+          </div>
+
+          {/* Main Display and Controls Section - Only shown when song is loaded */}
+          {songData && (
+            <>
+              {/* Song Information Display Panel */}
+              <div className="mb-6">
+                <div className="bg-church-navy-900 rounded-vintage p-1 shadow-vintage-inset mb-4">
+                  <div className="bg-black rounded-sm p-4">
+                    <SongMetadata songData={songData} />
+                  </div>
+                </div>
+              </div>
+
+              {/* Waveform Visualization Panel */}
+              <div className="mb-6">
+                <div className="bg-vintage-metal rounded-vintage p-4 border-2 border-vintage-silver-300 shadow-vintage-inset">
+                  <div className="flex items-center mb-3">
+                    <div className="w-3 h-3 bg-church-gold-400 rounded-full mr-2"></div>
+                    <span className="text-vintage-label font-vintage text-vintage-silver-700 uppercase tracking-wider">
+                      WAVEFORM MONITOR
+                    </span>
+                  </div>
+                  <Visualization audioFile={audioFile} beats={songData.segments} currentBeat={currentBeat} onSeek={handleSeek} />
+                </div>
+              </div>
+
+              {/* Transport Controls Panel */}
+              <div className="bg-vintage-metal rounded-vintage p-6 border-2 border-vintage-silver-300 shadow-vintage-inset">
+                <div className="flex items-center mb-4">
+                  <div className="w-3 h-3 bg-church-gold-400 rounded-full mr-2"></div>
+                  <span className="text-vintage-label font-vintage text-vintage-silver-700 uppercase tracking-wider">
+                    TRANSPORT CONTROLS
+                  </span>
+                </div>
+                <PlaybackControls
+                  isPlaying={isPlaying}
+                  jumpProbability={jumpProbability}
+                  onPlayPause={handlePlayPause}
+                  onRestart={handleRestart}
+                  onStop={handleStop}
+                  onJumpProbabilityChange={handleJumpProbabilityChange}
+                />
+              </div>
+            </>
+          )}
+
+          {/* Empty State - When no song is loaded */}
+          {!songData && (
+            <div className="text-center py-12">
+              <div className="bg-vintage-metal rounded-vintage p-8 border-2 border-vintage-silver-300 shadow-vintage-inset">
+                <div className="w-24 h-24 mx-auto mb-4 bg-church-navy-900 rounded-full flex items-center justify-center shadow-vintage-inset">
+                  <svg className="w-12 h-12 text-church-gold-400" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/>
+                  </svg>
+                </div>
+                <p className="text-vintage-display font-vintage text-vintage-silver-700 mb-2">
+                  No Audio Loaded
+                </p>
+                <p className="text-vintage-label font-vintage text-vintage-silver-600 uppercase tracking-wider">
+                  Upload a song to begin worship
+                </p>
+              </div>
             </div>
-          </>
-        )}
+          )}
+        </div>
+
+        {/* Equipment Model Information */}
+        <div className="mt-8 text-center">
+          <div className="inline-block bg-vintage-silver-800 text-vintage-silver-200 px-4 py-2 rounded-vintage text-xs font-vintage uppercase tracking-widest">
+            Model: IW-2024 • Professional Audio System • Church Edition
+          </div>
+        </div>
       </div>
-    </main>
+    </div>
   );
 }
