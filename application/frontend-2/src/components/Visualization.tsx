@@ -20,8 +20,15 @@ const Visualization: React.FC<VisualizationProps> = ({ audioFile, beats, current
     if (waveformRef.current && audioFile) {
       wavesurfer.current = WaveSurfer.create({
         container: waveformRef.current,
-        waveColor: 'violet',
-        progressColor: 'purple',
+        waveColor: '#FFD95A',      // gold-400
+        progressColor: '#F5C518',  // gold-500
+        cursorColor: '#FFFFFF',
+        height: 88,
+        barWidth: 2,
+        barGap: 1,
+        barRadius: 2,
+        normalize: true,
+        
       });
 
       wavesurfer.current.load(URL.createObjectURL(audioFile));
@@ -75,24 +82,31 @@ const Visualization: React.FC<VisualizationProps> = ({ audioFile, beats, current
   }, [currentBeat]);
 
   const getBeatColor = (cluster: number) => {
-    const colors = ['bg-red-500', 'bg-blue-500', 'bg-green-500', 'bg-yellow-500', 'bg-purple-500', 'bg-pink-500'];
+    const colors = [
+      'bg-gold-500',
+      'bg-gold-400',
+      'bg-navy-600',
+      'bg-navy-700',
+      'bg-white/40',
+      'bg-white/20'
+    ];
     return colors[cluster % colors.length];
   };
 
   return (
-    <div className="p-6 bg-gray-100 rounded-lg">
+    <div className="p-4 sm:p-6 device-screen">
       <div ref={waveformRef}></div>
-      <div className="flex mt-4" style={{ width: '100%', overflowX: 'auto' }}>
+      <div className="flex mt-4 w-full overflow-x-auto gap-[1px]">
         {beats.map((beat) => (
           <div
             key={beat.id}
-            className={`h-10 ${getBeatColor(beat.cluster)} ${
-              currentBeat && currentBeat.id === beat.id ? 'border-4 border-yellow-300' : ''
+            className={`h-8 sm:h-10 ${getBeatColor(beat.cluster)} ${
+              currentBeat && currentBeat.id === beat.id ? 'border-2 border-gold-400' : ''
             } ${
               currentBeat && currentBeat.jump_candidates.includes(beat.id) ? 'animate-pulse' : ''
             }`}
-            style={{ width: `${beat.duration * 100}px` }}
-          ></div>
+            style={{ width: `${Math.max(2, Math.floor(beat.duration * 100))}px` }}
+          />
         ))}
       </div>
     </div>
