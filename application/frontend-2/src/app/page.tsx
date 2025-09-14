@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import FileUpload from '@/components/FileUpload';
 import PlaybackControls from '@/components/PlaybackControls';
 import Visualization from '@/components/Visualization';
+import SongMetadata from '@/components/SongMetadata';
 import { AudioEngine, createAudioBuffer } from '@/lib/audio';
 
 export default function HomePage() {
@@ -131,33 +132,36 @@ export default function HomePage() {
   };
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-between p-24">
-      <div className="z-10 w-full max-w-5xl items-center justify-between font-mono text-sm lg:flex">
-        <h1 className="text-4xl font-bold">Infinite Worship</h1>
-      </div>
+    <main className="min-h-screen bg-navy text-white p-4">
+      <div className="max-w-6xl mx-auto">
+        <h1 className="text-4xl font-bold text-center mb-8 text-gold">Infinite Worship</h1>
 
-      <div className="w-full max-w-5xl">
         <div className="mb-8">
           <FileUpload onUploadSuccess={handleUploadSuccess} onUploadError={handleUploadError} />
           {error && <p className="text-red-500 mt-2">{error}</p>}
         </div>
 
         {songData && (
-          <>
-            <div className="mb-8">
-              <Visualization audioFile={audioFile} beats={songData.segments} currentBeat={currentBeat} onSeek={handleSeek} />
+          <div className="flex flex-col lg:flex-row gap-8">
+            <div className="flex-1">
+              <div className="bg-white rounded-full p-6 shadow-2xl border-4 border-gold">
+                <Visualization audioFile={audioFile} beats={songData.segments} currentBeat={currentBeat} onSeek={handleSeek} />
+              </div>
+              <div className="mt-6">
+                <PlaybackControls
+                  isPlaying={isPlaying}
+                  jumpProbability={jumpProbability}
+                  onPlayPause={handlePlayPause}
+                  onRestart={handleRestart}
+                  onStop={handleStop}
+                  onJumpProbabilityChange={handleJumpProbabilityChange}
+                />
+              </div>
             </div>
-            <div>
-              <PlaybackControls
-                isPlaying={isPlaying}
-                jumpProbability={jumpProbability}
-                onPlayPause={handlePlayPause}
-                onRestart={handleRestart}
-                onStop={handleStop}
-                onJumpProbabilityChange={handleJumpProbabilityChange}
-              />
+            <div className="lg:w-1/3">
+              <SongMetadata songData={songData} audioFile={audioFile} />
             </div>
-          </>
+          </div>
         )}
       </div>
     </main>

@@ -80,14 +80,14 @@ const Visualization: React.FC<VisualizationProps> = ({ audioFile, beats, current
   };
 
   return (
-    <div className="p-6 bg-gray-100 rounded-lg">
-      <div ref={waveformRef}></div>
-      <div className="flex mt-4" style={{ width: '100%', overflowX: 'auto' }}>
+    <div className="p-6 bg-white rounded-lg shadow-md">
+      <div ref={waveformRef} className="mb-4"></div>
+      <div className="flex" style={{ width: '100%', overflowX: 'auto' }}>
         {beats.map((beat) => (
           <div
             key={beat.id}
             className={`h-10 ${getBeatColor(beat.cluster)} ${
-              currentBeat && currentBeat.id === beat.id ? 'border-4 border-yellow-300' : ''
+              currentBeat && currentBeat.id === beat.id ? 'border-4 border-gold' : ''
             } ${
               currentBeat && currentBeat.jump_candidates.includes(beat.id) ? 'animate-pulse' : ''
             }`}

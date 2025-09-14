@@ -61,20 +61,20 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess, onUploadError 
   }, [file, onUploadSuccess, onUploadError]);
 
   return (
-    <div className="p-6 border-2 border-dashed rounded-lg">
+    <div className="p-6 border-2 border-dashed border-gold rounded-lg bg-white text-navy">
       <div className="flex flex-col items-center">
         <input
           type="file"
           onChange={handleFileChange}
-          className="mb-4"
+          className="mb-4 p-2 border border-navy rounded"
           accept="audio/*"
         />
         <button
           onClick={handleUpload}
           disabled={!file || isUploading}
-          className="px-4 py-2 bg-blue-500 text-white rounded disabled:bg-gray-400"
+          className="px-6 py-3 bg-gold text-navy rounded-full font-bold text-lg shadow-lg hover:bg-yellow-400 transition disabled:bg-gray-400 disabled:cursor-not-allowed"
         >
-          {isUploading ? 'Uploading...' : 'Upload Song'}
+          {isUploading ? 'Uploading...' : '🎵 Upload Song'}
         </button>
       </div>
     </div>
