@@ -6,6 +6,7 @@ interface SongMetadataProps {
   fileName?: string | null;
   durationSec?: number | null;
   beatsCount?: number | null;
+  totalJumpPoints?: number | null;
   currentBeat?: any | null;
   isPlaying?: boolean;
 }
@@ -28,6 +29,7 @@ const SongMetadata: React.FC<SongMetadataProps> = ({
   fileName,
   durationSec,
   beatsCount,
+  totalJumpPoints,
   currentBeat,
   isPlaying,
 }) => {
@@ -41,6 +43,7 @@ const SongMetadata: React.FC<SongMetadataProps> = ({
         <MetaRow label="Title" value={fileName || 'Untitled'} />
         <MetaRow label="Duration" value={formatTime(durationSec)} />
         <MetaRow label="Beats" value={beatsCount ?? '--'} />
+        <MetaRow label="Total Jump Points" value={totalJumpPoints ?? '--'} />
         <MetaRow
           label="Current Beat"
           value={

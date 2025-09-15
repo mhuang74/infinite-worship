@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import FileUpload from '@/components/FileUpload';
 import PlaybackControls from '@/components/PlaybackControls';
 import Visualization from '@/components/Visualization';
@@ -14,6 +14,14 @@ export default function HomePage() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [jumpProbability, setJumpProbability] = useState(0.15);
   const [currentBeat, setCurrentBeat] = useState<any | null>(null);
+
+  const totalJumpPoints = useMemo(() => {
+    if (!songData?.segments) return null;
+    return songData.segments.reduce((count: number, b: any) => {
+      const arr = Array.isArray(b.jump_candidates) ? b.jump_candidates : [];
+      return count + (arr.length > 0 ? 1 : 0);
+    }, 0);
+  }, [songData]);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioEngineRef = useRef<AudioEngine | null>(null);
@@ -180,6 +188,7 @@ export default function HomePage() {
                   fileName={audioFile ? audioFile.name : null}
                   durationSec={audioEngineRef.current ? audioEngineRef.current.getDuration() : null}
                   beatsCount={songData?.segments ? songData.segments.length : null}
+                  totalJumpPoints={totalJumpPoints}
                   currentBeat={currentBeat}
                   isPlaying={isPlaying}
                 />
