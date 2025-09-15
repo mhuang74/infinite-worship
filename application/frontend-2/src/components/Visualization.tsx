@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef, useCallback, useState } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 
 interface VisualizationProps {
@@ -14,6 +14,46 @@ const Visualization: React.FC<VisualizationProps> = ({ audioFile, beats, current
   const waveformRef = useRef<HTMLDivElement>(null);
   const wavesurfer = useRef<WaveSurfer | null>(null);
   const isReady = useRef<boolean>(false);
+
+  // Positions for jump-candidate indicators (in px from left of waveform)
+  const [candidateMarkers, setCandidateMarkers] = useState<{ id: number; left: number }[]>([]);
+
+  const recalcCandidateMarkers = useCallback(() => {
+    if (!wavesurfer.current || !isReady.current || !currentBeat || !waveformRef.current) {
+      setCandidateMarkers([]);
+      return;
+    }
+    const duration = wavesurfer.current.getDuration();
+    const width = waveformRef.current.clientWidth;
+
+    if (!duration || duration <= 0 || !width) {
+      setCandidateMarkers([]);
+      return;
+    }
+
+    const ids: number[] = Array.isArray(currentBeat.jump_candidates) ? currentBeat.jump_candidates : [];
+    const markers = ids
+      .map((id: number) => {
+        const beat = (beats as any[]).find((b: any) => b.id === id);
+        if (!beat) return null;
+        const progress = beat.start / duration;
+        const left = Math.max(0, Math.min(width, progress * width));
+        return { id, left };
+      })
+      .filter(Boolean) as { id: number; left: number }[];
+
+    setCandidateMarkers(markers);
+  }, [beats, currentBeat]);
+
+  useEffect(() => {
+    recalcCandidateMarkers();
+  }, [recalcCandidateMarkers]);
+
+  useEffect(() => {
+    const onResize = () => recalcCandidateMarkers();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [recalcCandidateMarkers]);
 
   // Initialize WaveSurfer instance
   useEffect(() => {
@@ -36,6 +76,7 @@ const Visualization: React.FC<VisualizationProps> = ({ audioFile, beats, current
       // Mark as ready when audio is loaded
       wavesurfer.current.on('ready', () => {
         isReady.current = true;
+        recalcCandidateMarkers();
       });
 
       return () => {
@@ -95,7 +136,28 @@ const Visualization: React.FC<VisualizationProps> = ({ audioFile, beats, current
 
   return (
     <div className="p-4 sm:p-6 device-screen">
-      <div ref={waveformRef}></div>
+      <div className="relative">
+        <div ref={waveformRef}></div>
+
+        {/* Jump candidate markers overlay (dots at bottom, more transparent than the cursor) */}
+        <div className="pointer-events-none absolute inset-0 z-20">
+          {candidateMarkers.map((m) => (
+            <div
+              key={`jump-${m.id}`}
+              className="absolute bg-white/40 border border-white/80"
+              style={{
+                left: `${m.left}px`,
+                width: 4,
+                height: 4,
+                bottom: -4,
+                transform: 'translateX(-50%)',
+                borderRadius: 2
+              }}
+            />
+          ))}
+        </div>
+      </div>
+
       <div className="flex mt-4 w-full overflow-x-auto gap-[1px]">
         {beats.map((beat) => (
           <div
