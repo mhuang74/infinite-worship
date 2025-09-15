@@ -7,7 +7,7 @@ import gzip
 import traceback
 import base64
 import numpy as np
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
@@ -233,10 +233,80 @@ def upload_file():
 
 @app.route('/segments/<song_id>', methods=['GET'])
 def get_segments(song_id):
-    if song_id not in processed_songs:
-        return jsonify({'error': 'Song not found'}), 404
+    # First check if the song is in memory
+    if song_id in processed_songs:
+        return jsonify(processed_songs[song_id])
+    
+    # If not in memory, try to load from database
+    song = song_db.get_song(song_id)
+    if song is None:
+        return jsonify({'error': 'Song not found in database'}), 404
+    
+    # Get the file path from the database
+    file_path = song['file_path']
+    original_filename = song['original_filename']
+    
+    # Try to load the pickled jukebox file
+    jukebox_pickled_filename = file_path + '_jukebox.pkl'
+    jukebox = None
+    
+    try:
+        with gzip.open(jukebox_pickled_filename + '.gz', 'rb') as f:
+            jukebox = pickle.load(f)
+        print(f"Loaded compressed pickled jukebox for song {original_filename} from {jukebox_pickled_filename}.gz")
+    except FileNotFoundError:
+        print(f"No compressed pickled jukebox file found: '{jukebox_pickled_filename}.gz'")
+        return jsonify({'error': 'Song data not found'}), 404
+    except Exception as e:
+        print(f"Error loading compressed pickled jukebox '{jukebox_pickled_filename}.gz': {e}")
+        return jsonify({'error': f'Error loading song data: {str(e)}'}), 500
+    
+    if jukebox is None:
+        return jsonify({'error': 'Failed to load song data'}), 500
+    
+    # Convert beats to a serializable format
+    segments = []
+    for beat in jukebox.beats:
+        beat_copy = beat.copy()
+        segments.append(beat_copy)
+    
+    # Store the processed data in memory for future requests
+    processed_songs[song_id] = {
+        'filename': original_filename,
+        'segments': segments,
+        'duration': jukebox.duration,
+        'tempo': float(jukebox.tempo),
+        'sample_rate': jukebox.sample_rate
+    }
     
     return jsonify(processed_songs[song_id])
+
+@app.route('/uploads/<song_id>', methods=['GET'])
+def get_upload(song_id):
+    """Serve the uploaded audio file for a given song_id"""
+    # Get the song from the database
+    song = song_db.get_song(song_id)
+    if song is None:
+        return jsonify({'error': 'Song not found in database'}), 404
+    
+    # Get the file path from the database
+    file_path = song['file_path']
+    
+    # Check if the file exists
+    if not os.path.exists(file_path):
+        return jsonify({'error': 'Audio file not found on server'}), 404
+    
+    # Determine the file type (you might want to store this in the database)
+    file_type = 'audio/mpeg'  # Default to MP3
+    if file_path.lower().endswith('.wav'):
+        file_type = 'audio/wav'
+    elif file_path.lower().endswith('.ogg'):
+        file_type = 'audio/ogg'
+    elif file_path.lower().endswith('.flac'):
+        file_type = 'audio/flac'
+    
+    # Return the file
+    return send_file(file_path, mimetype=file_type)
 
 @app.route('/health', methods=['GET'])
 def health_check():
