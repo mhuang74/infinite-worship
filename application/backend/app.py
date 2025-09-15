@@ -11,6 +11,9 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
+# Import the song mapper
+import song_mapper
+
 # Add the remixatron directory to the path
 sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'exploration/remixatron'))
 
@@ -19,6 +22,9 @@ from Remixatron import InfiniteJukebox
 
 app = Flask(__name__)
 CORS(app)
+
+# Initialize the song mapper
+song_db = song_mapper.get_instance()
 
 # Configure upload folder
 UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
@@ -176,6 +182,39 @@ def upload_file():
                 'sample_rate': jukebox.sample_rate
             }
             
+            # Store song information in the database
+            # Calculate the number of clusters
+            clusters_count = None
+            if hasattr(jukebox, 'clusters'):
+                if isinstance(jukebox.clusters, (list, tuple, set)):
+                    clusters_count = len(jukebox.clusters)
+                elif isinstance(jukebox.clusters, int):
+                    # If clusters is already an integer count, use it directly
+                    clusters_count = jukebox.clusters
+            
+            # Calculate total jump points by counting beats that have jump_candidates
+            jump_points_count = 0
+            for beat in jukebox.beats:
+                # Check if the beat has jump_candidates and it's not empty
+                if (isinstance(beat, dict) and
+                    'jump_candidates' in beat and
+                    beat['jump_candidates'] and
+                    len(beat['jump_candidates']) > 0):
+                    jump_points_count += 1
+            
+            song_db.add_song(
+                song_id=song_id,
+                original_filename=original_filename,
+                encoded_filename=encoded_filename,
+                file_path=file_path,
+                duration=jukebox.duration,
+                tempo=float(jukebox.tempo),
+                beats=len(jukebox.beats),
+                clusters=clusters_count,
+                jump_points=jump_points_count,
+                sample_rate=jukebox.sample_rate
+            )
+            
             return jsonify({
                 'filename': original_filename,
                 'song_id': song_id,
@@ -213,5 +252,31 @@ def test_filename_decoding(encoded_filename):
         'decoded': original
     }), 200
 
+@app.route('/songs', methods=['GET'])
+def get_songs():
+    """Get all songs from the database"""
+    songs = song_db.get_all_songs()
+    return jsonify({
+        'songs': songs
+    })
+
+@app.route('/songs/<song_id>', methods=['GET'])
+def get_song(song_id):
+    """Get a specific song from the database"""
+    song = song_db.get_song(song_id)
+    if song is None:
+        return jsonify({'error': 'Song not found'}), 404
+    return jsonify(song)
+
+@app.route('/songs/search', methods=['GET'])
+def search_songs():
+    """Search for songs in the database"""
+    query = request.args.get('q', '')
+    songs = song_db.search_songs(query)
+    return jsonify({
+        'songs': songs,
+        'query': query
+    })
+
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000) 
+    app.run(debug=True, host='0.0.0.0', port=5000)
