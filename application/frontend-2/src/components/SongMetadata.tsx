@@ -42,7 +42,7 @@ const SongMetadata: React.FC<SongMetadataProps> = ({
         <MetaRow label="Duration" value={formatTime(durationSec)} />
         <MetaRow label="Beats" value={beatsCount ?? '--'} />
         <MetaRow
-          label="Current Segment"
+          label="Current Beat"
           value={
             currentBeat
               ? (
