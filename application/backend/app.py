@@ -5,6 +5,7 @@ import json
 import pickle
 import gzip
 import traceback
+import base64
 import numpy as np
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -30,6 +31,17 @@ app.config['TIMEOUT'] = 300  # 5 minutes timeout
 # Store processed songs
 processed_songs = {}
 
+def decode_filename(encoded_filename):
+    """Decode a base64 encoded filename back to its original form with Chinese characters"""
+    try:
+        # Extract the encoded part (before the hash)
+        encoded_part = encoded_filename.split('_')[0]
+        original = base64.urlsafe_b64decode(encoded_part.encode('ascii')).decode('utf-8')
+        return original
+    except Exception as e:
+        print(f"Error decoding filename: {str(e)}")
+        return encoded_filename
+
 def progress_callback(pct_complete, message):
     """Callback function for InfiniteJukebox progress updates"""
     print(f"[{pct_complete}]: {message}")
@@ -47,14 +59,17 @@ def upload_file():
         
         if file:
 
-            safe_filename = secure_filename(file.filename)
+            # Preserve original filename by encoding it to base64 instead of using secure_filename
+            # This ensures Chinese characters are preserved
+            original_filename = file.filename
+            encoded_filename = base64.urlsafe_b64encode(original_filename.encode('utf-8')).decode('ascii')
                         
             try:
                 # Generate deterministic ID by hashing the file contents
                 file_contents = file.read()
                 # Generate deterministic ID using SHA-256 hash of file contents
                 import hashlib
-                song_id = safe_filename + '_' + hashlib.sha256(file_contents).hexdigest()
+                song_id = encoded_filename + '_' + hashlib.sha256(file_contents).hexdigest()
                 file.seek(0)  # Reset file pointer after reading
                 
                 # Save the file
@@ -62,7 +77,7 @@ def upload_file():
                 file_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{song_id}")
                 file.save(file_path)
                 
-                print(f"Song {file.filename} saved to {file_path}")
+                print(f"Song {original_filename} saved to {file_path}")
 
                 # Check if file exists and is readable
                 if not os.path.exists(file_path):
@@ -73,12 +88,12 @@ def upload_file():
                 print(f"File size: {file_size} bytes")
                 
                 if file_size == 0:
-                    return jsonify({'error': 'Uploaded song {file.filename} is empty'}), 400
+                    return jsonify({'error': f'Uploaded song {original_filename} is empty'}), 400
                 
             except Exception as e:
                 print(f"Error checking file: {str(e)}")
                 print(traceback.format_exc())
-                return jsonify({'error': f'Error reading or relocating song {file.filename}: {str(e)}'}), 500
+                return jsonify({'error': f'Error reading or relocating song {original_filename}: {str(e)}'}), 500
             
             # Load cached beats if available
             beats_cache_filename = file_path + '_beats.npy'
@@ -101,7 +116,7 @@ def upload_file():
             try:
                 with gzip.open(jukebox_pickled_filename + '.gz', 'rb') as f:
                     jukebox = pickle.load(f)
-                print(f"Loaded compressed pickled jukebox for song {file.filename} from {jukebox_pickled_filename}.gz")
+                print(f"Loaded compressed pickled jukebox for song {original_filename} from {jukebox_pickled_filename}.gz")
             except FileNotFoundError:
                 print(f"No compressed pickled jukebox file found: '{jukebox_pickled_filename}.gz'")
             except Exception as e:
@@ -131,7 +146,7 @@ def upload_file():
                     except Exception as e:
                         print(f"Warning: Error saving compressed pickled jukebox '{jukebox_pickled_filename}.gz': {e}")
                     
-                    print(f"Successfully processed song {file.filename}. Found {len(jukebox.beats)} beats.")
+                    print(f"Successfully processed song {original_filename}. Found {len(jukebox.beats)} beats.")
 
                 except Exception as e:
                     print(f"Error in InfiniteJukebox processing: {str(e)}")
@@ -154,7 +169,7 @@ def upload_file():
             
             # Store the processed data
             processed_songs[song_id] = {
-                'filename': file.filename,
+                'filename': original_filename,
                 'segments': segments,
                 'duration': jukebox.duration,
                 'tempo': float(jukebox.tempo),
@@ -162,7 +177,7 @@ def upload_file():
             }
             
             return jsonify({
-                'filename': file.filename,
+                'filename': original_filename,
                 'song_id': song_id,
                 'segments': segments,
                 'duration': jukebox.duration,
@@ -188,6 +203,15 @@ def get_segments(song_id):
 def health_check():
     """Simple health check endpoint"""
     return jsonify({'status': 'ok', 'message': 'Server is running'}), 200
+
+@app.route('/filename_test/<encoded_filename>', methods=['GET'])
+def test_filename_decoding(encoded_filename):
+    """Test endpoint to verify filename encoding/decoding works correctly"""
+    original = decode_filename(encoded_filename)
+    return jsonify({
+        'encoded': encoded_filename,
+        'decoded': original
+    }), 200
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000) 
