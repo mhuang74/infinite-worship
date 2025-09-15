@@ -1,10 +1,13 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import axios from 'axios';
 import FileUpload from '@/components/FileUpload';
 import PlaybackControls from '@/components/PlaybackControls';
 import Visualization from '@/components/Visualization';
 import SongMetadata from '@/components/SongMetadata';
+import SongLibrary from '@/components/SongLibrary';
+import SongSearch from '@/components/SongSearch';
 import { AudioEngine, createAudioBuffer } from '@/lib/audio';
 
 export default function HomePage() {
@@ -14,6 +17,10 @@ export default function HomePage() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [jumpProbability, setJumpProbability] = useState(0.15);
   const [currentBeat, setCurrentBeat] = useState<any | null>(null);
+  const [selectedSongId, setSelectedSongId] = useState<string | null>(null);
+  const [selectedSongName, setSelectedSongName] = useState<string | null>(null);
+  const [loadingLibrarySong, setLoadingLibrarySong] = useState(false);
+  const [activeTab, setActiveTab] = useState<'upload' | 'library' | 'search'>('upload');
 
   const totalJumpPoints = useMemo(() => {
     if (!songData?.segments) return null;
@@ -69,6 +76,56 @@ export default function HomePage() {
     };
   }, [audioFile, songData]);
 
+  // Effect to fetch song data when a song is selected from the library
+  useEffect(() => {
+    const fetchSongData = async () => {
+      if (!selectedSongId) return;
+      
+      try {
+        setLoadingLibrarySong(true);
+        setError('');
+        
+        // Fetch song data from the API
+        const response = await axios.get(`http://localhost:5555/songs/${selectedSongId}`);
+        const songData = response.data;
+        
+        // Fetch segments data
+        const segmentsResponse = await axios.get(`http://localhost:5555/segments/${selectedSongId}`);
+        
+        if (!segmentsResponse.data || !segmentsResponse.data.segments) {
+          throw new Error('No segments data available for this song');
+        }
+        
+        // Create a blob from the file path and create a File object
+        const audioResponse = await fetch(`http://localhost:5555/uploads/${selectedSongId}`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'audio/*',
+          },
+        });
+        
+        if (!audioResponse.ok) {
+          throw new Error(`Failed to fetch audio file: ${audioResponse.statusText}`);
+        }
+        
+        const blob = await audioResponse.blob();
+        const file = new File([blob], songData.original_filename, { type: blob.type });
+        
+        // Update state with the fetched data
+        setSongData(segmentsResponse.data);
+        setAudioFile(file);
+        
+      } catch (err) {
+        console.error('Error loading song from library:', err);
+        setError('Failed to load song from library. Please try again.');
+      } finally {
+        setLoadingLibrarySong(false);
+      }
+    };
+    
+    fetchSongData();
+  }, [selectedSongId]);
+
   const handlePlayPause = useCallback(() => {
     if (!audioEngineRef.current) return;
     if (isPlaying) {
@@ -104,6 +161,8 @@ export default function HomePage() {
       setAudioFile(fileInput.files[0]);
     }
     setError('');
+    setSelectedSongId(null);
+    setSelectedSongName(null);
   };
 
   const handleUploadError = (message: string) => {
@@ -138,6 +197,11 @@ export default function HomePage() {
 
     audioEngineRef.current.seekToTime(targetTime);
   };
+  
+  const handleSongSelect = (songId: string, filename: string) => {
+    setSelectedSongId(songId);
+    setSelectedSongName(filename);
+  };
 
   return (
     <main className="min-h-screen w-full px-4 py-8 sm:py-12">
@@ -148,18 +212,77 @@ export default function HomePage() {
         </header>
 
         <section className="cdpanel p-3 sm:p-4">
-          <div className="cdpanel-inner p-4 sm:p-6">
-            <div className="engraved-label mb-2">Disc Tray</div>
-            <FileUpload onUploadSuccess={handleUploadSuccess} onUploadError={handleUploadError} />
-            {error && (
-              <div
-                role="alert"
-                className="mt-3 rounded-md border border-red-400/40 bg-red-500/20 text-white px-3 py-2 text-sm"
+          <div className="mb-4">
+            <div className="flex border-b border-white/20">
+              <button
+                onClick={() => setActiveTab('upload')}
+                className={`px-4 py-2 ${
+                  activeTab === 'upload'
+                    ? 'text-white border-b-2 border-blue-500'
+                    : 'text-white/60 hover:text-white'
+                }`}
               >
-                {error}
-              </div>
-            )}
+                Upload New Song
+              </button>
+              <button
+                onClick={() => setActiveTab('library')}
+                className={`px-4 py-2 ${
+                  activeTab === 'library'
+                    ? 'text-white border-b-2 border-blue-500'
+                    : 'text-white/60 hover:text-white'
+                }`}
+              >
+                Song Library
+              </button>
+              <button
+                onClick={() => setActiveTab('search')}
+                className={`px-4 py-2 ${
+                  activeTab === 'search'
+                    ? 'text-white border-b-2 border-blue-500'
+                    : 'text-white/60 hover:text-white'
+                }`}
+              >
+                Search Songs
+              </button>
+            </div>
           </div>
+
+          {activeTab === 'upload' && (
+            <div className="cdpanel-inner p-4 sm:p-6">
+              <div className="engraved-label mb-2">Upload New Song</div>
+              <FileUpload onUploadSuccess={handleUploadSuccess} onUploadError={handleUploadError} />
+            </div>
+          )}
+
+          {activeTab === 'library' && (
+            <SongLibrary onSongSelect={handleSongSelect} />
+          )}
+
+          {activeTab === 'search' && (
+            <SongSearch onSongSelect={handleSongSelect} />
+          )}
+
+          {error && (
+            <div
+              role="alert"
+              className="mt-3 rounded-md border border-red-400/40 bg-red-500/20 text-white px-3 py-2 text-sm"
+            >
+              {error}
+            </div>
+          )}
+
+          {loadingLibrarySong && (
+            <div className="mt-3 rounded-md border border-blue-400/40 bg-blue-500/20 text-white px-3 py-2 text-sm flex items-center">
+              <div className="animate-spin h-4 w-4 border-2 border-white/30 border-t-white rounded-full mr-2"></div>
+              Loading song: {selectedSongName}...
+            </div>
+          )}
+
+          {selectedSongId && selectedSongName && !loadingLibrarySong && (
+            <div className="mt-3 rounded-md border border-green-400/40 bg-green-500/20 text-white px-3 py-2 text-sm">
+              Selected song: {selectedSongName}
+            </div>
+          )}
         </section>
 
         {songData && (
