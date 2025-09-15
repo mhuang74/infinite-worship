@@ -144,7 +144,7 @@ export default function HomePage() {
       <div className="mx-auto w-full max-w-6xl space-y-6 sm:space-y-8">
         <header className="text-center">
           <h1 className="text-3xl sm:text-4xl font-bold text-white">Infinite Worship</h1>
-          <p className="mt-1 text-sm text-white/80">Intelligent worship playback</p>
+          <p className="mt-1 text-sm text-white/80">When You Don't Want Worship To End...</p>
         </header>
 
         <section className="cdpanel p-3 sm:p-4">
