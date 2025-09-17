@@ -21,6 +21,7 @@ sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.
 from Remixatron import InfiniteJukebox
 
 app = Flask(__name__)
+app.json.ensure_ascii = False
 CORS(app)
 
 # Initialize the song mapper
