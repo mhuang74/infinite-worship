@@ -178,12 +178,12 @@ export class AudioEngine {
 
     // 6. Continue playback from the 17th beat after the fade completes
     this.currentBeatIndex = 16;
-    this.nextBeatTime = fadeEndTime;
+    this.nextBeatTime = fadeInPlayTime; // Use the end time of the 16-beat fade-in
 
     // 7. Resume normal scheduling after the crossfade duration
     setTimeout(() => {
       this.scheduleNextBeat();
-    }, (fadeEndTime - this.audioContext.currentTime) * 1000);
+    }, (fadeInPlayTime - this.audioContext.currentTime) * 1000);
   }
 
   private playBeat(beatIndex: number, time: number, destination: AudioNode) {
