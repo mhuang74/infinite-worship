@@ -33,7 +33,7 @@ const SongSearch: React.FC<SongSearchProps> = ({ onSongSelect }) => {
 
       try {
         setLoading(true);
-        const response = await axios.get(`http://localhost:5555/songs/search?q=${encodeURIComponent(searchQuery)}`);
+        const response = await axios.get(`http://localhost:5000/songs/search?q=${encodeURIComponent(searchQuery)}`);
         setResults(response.data.songs || []);
         setError(null);
       } catch (err) {

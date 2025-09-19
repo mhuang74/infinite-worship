@@ -25,7 +25,7 @@ const SongLibrary: React.FC<SongLibraryProps> = ({ onSongSelect }) => {
     const fetchSongs = async () => {
       try {
         setLoading(true);
-        const response = await axios.get('http://localhost:5555/songs');
+        const response = await axios.get('http://localhost:5000/songs');
         setSongs(response.data.songs || []);
         setError(null);
       } catch (err) {

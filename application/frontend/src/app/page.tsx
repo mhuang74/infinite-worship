@@ -1,152 +1,323 @@
 'use client';
 
-import { useState } from 'react';
-import SongUploader from '@/components/SongUploader';
-import AudioPlayer from '@/components/AudioPlayer';
-import SegmentVisualizer from '@/components/SegmentVisualizer';
-import { uploadSong } from '@/services/api';
-import { SongData, PlaybackState } from '@/types';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import axios from 'axios';
+import FileUpload from '@/components/FileUpload';
+import PlaybackControls from '@/components/PlaybackControls';
+import Visualization from '@/components/Visualization';
+import SongMetadata from '@/components/SongMetadata';
+import SongLibrary from '@/components/SongLibrary';
+import SongSearch from '@/components/SongSearch';
+import { AudioEngine, createAudioBuffer } from '@/lib/audio';
 
-export default function Home() {
+export default function HomePage() {
+  const [songData, setSongData] = useState<any>(null);
   const [audioFile, setAudioFile] = useState<File | null>(null);
-  const [songData, setSongData] = useState<SongData | null>(null);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [playbackState, setPlaybackState] = useState<PlaybackState>({
-    currentSegment: 0,
-    nextSegment: 0,
-    nextJumpFrom: -1,
-    nextJumpTo: -1,
-    beatsUntilJump: -1,
-    currentTime: 0,
-  });
-  const [infinitePlaybackActive, setInfinitePlaybackActive] = useState(false);
+  const [error, setError] = useState('');
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [jumpProbability, setJumpProbability] = useState(0.15);
+  const [currentBeat, setCurrentBeat] = useState<any | null>(null);
+  const [selectedSongId, setSelectedSongId] = useState<string | null>(null);
+  const [selectedSongName, setSelectedSongName] = useState<string | null>(null);
+  const [loadingLibrarySong, setLoadingLibrarySong] = useState(false);
+  const [activeTab, setActiveTab] = useState<'upload' | 'library' | 'search'>('upload');
 
-  // Handle song upload
-  const handleSongUpload = async (file: File) => {
-    setAudioFile(file);
-    setIsProcessing(true);
-    
-    try {
-      // Try to use the real API
-      const data = await uploadSong(file);
-      setSongData(data);
+  const totalJumpPoints = useMemo(() => {
+    if (!songData?.segments) return null;
+    return songData.segments.reduce((count: number, b: any) => {
+      const arr = Array.isArray(b.jump_candidates) ? b.jump_candidates : [];
+      return count + (arr.length > 0 ? 1 : 0);
+    }, 0);
+  }, [songData]);
 
-      console.info(`Successfully processed song. SongId: ${data.song_id}, Segments ${data.segments.length}`);
-      
-      // Initialize playback state
-      if (data.segments.length > 0) {
-        const firstSegment = data.segments[0];
-        setPlaybackState({
-          currentSegment: 0,
-          nextSegment: firstSegment.next,
-          nextJumpFrom: -1,
-          nextJumpTo: -1,
-          beatsUntilJump: -1,
-          currentTime: 0,
-        });
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioEngineRef = useRef<AudioEngine | null>(null);
+
+  // Effect to create or destroy the AudioEngine instance when a song is loaded/unloaded
+  useEffect(() => {
+    const setupEngine = async () => {
+      if (audioFile && songData) {
+        if (!audioContextRef.current) {
+          audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+        }
+        
+        // Stop and clear the old engine instance if it exists
+        if (audioEngineRef.current) {
+          audioEngineRef.current.stop();
+          audioEngineRef.current = null;
+        }
+
+        try {
+          const audioBuffer = await createAudioBuffer(audioFile, audioContextRef.current);
+          
+          // Callback for the engine to update the UI
+          const onBeatChange = (beat: any) => {
+            setCurrentBeat(beat);
+          };
+
+          audioEngineRef.current = new AudioEngine(audioContextRef.current, audioBuffer, songData.segments, onBeatChange);
+          
+          // Set initial state
+          setCurrentBeat(songData.segments[0]);
+          setIsPlaying(false);
+
+        } catch (e) {
+          setError('Failed to decode audio file.');
+          console.error(e);
+        }
       }
-    } catch (err: unknown) {
-      console.error('Error processing song with API:', err);
-     
-    } finally {
-      setIsProcessing(false);
+    };
+
+    setupEngine();
+
+    // Cleanup on component unmount
+    return () => {
+      audioEngineRef.current?.stop();
+    };
+  }, [audioFile, songData]);
+
+  // Effect to fetch song data when a song is selected from the library
+  useEffect(() => {
+    const fetchSongData = async () => {
+      if (!selectedSongId) return;
+      
+      try {
+        setLoadingLibrarySong(true);
+        setError('');
+        
+        // Fetch song data from the API
+        const response = await axios.get(`http://localhost:5000/songs/${selectedSongId}`);
+        const songData = response.data;
+        
+        // Fetch segments data
+        const segmentsResponse = await axios.get(`http://localhost:5000/segments/${selectedSongId}`);
+        
+        if (!segmentsResponse.data || !segmentsResponse.data.segments) {
+          throw new Error('No segments data available for this song');
+        }
+        
+        // Create a blob from the file path and create a File object
+        const audioResponse = await fetch(`http://localhost:5000/uploads/${selectedSongId}`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'audio/*',
+          },
+        });
+        
+        if (!audioResponse.ok) {
+          throw new Error(`Failed to fetch audio file: ${audioResponse.statusText}`);
+        }
+        
+        const blob = await audioResponse.blob();
+        const file = new File([blob], songData.original_filename, { type: blob.type });
+        
+        // Update state with the fetched data
+        setSongData(segmentsResponse.data);
+        setAudioFile(file);
+        
+      } catch (err) {
+        console.error('Error loading song from library:', err);
+        setError('Failed to load song from library. Please try again.');
+      } finally {
+        setLoadingLibrarySong(false);
+      }
+    };
+    
+    fetchSongData();
+  }, [selectedSongId]);
+
+  const handlePlayPause = useCallback(() => {
+    if (!audioEngineRef.current) return;
+    if (isPlaying) {
+      audioEngineRef.current.pause();
+      setIsPlaying(false);
+    } else {
+      audioEngineRef.current.play();
+      setIsPlaying(true);
+    }
+  }, [isPlaying]);
+
+  // Effect to handle spacebar play/pause
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.code === 'Space') {
+        event.preventDefault();
+        handlePlayPause();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [handlePlayPause]);
+
+  const handleUploadSuccess = (data: any) => {
+    // This will trigger the useEffect above to set up the new engine
+    setSongData(data);
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    if (fileInput && fileInput.files) {
+      setAudioFile(fileInput.files[0]);
+    }
+    setError('');
+    setSelectedSongId(null);
+    setSelectedSongName(null);
+  };
+
+  const handleUploadError = (message: string) => {
+    setError(message);
+  };
+
+  const handleRestart = () => {
+    if (!audioEngineRef.current) return;
+    audioEngineRef.current.restart();
+    setIsPlaying(true);
+  };
+
+  const handleStop = () => {
+    if (!audioEngineRef.current) return;
+    audioEngineRef.current.stop();
+    setIsPlaying(false);
+  };
+
+  const handleJumpProbabilityChange = (value: number) => {
+    setJumpProbability(value);
+    if (audioEngineRef.current) {
+      audioEngineRef.current.setJumpProbability(value);
     }
   };
 
-  // Update current segment based on playback time
-  const handleTimeUpdate = (currentTime: number, beatsUntilJump: number) => {
-    console.debug(`handleTimeUpdate(). Current time: ${currentTime.toFixed(2)}, BeatsUntilJump: ${beatsUntilJump}`);
-  };
+  const handleSeek = (progress: number) => {
+    if (!audioEngineRef.current || !songData) return;
 
-  // Handle segment change from the AudioPlayer in infinite mode
-  const handleSegmentChange = (segmentIndex: number, nextJumpFrom: number, nextJumpTo: number) => {
-    if (!songData || segmentIndex >= songData.segments.length) return;
-    
-    const segment = songData.segments[segmentIndex];
-    setInfinitePlaybackActive(true);
-    
-    setPlaybackState(prev => ({
-      ...prev,
-      currentSegment: segmentIndex,
-      nextSegment: segment.next,
-      nextJumpFrom: nextJumpFrom,
-      nextJumpTo: nextJumpTo,
-      beatsUntilJump: -1, // Reset beats until jump
-    }));
-  };
+    // Get the precise duration from the audio buffer
+    const totalDuration = audioEngineRef.current.getDuration();
+    const targetTime = progress * totalDuration;
 
+    audioEngineRef.current.seekToTime(targetTime);
+  };
+  
+  const handleSongSelect = (songId: string, filename: string) => {
+    setSelectedSongId(songId);
+    setSelectedSongName(filename);
+  };
 
   return (
-    <main className="flex min-h-screen flex-col items-center p-8 bg-gray-50">
-      <div className="max-w-4xl w-full">
-        <h1 className="text-3xl font-bold text-center mb-2 text-indigo-800">Infinite Worship</h1>
-        <p className="text-center text-gray-600 mb-8">from everlasting to everlasting</p>
-        
-        <SongUploader onSongUpload={handleSongUpload} />
-        
-        {isProcessing && (
-          <div className="w-full bg-white rounded-lg shadow-md p-6 mb-8 text-center">
-            <div className="animate-pulse flex flex-col items-center">
-              <div className="h-8 w-8 mb-4 border-t-4 border-indigo-600 rounded-full animate-spin"></div>
-              <p className="text-gray-600">Processing song... This may take a minute.</p>
+    <main className="min-h-screen w-full px-4 py-8 sm:py-12">
+      <div className="mx-auto w-full max-w-6xl space-y-6 sm:space-y-8">
+        <header className="text-center">
+          <h1 className="text-3xl sm:text-4xl font-bold text-white">Infinite Worship</h1>
+          <p className="mt-1 text-sm text-white/80">When You Don't Want Worship To End...</p>
+        </header>
+
+        <section className="cdpanel p-3 sm:p-4">
+          <div className="mb-4">
+            <div className="flex border-b border-white/20">
+              <button
+                onClick={() => setActiveTab('upload')}
+                className={`px-4 py-2 ${
+                  activeTab === 'upload'
+                    ? 'text-white border-b-2 border-blue-500'
+                    : 'text-white/60 hover:text-white'
+                }`}
+              >
+                Upload New Song
+              </button>
+              <button
+                onClick={() => setActiveTab('library')}
+                className={`px-4 py-2 ${
+                  activeTab === 'library'
+                    ? 'text-white border-b-2 border-blue-500'
+                    : 'text-white/60 hover:text-white'
+                }`}
+              >
+                Song Library
+              </button>
+              <button
+                onClick={() => setActiveTab('search')}
+                className={`px-4 py-2 ${
+                  activeTab === 'search'
+                    ? 'text-white border-b-2 border-blue-500'
+                    : 'text-white/60 hover:text-white'
+                }`}
+              >
+                Search Songs
+              </button>
             </div>
           </div>
-        )}
-        
-   
-        {audioFile && !isProcessing && (
-          <AudioPlayer
-            audioFile={audioFile}
-            currentSegment={playbackState.currentSegment}
-            nextSegment={playbackState.nextSegment}
-            segments={songData?.segments || []}
-            onTimeUpdate={handleTimeUpdate}
-            onSegmentChange={handleSegmentChange}
-          />
-        )}
-        
-        {songData && !isProcessing && (
-          <>
-            <SegmentVisualizer 
-              segments={songData.segments}
-              currentSegment={playbackState.currentSegment}
-              nextSegment={playbackState.nextSegment}
-              nextJumpFrom={playbackState.nextJumpFrom}
-              nextJumpTo={playbackState.nextJumpTo}
-              currentTime={playbackState.currentTime}
-              infiniteMode={infinitePlaybackActive}
-            />
-            
-            {audioFile && songData && ( 
-            <div className="bg-white rounded-lg shadow-md p-6 mb-8">
-              <h3 className="text-lg font-medium text-gray-800 mb-4">Song File: {audioFile.name}</h3>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <p className="text-sm text-gray-600">
-                    <span className="font-medium">Duration:</span>
-                    <span className="ml-2">
-                      {Math.floor(songData.duration / 60)}:{Math.floor(songData.duration % 60).toString().padStart(2, '0')}
-                    </span>
-                  </p>
-                  <p className="text-sm text-gray-600">
-                    <span className="font-medium">Tempo:</span>
-                    <span className="ml-2">{Math.round(songData.tempo)} BPM</span>
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-600">
-                    <span className="font-medium">Total Segments:</span>
-                    <span className="ml-2">{songData.segments.length}</span>
-                  </p>
-                  <p className="text-sm text-gray-600">
-                    <span className="font-medium">Sample Rate:</span>
-                    <span className="ml-2">{songData.sample_rate} Hz</span>
-                  </p>
-                </div>
-              </div>
+
+          {activeTab === 'upload' && (
+            <div className="cdpanel-inner p-4 sm:p-6">
+              <div className="engraved-label mb-2">Upload New Song</div>
+              <FileUpload onUploadSuccess={handleUploadSuccess} onUploadError={handleUploadError} />
             </div>
-            )}
-          </>
+          )}
+
+          {activeTab === 'library' && (
+            <SongLibrary onSongSelect={handleSongSelect} />
+          )}
+
+          {activeTab === 'search' && (
+            <SongSearch onSongSelect={handleSongSelect} />
+          )}
+
+          {error && (
+            <div
+              role="alert"
+              className="mt-3 rounded-md border border-red-400/40 bg-red-500/20 text-white px-3 py-2 text-sm"
+            >
+              {error}
+            </div>
+          )}
+
+          {loadingLibrarySong && (
+            <div className="mt-3 rounded-md border border-blue-400/40 bg-blue-500/20 text-white px-3 py-2 text-sm flex items-center">
+              <div className="animate-spin h-4 w-4 border-2 border-white/30 border-t-white rounded-full mr-2"></div>
+              Loading song: {selectedSongName}...
+            </div>
+          )}
+
+          {selectedSongId && selectedSongName && !loadingLibrarySong && (
+            <div className="mt-3 rounded-md border border-green-400/40 bg-green-500/20 text-white px-3 py-2 text-sm">
+              Selected song: {selectedSongName}
+            </div>
+          )}
+        </section>
+
+        {songData && (
+          <section className="cdpanel p-3 sm:p-4">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
+              <div className="lg:col-span-2 space-y-4">
+                <Visualization
+                  audioFile={audioFile}
+                  beats={songData.segments}
+                  currentBeat={currentBeat}
+                  onSeek={handleSeek}
+                />
+
+                <PlaybackControls
+                  isPlaying={isPlaying}
+                  jumpProbability={jumpProbability}
+                  onPlayPause={handlePlayPause}
+                  onRestart={handleRestart}
+                  onStop={handleStop}
+                  onJumpProbabilityChange={handleJumpProbabilityChange}
+                />
+              </div>
+
+              <aside className="cdpanel-inner p-4 sm:p-6">
+                <SongMetadata
+                  fileName={audioFile ? audioFile.name : null}
+                  durationSec={audioEngineRef.current ? audioEngineRef.current.getDuration() : null}
+                  beatsCount={songData?.segments ? songData.segments.length : null}
+                  totalJumpPoints={totalJumpPoints}
+                  currentBeat={currentBeat}
+                  isPlaying={isPlaying}
+                />
+              </aside>
+            </div>
+          </section>
         )}
       </div>
     </main>
