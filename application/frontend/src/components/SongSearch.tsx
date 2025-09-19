@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import axios from 'axios';
+import api from '@/lib/api';
 import { debounce } from 'lodash';
 
 interface Song {
@@ -33,7 +33,7 @@ const SongSearch: React.FC<SongSearchProps> = ({ onSongSelect }) => {
 
       try {
         setLoading(true);
-        const response = await axios.get(`http://localhost:5001/songs/search?q=${encodeURIComponent(searchQuery)}`);
+        const response = await api.get(`/songs/search?q=${encodeURIComponent(searchQuery)}`);
         setResults(response.data.songs || []);
         setError(null);
       } catch (err) {
