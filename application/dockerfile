@@ -40,6 +40,7 @@ RUN npm install
 
 # Copy the rest of the frontend code
 COPY frontend/ .
+COPY frontend/.env ./.env
 
 # Build the frontend application
 RUN npm run build

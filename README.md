@@ -23,6 +23,37 @@ Infinite Worship analyzes audio files to identify beats and segments, then creat
 
 ## Getting Started
 
+### Running with Docker
+
+This is the recommended way to run the application, as it ensures a consistent environment.
+
+**For Production:**
+
+1.  Navigate to the `application` directory:
+    ```
+    cd application
+    ```
+
+2.  Build and run the containers:
+    ```
+    docker-compose up --build
+    ```
+
+**For Development:**
+
+1.  Navigate to the `application` directory:
+    ```
+    cd application
+    ```
+
+2.  Build and run the containers:
+    ```
+    docker-compose -f docker-compose.dev.yml up --build
+    ```
+    This will start the services with hot-reloading for both the frontend and backend.
+
+### Manual Setup
+
 ### Prerequisites
 
 - Node.js 18.17 or later (for frontend)
@@ -67,6 +98,15 @@ Infinite Worship analyzes audio files to identify beats and segments, then creat
 
 The backend API will be available at [http://localhost:5001](http://localhost:5001)
 
+## Environment Variables
+
+The project uses environment variables to configure application settings.
+
+-   **`application/frontend/.env`**: This file is for Frontend Production settings.
+-   **`application/frontend/.env.local`**: This file is for Frontend Development settings.
+
+    -   `NEXT_PUBLIC_API_BASE_URL`: Specifies the base URL for the backend API. Defaults to `http://localhost:5001`.
+
 ## How It Works
 
 1. **Audio Analysis**: The system analyzes the audio file to identify beats and their characteristics
@@ -84,6 +124,49 @@ The backend API will be available at [http://localhost:5001](http://localhost:50
 - **Flask**: Python web framework for the backend
 - **Librosa**: Audio analysis library
 - **Madmom**: Beat detection library
+
+## Deploying to Docker Hub
+
+These instructions cover how to build and upload single and multi-platform Docker images to Docker Hub.
+
+### Standard Build (x86)
+
+1.  **Login to Docker Hub:**
+    ```
+    docker login
+    ```
+
+2.  **Build and Tag the Image:**
+    Replace `YYYYMMDD` with the current date.
+    ```
+    docker build -t infinite-worship:YYYYMMDD .
+    docker tag infinite-worship:YYYYMMDD mhuang74/infinite-worship:YYYYMMDD
+    ```
+
+3.  **Push the Image to Docker Hub:**
+    ```
+    docker push mhuang74/infinite-worship:YYYYMMDD
+    ```
+
+### Cross-Platform Build (ARM64)
+
+1.  **Set Up `buildx`:**
+    Create and switch to a new builder instance that supports multi-platform builds.
+    ```
+    docker buildx create --name multiarch-builder --driver docker-container --use
+    docker buildx inspect --bootstrap
+    ```
+
+2.  **Build and Tag for ARM64:**
+    Replace `YYYYMMDD` with the current date.
+    ```
+    docker buildx build --platform linux/arm64 -t mhuang74/infinite-worship-arm64:YYYYMMDD . --load
+    ```
+
+3.  **Push the ARM64 Image:**
+    ```
+    docker push mhuang74/infinite-worship-arm64:YYYYMMDD
+    ```
 
 ## License
 

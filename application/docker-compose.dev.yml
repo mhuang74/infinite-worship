@@ -1,0 +1,12 @@
+version: '3.8'
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: dockerfile-dev
+    volumes:
+      - ./backend:/app/backend
+      - ./frontend:/app/frontend
+    ports:
+      - "3000:3000"
+      - "5001:5001"
