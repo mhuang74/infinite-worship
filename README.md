@@ -65,7 +65,7 @@ Infinite Worship analyzes audio files to identify beats and segments, then creat
    ./start-server.sh
    ```
 
-The backend API will be available at [http://localhost:5000](http://localhost:5000)
+The backend API will be available at [http://localhost:5001](http://localhost:5001)
 
 ## How It Works
 

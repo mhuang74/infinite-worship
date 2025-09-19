@@ -3,7 +3,7 @@
 import axios from 'axios';
 import { SongData } from '@/types';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001';
 
 // Add a timeout to the axios requests
 const api = axios.create({
@@ -14,7 +14,7 @@ const api = axios.create({
 // Check if the API is available
 export const checkApiAvailability = async (): Promise<boolean> => {
   try {
-    const response = await api.get('/health', { timeout: 5000 });
+    const response = await api.get('/health', { timeout: 5001 });
     return response.status === 200;
   } catch (error) {
     console.error('API health check failed:', error);

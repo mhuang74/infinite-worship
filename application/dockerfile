@@ -57,7 +57,7 @@ COPY --from=base /app/backend /app/backend
 WORKDIR /app
 
 # Expose ports for frontend and backend
-EXPOSE 3000 5000
+EXPOSE 3000 5001
 
 # Start both frontend and backend
 CMD ["sh", "-c", "cd /app/backend && python app.py & cd /app/frontend && npm run start"]

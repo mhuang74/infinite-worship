@@ -86,18 +86,18 @@ export default function HomePage() {
         setError('');
         
         // Fetch song data from the API
-        const response = await axios.get(`http://localhost:5000/songs/${selectedSongId}`);
+        const response = await axios.get(`http://localhost:5001/songs/${selectedSongId}`);
         const songData = response.data;
         
         // Fetch segments data
-        const segmentsResponse = await axios.get(`http://localhost:5000/segments/${selectedSongId}`);
+        const segmentsResponse = await axios.get(`http://localhost:5001/segments/${selectedSongId}`);
         
         if (!segmentsResponse.data || !segmentsResponse.data.segments) {
           throw new Error('No segments data available for this song');
         }
         
         // Create a blob from the file path and create a File object
-        const audioResponse = await fetch(`http://localhost:5000/uploads/${selectedSongId}`, {
+        const audioResponse = await fetch(`http://localhost:5001/uploads/${selectedSongId}`, {
           method: 'GET',
           headers: {
             'Content-Type': 'audio/*',

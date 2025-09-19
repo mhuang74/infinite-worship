@@ -29,9 +29,9 @@ docker build -t infinite-worship-app-dev -f dockerfile-dev .
 
 **Start the development Docker container:**
 ```bash
-docker run --rm --detach -p 5555:5000 --volume $(pwd):/app --name dev infinite-worship-app-dev
+docker run --rm --detach -p 5001:5001 --volume $(pwd):/app --name dev infinite-worship-app-dev
 ```
-*Note: This command maps the backend's internal port 5000 to port 5555 on the host machine. Port 5555 is used by the `application-2` frontend because recent versions of macOS run an AirPlay Receiver service on port 5000, making it unavailable for development.*
+*Note: This command maps the backend's internal port 5001 to port 5001 on the host machine. Port 5001 is used by the `application-2` frontend because recent versions of macOS run an AirPlay Receiver service on port 5001, making it unavailable for development.*
 
 **Start the backend server inside the container:**
 ```bash
@@ -70,7 +70,7 @@ Or manually:
 python app.py
 ```
 
-The server will run on http://localhost:5000 by default.
+The server will run on http://localhost:5001 by default.
 
 ## API Endpoints
 

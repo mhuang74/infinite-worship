@@ -48,7 +48,7 @@ The project is composed of two main parts:
     ```bash
     ./start-server.sh
     ```
-    The API will be available at [http://localhost:5000](http://localhost:5000).
+    The API will be available at [http://localhost:5001](http://localhost:5001).
 
 ## Development Conventions
 
