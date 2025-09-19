@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import axios from 'axios';
+import api from '@/lib/api';
 import FileUpload from '@/components/FileUpload';
 import PlaybackControls from '@/components/PlaybackControls';
 import Visualization from '@/components/Visualization';
@@ -86,18 +86,18 @@ export default function HomePage() {
         setError('');
         
         // Fetch song data from the API
-        const response = await axios.get(`http://localhost:5001/songs/${selectedSongId}`);
+        const response = await api.get(`/songs/${selectedSongId}`);
         const songData = response.data;
         
         // Fetch segments data
-        const segmentsResponse = await axios.get(`http://localhost:5001/segments/${selectedSongId}`);
+        const segmentsResponse = await api.get(`/segments/${selectedSongId}`);
         
         if (!segmentsResponse.data || !segmentsResponse.data.segments) {
           throw new Error('No segments data available for this song');
         }
         
         // Create a blob from the file path and create a File object
-        const audioResponse = await fetch(`http://localhost:5001/uploads/${selectedSongId}`, {
+        const audioResponse = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/uploads/${selectedSongId}`, {
           method: 'GET',
           headers: {
             'Content-Type': 'audio/*',

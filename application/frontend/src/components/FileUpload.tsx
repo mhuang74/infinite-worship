@@ -2,6 +2,7 @@
 
 import React, { useState, useCallback } from 'react';
 import axios from 'axios';
+import api from '@/lib/api';
 
 interface FileUploadProps {
   onUploadSuccess: (data: any) => void;
@@ -31,7 +32,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess, onUploadError 
     formData.append('file', file);
 
     try {
-      const response = await axios.post('http://localhost:5001/upload', formData, {
+      const response = await api.post('/upload', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },

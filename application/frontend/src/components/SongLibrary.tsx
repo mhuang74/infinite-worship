@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import api from '@/lib/api';
 
 interface Song {
   song_id: string;
@@ -25,7 +25,7 @@ const SongLibrary: React.FC<SongLibraryProps> = ({ onSongSelect }) => {
     const fetchSongs = async () => {
       try {
         setLoading(true);
-        const response = await axios.get('http://localhost:5001/songs');
+        const response = await api.get('/songs');
         setSongs(response.data.songs || []);
         setError(null);
       } catch (err) {
