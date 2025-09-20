@@ -38,7 +38,7 @@ COPY frontend/package*.json ./
 RUN npm install
 
 # Copy the rest of the frontend code
-COPY frontend/ .
+COPY frontend/ ./
 
 # Build the application
 RUN npm run build
@@ -53,8 +53,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg nodejs n
 # Copy the virtual environment from the builder stage
 COPY --from=builder /opt/venv /opt/venv
 
+# Prepare frontend runtime dependencies
+WORKDIR /app/frontend
+COPY frontend/package*.json ./
+RUN npm ci --omit=dev
+
 # Copy the built frontend from the frontend-build stage
-COPY --from=frontend-build /app/frontend/build /app/frontend/build
+COPY --from=frontend-build /app/frontend/.next /app/frontend/.next
+COPY frontend/public /app/frontend/public
 
 # Copy the backend application code
 COPY backend/ /app/backend
