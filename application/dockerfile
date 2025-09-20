@@ -1,63 +1,72 @@
-# Use the official Python 3.11 image as the base image
-FROM python:3.11 AS base
+# 1. Builder stage for backend dependencies
+FROM python:3.11-slim AS builder
 
-RUN apt-get update
+# Install build-time system dependencies for Alpine
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    gfortran \
+    git \
+    libopenblas-dev \
+    cython3 \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install Node.js version 22
-RUN apt-get install -y curl && \
-    curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
-    apt-get install -y nodejs
+# Create a virtual environment
+ENV VIRTUAL_ENV=/opt/venv
+RUN python3 -m venv $VIRTUAL_ENV
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
-# Install the required system packages
-RUN apt-get install -y ffmpeg git cmake gfortran libopenblas-dev
-
-RUN apt-get clean
-
-# Install pip dependencies
+# Install Python build dependencies
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
-RUN pip install --no-cache-dir --upgrade cython Cython
+RUN pip install --no-cache-dir cython
+
+# Install madmom from source
 RUN pip install --no-cache-dir git+https://github.com/CPJKU/madmom
 
-# Set the working directory for the backend
-WORKDIR /app/backend
-
-# Copy backend requirements and install dependencies
-COPY backend/requirements.txt ./
+# Install application-specific python dependencies
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the backend code
-COPY backend/ .
 
-# Frontend build stage
-FROM node:22 AS frontend-build
+# 2. Frontend build stage
+FROM node:22-slim AS frontend-build
 
-# Set the working directory for the frontend
 WORKDIR /app/frontend
 
-# Copy frontend package files and install dependencies
+# Copy package files and install dependencies
 COPY frontend/package*.json ./
 RUN npm install
 
 # Copy the rest of the frontend code
 COPY frontend/ .
 
-# Build the frontend application
+# Build the application
 RUN npm run build
 
-# Final stage to combine both frontend and backend
-FROM base
 
-# Copy built frontend from the frontend-build stage
-COPY --from=frontend-build /app/frontend /app/frontend
+# 3. Final production stage
+FROM python:3.11-slim AS final
 
-# Copy backend from the backend stage
-COPY --from=base /app/backend /app/backend
+# Install only runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg nodejs npm && rm -rf /var/lib/apt/lists/*
 
-# Set the working directory
+# Copy the virtual environment from the builder stage
+COPY --from=builder /opt/venv /opt/venv
+
+# Copy the built frontend from the frontend-build stage
+COPY --from=frontend-build /app/frontend/build /app/frontend/build
+
+# Copy the backend application code
+COPY backend/ /app/backend
+
+# Set the application's working directory
 WORKDIR /app
+
+# Set the PATH to include the virtual environment
+ENV PATH="/opt/venv/bin:$PATH"
 
 # Expose ports for frontend and backend
 EXPOSE 3000 5001
 
-# Start both frontend and backend
-CMD ["sh", "-c", "cd /app/backend && python app.py & cd /app/frontend && npm run start"]
+# Start both the backend and frontend
+CMD ["sh", "-c", "cd /app/backend && python app.py & (cd /app/frontend && npm start)"]

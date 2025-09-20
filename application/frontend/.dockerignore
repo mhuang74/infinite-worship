@@ -1,4 +1,2 @@
-# Ignore .env.local file
+# Ignore development environment file
 .env.local
-# Ignore all .env files
-.env

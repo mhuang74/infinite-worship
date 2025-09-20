@@ -17,8 +17,12 @@ const getBaseUrl = () => {
   return 'http://localhost:5001';
 };
 
+const baseURL = getBaseUrl();
+console.log('API baseURL:', baseURL);
+
 const api = axios.create({
-  baseURL: getBaseUrl(),
+  baseURL,
 });
 
+export { baseURL };
 export default api;

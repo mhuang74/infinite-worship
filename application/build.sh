@@ -4,7 +4,7 @@
 TAG=$(date +%Y%m%d)
 
 # Set the image name with the tag
-IMAGE_NAME="mhuang74/infinite-worship-arm64:$TAG"
+export IMAGE_NAME="mhuang74/infinite-worship-arm64:$TAG"
 echo "Building image: $IMAGE_NAME for linux/arm64"
 
 # Build the docker image using docker-compose
@@ -20,7 +20,7 @@ docker tag "$IMAGE_NAME" "$ECR_REPO:latest"
 echo "Log into AWS ECR..."
 aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws/u4p9h6o7
 
-echo "Pushing image to AWS ECR..."
+#echo "Pushing image to AWS ECR..."
 docker push "$ECR_REPO:$TAG"
 docker push "$ECR_REPO:latest"
 

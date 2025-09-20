@@ -97,7 +97,7 @@ export default function HomePage() {
         }
         
         // Create a blob from the file path and create a File object
-        const audioResponse = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/uploads/${selectedSongId}`, {
+        const audioResponse = await fetch(`${api.defaults.baseURL}/uploads/${selectedSongId}`, {
           method: 'GET',
           headers: {
             'Content-Type': 'audio/*',
