@@ -102,8 +102,7 @@ The backend API will be available at [http://localhost:5001](http://localhost:50
 
 The project uses environment variables to configure application settings.
 
--   **`application/frontend/.env`**: This file is for Frontend Production settings.
--   **`application/frontend/.env.local`**: This file is for Frontend Development settings.
+-   **`application/frontend/.env.local`**: This file is for overriding Frontend settings during development. Eg, to point to a different backend than localhost:5001.
 
     -   `NEXT_PUBLIC_API_BASE_URL`: Specifies the base URL for the backend API. Defaults to `http://localhost:5001`.
 
