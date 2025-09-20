@@ -1,6 +1,7 @@
-version: '3.8'
 services:
   dev:
+    image: infinite-worship-dev
+    container_name: infinite-worship-dev-1
     build:
       context: .
       dockerfile: dockerfile-dev
@@ -8,3 +9,5 @@ services:
       - ./backend:/app/backend
     ports:
       - "5001:5001"
+    working_dir: /app/backend
+    command: ["./start-server.sh"]
