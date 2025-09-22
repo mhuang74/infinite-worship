@@ -1,12 +1,13 @@
-version: '3.8'
 services:
   dev:
+    image: infinite-worship-dev
+    container_name: infinite-worship-dev-1
     build:
       context: .
       dockerfile: dockerfile-dev
     volumes:
       - ./backend:/app/backend
-      - ./frontend:/app/frontend
     ports:
-      - "3000:3000"
       - "5001:5001"
+    working_dir: /app/backend
+    command: ["./start-server.sh"]
