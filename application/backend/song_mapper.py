@@ -18,16 +18,18 @@ class SongMapper:
     def __init__(self, db_path=None):
         """
         Initialize the SongMapper with a database path.
-        
+
         Args:
             db_path (str, optional): Path to the SQLite database file.
                 If None, a default path will be used.
         """
         if db_path is None:
-            # Use a default path in the same directory as this file
+            # Use a default path in the uploads directory
             current_dir = os.path.dirname(os.path.abspath(__file__))
-            db_path = os.path.join(current_dir, 'songs.db')
-        
+            uploads_dir = os.path.join(current_dir, 'uploads')
+            os.makedirs(uploads_dir, exist_ok=True)
+            db_path = os.path.join(uploads_dir, 'songs.db')
+
         self.db_path = db_path
         self._init_db()
     
