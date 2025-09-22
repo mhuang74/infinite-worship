@@ -3,25 +3,33 @@
 # Get the current date in YYYYMMDD format
 TAG=$(date +%Y%m%d)
 
-# Set the image name with the tag
-export IMAGE_NAME="mhuang74/infinite-worship-arm64:$TAG"
-echo "Building image: $IMAGE_NAME for linux/arm64"
+# Set the image names with the tag
+export TAG
+export BACKEND_IMAGE_NAME="infinite-worship-backend-arm64"
+export FRONTEND_IMAGE_NAME="infinite-worship-frontend-arm64"
 
-# Build the docker image using docker-compose
+echo "Building images for linux/arm64 with tag: $TAG"
+
+# Build the docker images using docker-compose
 # The --pull argument ensures we get the latest base images
-DOCKER_DEFAULT_PLATFORM=linux/arm64 docker-compose build --pull app
+(DOCKER_DEFAULT_PLATFORM=linux/arm64 docker-compose build --pull)
 
-ECR_REPO="public.ecr.aws/u4p9h6o7/mhuang74/infinite-worship"
+ECR_REGISTRY="public.ecr.aws/u4p9h6o7"
+ECR_REPOSITORY="mhuang74/infinite-worship"
 
-echo "Tagging image for AWS ECR..."
-docker tag "$IMAGE_NAME" "$ECR_REPO:$TAG"
-docker tag "$IMAGE_NAME" "$ECR_REPO:latest"
+echo "Tagging images for AWS ECR..."
+docker tag "$BACKEND_IMAGE_NAME:$TAG" "$ECR_REGISTRY/$ECR_REPOSITORY:$BACKEND_IMAGE_NAME-$TAG"
+docker tag "$BACKEND_IMAGE_NAME:$TAG" "$ECR_REGISTRY/$ECR_REPOSITORY:$BACKEND_IMAGE_NAME-latest"
+docker tag "$FRONTEND_IMAGE_NAME:$TAG" "$ECR_REGISTRY/$ECR_REPOSITORY:$FRONTEND_IMAGE_NAME-$TAG"
+docker tag "$FRONTEND_IMAGE_NAME:$TAG" "$ECR_REGISTRY/$ECR_REPOSITORY:$FRONTEND_IMAGE_NAME-latest"
 
 echo "Log into AWS ECR..."
-aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws/u4p9h6o7
+aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin "$ECR_REGISTRY"
 
-#echo "Pushing image to AWS ECR..."
-docker push "$ECR_REPO:$TAG"
-docker push "$ECR_REPO:latest"
+echo "Pushing images to AWS ECR..."
+docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$BACKEND_IMAGE_NAME-$TAG"
+docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$BACKEND_IMAGE_NAME-latest"
+docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$FRONTEND_IMAGE_NAME-$TAG"
+docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$FRONTEND_IMAGE_NAME-latest"
 
 echo "Build and push complete."

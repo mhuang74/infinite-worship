@@ -1,9 +1,24 @@
 services:
-  app:
-    image: ${IMAGE_NAME}
+  backend:
+    image: infinite-worship-backend-arm64:${TAG:-latest}
     build:
       context: .
       dockerfile: dockerfile
+      target: backend-final
     ports:
-      - "3000:3000"
       - "5001:5001"
+    volumes:
+      - ./backend:/app/backend # Mount backend code for development (optional, remove for production)
+      - ./backend/uploads:/app/backend/uploads # Persist uploads
+    environment:
+      - PYTHONUNBUFFERED=1 # Ensure Python output is unbuffered
+  frontend:
+    image: infinite-worship-frontend-arm64:${TAG:-latest}
+    build:
+      context: .
+      dockerfile: dockerfile
+      target: frontend-final
+    ports:
+      - "80:3000" # Map host port 80 to Nginx container port 3000
+    depends_on:
+      - backend # Frontend depends on backend for API calls
