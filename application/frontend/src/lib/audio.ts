@@ -12,6 +12,7 @@ export class AudioEngine {
   private beats: Beat[] = [];
   private onBeatChange: (beat: Beat) => void;
   private onJump: (jumps: number) => void;
+  private onPlaybackStarted: (() => void) | null = null;
   private jumpProbability = 0.15;
   private nextBeatTime = 0;
   private currentBeatIndex = 0;
@@ -20,13 +21,15 @@ export class AudioEngine {
   private beatsSinceLastJump = 0;
   private totalJumps = 0;
   private mainGain: GainNode;
+  private hasPlaybackStarted = false;
 
-  constructor(audioContext: AudioContext, audioBuffer: AudioBuffer, beats: Beat[], onBeatChange: (beat: Beat) => void, onJump: (jumps: number) => void) {
+  constructor(audioContext: AudioContext, audioBuffer: AudioBuffer, beats: Beat[], onBeatChange: (beat: Beat) => void, onJump: (jumps: number) => void, onPlaybackStarted?: () => void) {
     this.audioContext = audioContext;
     this.audioBuffer = audioBuffer;
     this.beats = beats;
     this.onBeatChange = onBeatChange;
     this.onJump = onJump;
+    this.onPlaybackStarted = onPlaybackStarted || null;
     this.mainGain = this.audioContext.createGain();
     this.mainGain.connect(this.audioContext.destination);
   }
@@ -46,11 +49,13 @@ export class AudioEngine {
 
   public pause() {
     this.isPlaying = false;
+    this.hasPlaybackStarted = false;
   }
 
   public stop() {
     this.isPlaying = false;
     this.currentBeatIndex = 0;
+    this.hasPlaybackStarted = false;
   }
 
   public restart() {
@@ -103,6 +108,13 @@ export class AudioEngine {
 
       const currentBeat = this.beats[this.currentBeatIndex];
       this.onBeatChange(currentBeat);
+
+      // Trigger playback started callback on first beat
+      if (!this.hasPlaybackStarted && this.onPlaybackStarted) {
+        this.onPlaybackStarted();
+        this.hasPlaybackStarted = true;
+      }
+
       this.playBeat(this.currentBeatIndex, this.nextBeatTime, this.mainGain);
       this.beatsSinceLastJump++;
 
