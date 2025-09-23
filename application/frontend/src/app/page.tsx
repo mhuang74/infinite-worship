@@ -29,10 +29,11 @@ export default function HomePage() {
   const [selectedSongId, setSelectedSongId] = useState<string | null>(null);
   const [selectedSongName, setSelectedSongName] = useState<string | null>(null);
   const [loadingLibrarySong, setLoadingLibrarySong] = useState(false);
-  const [activeTab, setActiveTab] = useState<'upload' | 'library' | 'search'>('upload');
+  const [activeTab, setActiveTab] = useState<'upload' | 'library' | 'search'>('library');
   const [songs, setSongs] = useState<Song[]>([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [libraryError, setLibraryError] = useState<string | null>(null);
+  const [shouldAutoplay, setShouldAutoplay] = useState(false);
 
   const totalJumpPoints = useMemo(() => {
     if (!songData?.segments) return null;
@@ -68,10 +69,16 @@ export default function HomePage() {
           };
 
           audioEngineRef.current = new AudioEngine(audioContextRef.current, audioBuffer, songData.segments, onBeatChange);
-          
+
           // Set initial state
           setCurrentBeat(songData.segments[0]);
-          setIsPlaying(false);
+          setIsPlaying(shouldAutoplay);
+
+          // Auto-play if flagged
+          if (shouldAutoplay) {
+            audioEngineRef.current.play();
+            setShouldAutoplay(false);
+          }
 
         } catch (e) {
           setError('Failed to decode audio file.');
@@ -179,6 +186,7 @@ export default function HomePage() {
         if (fetchedSongs.length > 0) {
           const randomIndex = Math.floor(Math.random() * fetchedSongs.length);
           const randomSong = fetchedSongs[randomIndex];
+          setShouldAutoplay(true);
           setSelectedSongId(randomSong.song_id);
           setSelectedSongName(randomSong.original_filename);
         }
@@ -239,6 +247,7 @@ export default function HomePage() {
   };
   
   const handleSongSelect = (songId: string, filename: string) => {
+    setShouldAutoplay(true);
     setSelectedSongId(songId);
     setSelectedSongName(filename);
   };
