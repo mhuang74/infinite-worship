@@ -24,6 +24,7 @@ export default function HomePage() {
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [error, setError] = useState('');
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isPlaybackPending, setIsPlaybackPending] = useState(false);
   const [jumpProbability, setJumpProbability] = useState(0.15);
   const [currentBeat, setCurrentBeat] = useState<any | null>(null);
   const [selectedSongId, setSelectedSongId] = useState<string | null>(null);
@@ -80,11 +81,17 @@ export default function HomePage() {
             setTotalJumps(jumps);
           };
 
-          audioEngineRef.current = new AudioEngine(audioContextRef.current, audioBuffer, songData.segments, onBeatChange, onJump);
+          const onPlaybackStarted = () => {
+            setIsPlaying(true);
+            setIsPlaybackPending(false);
+          };
+
+          audioEngineRef.current = new AudioEngine(audioContextRef.current, audioBuffer, songData.segments, onBeatChange, onJump, onPlaybackStarted);
 
           // Set initial state
           setCurrentBeat(songData.segments[0]);
           setIsPlaying(shouldAutoplay);
+          setIsPlaybackPending(shouldAutoplay);
 
           // Auto-play if flagged
           if (shouldAutoplay) {
@@ -162,9 +169,10 @@ export default function HomePage() {
     if (isPlaying) {
       audioEngineRef.current.pause();
       setIsPlaying(false);
+      setIsPlaybackPending(false);
     } else {
+      setIsPlaybackPending(true);
       audioEngineRef.current.play();
-      setIsPlaying(true);
     }
   }, [isPlaying]);
 
@@ -310,6 +318,7 @@ export default function HomePage() {
 
                 <PlaybackControls
                   isPlaying={isPlaying}
+                  isPlaybackPending={isPlaybackPending}
                   jumpProbability={jumpProbability}
                   onPlayPause={handlePlayPause}
                   onRestart={handleRestart}

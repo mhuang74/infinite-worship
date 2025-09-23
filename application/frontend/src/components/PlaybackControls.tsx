@@ -4,6 +4,7 @@ import React from 'react';
 
 interface PlaybackControlsProps {
   isPlaying: boolean;
+  isPlaybackPending?: boolean;
   jumpProbability: number;
   onPlayPause: () => void;
   onRestart: () => void;
@@ -37,6 +38,7 @@ const IconRestart = () => (
 
 const PlaybackControls: React.FC<PlaybackControlsProps> = ({
   isPlaying,
+  isPlaybackPending = false,
   jumpProbability,
   onPlayPause,
   onRestart,
@@ -53,12 +55,19 @@ const PlaybackControls: React.FC<PlaybackControlsProps> = ({
         <button
           type="button"
           onClick={onPlayPause}
-          className={`transport-btn w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center text-navy-900 ${isPlaying ? 'accent-glow' : ''}`}
-          aria-label={isPlaying ? 'Pause' : 'Play'}
-          title={isPlaying ? 'Pause' : 'Play'}
+          disabled={isPlaybackPending}
+          className={`transport-btn w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center text-navy-900 ${isPlaying ? 'accent-glow' : ''} ${isPlaybackPending ? 'opacity-50 cursor-not-allowed' : ''}`}
+          aria-label={isPlaying ? 'Pause' : isPlaybackPending ? 'Loading...' : 'Play'}
+          title={isPlaying ? 'Pause' : isPlaybackPending ? 'Loading...' : 'Play'}
         >
-          <span className="sr-only">{isPlaying ? 'Pause' : 'Play'}</span>
-          {isPlaying ? <IconPause /> : <IconPlay />}
+          <span className="sr-only">{isPlaying ? 'Pause' : isPlaybackPending ? 'Loading...' : 'Play'}</span>
+          {isPlaybackPending ? (
+            <div className="animate-spin h-5 w-5 border-2 border-navy-900/30 border-t-navy-900 rounded-full"></div>
+          ) : isPlaying ? (
+            <IconPause />
+          ) : (
+            <IconPlay />
+          )}
         </button>
 
         {/* <button
