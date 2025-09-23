@@ -1,7 +1,7 @@
 services:
-  dev:
+  backend:
     image: infinite-worship-dev
-    container_name: infinite-worship-dev-1
+    container_name: infinite-worship-backend-1
     build:
       context: .
       dockerfile: dockerfile-dev
@@ -11,3 +11,15 @@ services:
       - "5001:5001"
     working_dir: /app/backend
     command: ["./start-server.sh"]
+  frontend:
+    image: infinite-worship-dev
+    container_name: infinite-worship-frontend-1
+    build:
+      context: .
+      dockerfile: dockerfile-dev
+    volumes:
+      - ./frontend:/app/frontend
+    ports:
+      - "3000:3000"
+    working_dir: /app/frontend
+    command: ["sh", "-c", "npm install && npm run dev"]
