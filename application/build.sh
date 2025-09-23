@@ -8,6 +8,9 @@ export TAG
 export BACKEND_IMAGE_NAME="infinite-worship-backend-arm64"
 export FRONTEND_IMAGE_NAME="infinite-worship-frontend-arm64"
 
+# Set build argument to force frontend rebuild
+export BUILD_ARG=$(date +%s)
+
 echo "Building images for linux/arm64 with tag: $TAG"
 
 # Build the docker images using docker-compose

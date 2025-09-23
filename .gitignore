@@ -1,6 +1,7 @@
 
 # Environments
 .env
+.env.*
 
 # Audio files
 *.mp3

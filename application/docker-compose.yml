@@ -18,6 +18,8 @@ services:
       context: .
       dockerfile: dockerfile
       target: frontend-final
+      args:
+        - BUILD_ARG=${BUILD_ARG:-latest}
     ports:
       - "80:3000" # Map host port 80 to Nginx container port 3000
     depends_on:

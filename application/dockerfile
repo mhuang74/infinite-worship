@@ -38,8 +38,11 @@ RUN npm install
 COPY frontend/ .
 COPY frontend/.env ./.env
 
+# Build argument to force rebuild
+ARG BUILD_ARG
+
 # Build the frontend application
-RUN npm run build
+RUN echo "Build argument: $BUILD_ARG" && npm run build
 
 # Final stage for the backend
 FROM python:3.11-slim AS backend-final
