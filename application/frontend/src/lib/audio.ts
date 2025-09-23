@@ -55,6 +55,8 @@ export class AudioEngine {
 
   public restart() {
     this.stop();
+    this.totalJumps = 0;
+    this.onJump(this.totalJumps);
     this.play();
   }
 

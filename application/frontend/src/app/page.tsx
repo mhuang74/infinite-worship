@@ -244,6 +244,7 @@ export default function HomePage() {
     if (!audioEngineRef.current) return;
     audioEngineRef.current.restart();
     setIsPlaying(true);
+    setTotalPlayingTimeSec(0);
   };
 
   const handleStop = () => {
