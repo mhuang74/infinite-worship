@@ -11,19 +11,22 @@ export class AudioEngine {
   private audioBuffer: AudioBuffer;
   private beats: Beat[] = [];
   private onBeatChange: (beat: Beat) => void;
+  private onJump: (jumps: number) => void;
   private jumpProbability = 0.15;
   private nextBeatTime = 0;
   private currentBeatIndex = 0;
   private isPlaying = false;
   private lookaheadSeconds = 0.1; // 100ms lookahead
   private beatsSinceLastJump = 0;
+  private totalJumps = 0;
   private mainGain: GainNode;
 
-  constructor(audioContext: AudioContext, audioBuffer: AudioBuffer, beats: Beat[], onBeatChange: (beat: Beat) => void) {
+  constructor(audioContext: AudioContext, audioBuffer: AudioBuffer, beats: Beat[], onBeatChange: (beat: Beat) => void, onJump: (jumps: number) => void) {
     this.audioContext = audioContext;
     this.audioBuffer = audioBuffer;
     this.beats = beats;
     this.onBeatChange = onBeatChange;
+    this.onJump = onJump;
     this.mainGain = this.audioContext.createGain();
     this.mainGain.connect(this.audioContext.destination);
   }
@@ -116,6 +119,8 @@ export class AudioEngine {
         if (jumpCandidate) {
           nextBeat = jumpCandidate;
           this.beatsSinceLastJump = 0;
+          this.totalJumps++;
+          this.onJump(this.totalJumps);
         } else {
           nextBeat = this.beats[this.currentBeatIndex + 1];
         }

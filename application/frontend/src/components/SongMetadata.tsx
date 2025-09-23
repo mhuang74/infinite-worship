@@ -9,6 +9,8 @@ interface SongMetadataProps {
   totalJumpPoints?: number | null;
   currentBeat?: any | null;
   isPlaying?: boolean;
+  totalPlayingTimeSec?: number | null;
+  totalJumps?: number | null;
 }
 
 const formatTime = (seconds?: number | null) => {
@@ -32,6 +34,8 @@ const SongMetadata: React.FC<SongMetadataProps> = ({
   totalJumpPoints,
   currentBeat,
   isPlaying,
+  totalPlayingTimeSec,
+  totalJumps,
 }) => {
   return (
     <section className="cdpanel-inner p-4 sm:p-6">
@@ -56,6 +60,8 @@ const SongMetadata: React.FC<SongMetadataProps> = ({
               : '--'
           }
         />
+        <MetaRow label="Total Jumps" value={totalJumps ?? '--'} />
+        <MetaRow label="Total Playing Time" value={formatTime(totalPlayingTimeSec)} />
         <MetaRow
           label="Status"
           value={
