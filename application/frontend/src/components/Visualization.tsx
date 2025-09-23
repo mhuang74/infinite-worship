@@ -81,7 +81,11 @@ const Visualization: React.FC<VisualizationProps> = ({ audioFile, beats, current
 
       return () => {
         if (wavesurfer.current) {
-          wavesurfer.current.destroy();
+          try {
+            wavesurfer.current.destroy();
+          } catch (error) {
+            // Ignore cleanup errors
+          }
           wavesurfer.current = null;
           isReady.current = false;
         }
@@ -109,7 +113,7 @@ const Visualization: React.FC<VisualizationProps> = ({ audioFile, beats, current
     }
   }, [handleSeek]);
 
-  // Handle seeking to current beat
+  // Handle seeking to current beat (waveform only)
   useEffect(() => {
     if (wavesurfer.current && currentBeat && isReady.current) {
       const duration = wavesurfer.current.getDuration();
@@ -121,6 +125,8 @@ const Visualization: React.FC<VisualizationProps> = ({ audioFile, beats, current
       }
     }
   }, [currentBeat]);
+
+
 
   const getBeatColor = (cluster: number) => {
     const colors = [
@@ -158,18 +164,29 @@ const Visualization: React.FC<VisualizationProps> = ({ audioFile, beats, current
         </div>
       </div>
 
-      <div className="flex mt-4 w-full overflow-x-auto gap-[1px]">
-        {beats.map((beat) => (
-          <div
-            key={beat.id}
-            className={`h-8 sm:h-10 ${getBeatColor(beat.cluster)} ${
-              currentBeat && currentBeat.id === beat.id ? 'border-2 border-gold-400' : ''
-            } ${
-              currentBeat && currentBeat.jump_candidates.includes(beat.id) ? 'animate-pulse' : ''
-            }`}
-            style={{ width: `${Math.max(2, Math.floor(beat.duration * 100))}px` }}
-          />
-        ))}
+      <div className="relative mt-4 w-full h-8 sm:h-10 bg-gray-100 rounded">
+        {beats.map((beat) => {
+          const duration = wavesurfer.current?.getDuration() || 0;
+          if (duration <= 0) return null;
+          const leftPercent = (beat.start / duration) * 100;
+          const widthPercent = (beat.duration / duration) * 100;
+          return (
+            <div
+              key={beat.id}
+              id={`beat-${beat.id}`}
+              className={`absolute top-0 h-full ${getBeatColor(beat.cluster)} ${
+                currentBeat && currentBeat.id === beat.id ? 'border-2 border-gold-400' : ''
+              } ${
+                currentBeat && currentBeat.jump_candidates.includes(beat.id) ? 'animate-pulse' : ''
+              }`}
+              style={{
+                left: `${leftPercent}%`,
+                width: `${widthPercent}%`,
+                minWidth: '1px'
+              }}
+            />
+          );
+        })}
       </div>
     </div>
   );
