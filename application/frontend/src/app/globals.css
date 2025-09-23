@@ -108,3 +108,8 @@ body {
     animation: none !important;
   }
 }
+
+.button-group-spacing {
+  display: flex;
+  gap: 0.15rem; /* Drastically increased gap for visual confirmation */
+}

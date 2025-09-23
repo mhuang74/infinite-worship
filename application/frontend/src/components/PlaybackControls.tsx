@@ -49,7 +49,7 @@ const PlaybackControls: React.FC<PlaybackControlsProps> = ({
       role="group"
       aria-label="Playback controls"
     >
-      <div className="flex items-center gap-3 sm:gap-4">
+      <div className="button-group-spacing">
         <button
           type="button"
           onClick={onPlayPause}
