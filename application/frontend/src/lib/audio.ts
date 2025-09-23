@@ -35,13 +35,25 @@ export class AudioEngine {
     this.jumpProbability = probability;
   }
 
-  public play() {
+  public async play(): Promise<boolean> {
     if (this.isPlaying) {
-      return;
+      return true;
     }
+
+    // Resume the audio context if it's suspended (required for auto-play)
+    if (this.audioContext.state === 'suspended') {
+      try {
+        await this.audioContext.resume();
+      } catch (error) {
+        console.warn('Failed to resume audio context:', error);
+        return false;
+      }
+    }
+
     this.isPlaying = true;
     this.nextBeatTime = this.audioContext.currentTime;
     this.scheduleNextBeat();
+    return true;
   }
 
   public pause() {
@@ -53,11 +65,11 @@ export class AudioEngine {
     this.currentBeatIndex = 0;
   }
 
-  public restart() {
+  public async restart(): Promise<boolean> {
     this.stop();
     this.totalJumps = 0;
     this.onJump(this.totalJumps);
-    this.play();
+    return await this.play();
   }
 
   public seekToTime(time: number) {

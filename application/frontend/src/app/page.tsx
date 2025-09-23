@@ -36,6 +36,7 @@ export default function HomePage() {
   const [shouldAutoplay, setShouldAutoplay] = useState(false);
   const [totalJumps, setTotalJumps] = useState(0);
   const [totalPlayingTimeSec, setTotalPlayingTimeSec] = useState(0);
+  const [initialLoading, setInitialLoading] = useState(true);
 
   // Effect to reset counters when song changes
   useEffect(() => {
@@ -84,12 +85,18 @@ export default function HomePage() {
 
           // Set initial state
           setCurrentBeat(songData.segments[0]);
-          setIsPlaying(shouldAutoplay);
 
           // Auto-play if flagged
           if (shouldAutoplay) {
-            audioEngineRef.current.play();
+            const success = await audioEngineRef.current.play();
+            if (success) {
+              setIsPlaying(true);
+            }
             setShouldAutoplay(false);
+            setInitialLoading(false);
+          } else {
+            setIsPlaying(false);
+            setInitialLoading(false);
           }
 
         } catch (e) {
@@ -157,14 +164,16 @@ export default function HomePage() {
     fetchSongData();
   }, [selectedSongId]);
 
-  const handlePlayPause = useCallback(() => {
+  const handlePlayPause = useCallback(async () => {
     if (!audioEngineRef.current) return;
     if (isPlaying) {
       audioEngineRef.current.pause();
       setIsPlaying(false);
     } else {
-      audioEngineRef.current.play();
-      setIsPlaying(true);
+      const success = await audioEngineRef.current.play();
+      if (success) {
+        setIsPlaying(true);
+      }
     }
   }, [isPlaying]);
 
@@ -240,11 +249,13 @@ export default function HomePage() {
     setError(message);
   };
 
-  const handleRestart = () => {
+  const handleRestart = async () => {
     if (!audioEngineRef.current) return;
-    audioEngineRef.current.restart();
-    setIsPlaying(true);
-    setTotalPlayingTimeSec(0);
+    const success = await audioEngineRef.current.restart();
+    if (success) {
+      setIsPlaying(true);
+      setTotalPlayingTimeSec(0);
+    }
   };
 
   const handleStop = () => {
@@ -284,7 +295,16 @@ export default function HomePage() {
           <p className="mt-1 text-sm text-white/80">Infinite Remix of Your Favorite Worship Songs</p>
         </header>
 
-        {songData && (
+        {initialLoading && (
+          <section className="cdpanel p-3 sm:p-4">
+            <div className="text-center py-8">
+              <div className="animate-spin h-8 w-8 border-2 border-white/30 border-t-white rounded-full mx-auto mb-4"></div>
+              <p className="text-white/80">Loading your infinite worship experience...</p>
+            </div>
+          </section>
+        )}
+
+        {songData && !initialLoading && (
           <section className="cdpanel p-3 sm:p-4">
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
               <div className="lg:col-span-2 space-y-4">
