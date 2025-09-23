@@ -208,8 +208,56 @@ export default function HomePage() {
       <div className="mx-auto w-full max-w-6xl space-y-6 sm:space-y-8">
         <header className="text-center">
           <h1 className="text-3xl sm:text-4xl font-bold text-white">Infinite Worship</h1>
-          <p className="mt-1 text-sm text-white/80">When You Don't Want Worship To End...</p>
+          <p className="mt-1 text-sm text-white/80">Infinite Remix of Your Favorite Worship Songs</p>
         </header>
+
+        {songData && (
+          <section className="cdpanel p-3 sm:p-4">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
+              <div className="lg:col-span-2 space-y-4">
+                <Visualization
+                  audioFile={audioFile}
+                  beats={songData.segments}
+                  currentBeat={currentBeat}
+                  onSeek={handleSeek}
+                />
+
+                {selectedSongId && selectedSongName && !loadingLibrarySong && (
+                  <div className="h-24">
+                    Selected song: {selectedSongName}
+                    </div> 
+                )}
+
+                {/* {selectedSongId && selectedSongName && !loadingLibrarySong && (
+                  <div className="mt-3 rounded-md border border-green-400/40 bg-green-500/20 text-white px-3 py-2 text-sm">
+                    Selected song: {selectedSongName}
+                  </div>
+                )} */}
+
+
+                <PlaybackControls
+                  isPlaying={isPlaying}
+                  jumpProbability={jumpProbability}
+                  onPlayPause={handlePlayPause}
+                  onRestart={handleRestart}
+                  onStop={handleStop}
+                  onJumpProbabilityChange={handleJumpProbabilityChange}
+                />
+              </div>
+
+              <aside className="cdpanel-inner p-4 sm:p-6">
+                <SongMetadata
+                  fileName={audioFile ? audioFile.name : null}
+                  durationSec={audioEngineRef.current ? audioEngineRef.current.getDuration() : null}
+                  beatsCount={songData?.segments ? songData.segments.length : null}
+                  totalJumpPoints={totalJumpPoints}
+                  currentBeat={currentBeat}
+                  isPlaying={isPlaying}
+                />
+              </aside>
+            </div>
+          </section>
+        )}
 
         <section className="cdpanel p-3 sm:p-4">
           <div className="mb-4">
@@ -278,47 +326,8 @@ export default function HomePage() {
             </div>
           )}
 
-          {selectedSongId && selectedSongName && !loadingLibrarySong && (
-            <div className="mt-3 rounded-md border border-green-400/40 bg-green-500/20 text-white px-3 py-2 text-sm">
-              Selected song: {selectedSongName}
-            </div>
-          )}
+
         </section>
-
-        {songData && (
-          <section className="cdpanel p-3 sm:p-4">
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
-              <div className="lg:col-span-2 space-y-4">
-                <Visualization
-                  audioFile={audioFile}
-                  beats={songData.segments}
-                  currentBeat={currentBeat}
-                  onSeek={handleSeek}
-                />
-
-                <PlaybackControls
-                  isPlaying={isPlaying}
-                  jumpProbability={jumpProbability}
-                  onPlayPause={handlePlayPause}
-                  onRestart={handleRestart}
-                  onStop={handleStop}
-                  onJumpProbabilityChange={handleJumpProbabilityChange}
-                />
-              </div>
-
-              <aside className="cdpanel-inner p-4 sm:p-6">
-                <SongMetadata
-                  fileName={audioFile ? audioFile.name : null}
-                  durationSec={audioEngineRef.current ? audioEngineRef.current.getDuration() : null}
-                  beatsCount={songData?.segments ? songData.segments.length : null}
-                  totalJumpPoints={totalJumpPoints}
-                  currentBeat={currentBeat}
-                  isPlaying={isPlaying}
-                />
-              </aside>
-            </div>
-          </section>
-        )}
       </div>
     </main>
   );

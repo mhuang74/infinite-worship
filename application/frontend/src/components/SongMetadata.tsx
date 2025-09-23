@@ -37,7 +37,7 @@ const SongMetadata: React.FC<SongMetadataProps> = ({
     <section className="cdpanel-inner p-4 sm:p-6">
       <header className="mb-4">
         <h2 className="text-lg font-semibold text-gold-400">Track Info</h2>
-        <p className="text-xs text-white/70">CD player status and song details</p>
+        <p className="text-xs text-white/70">Song Details and Playback Status</p>
       </header>
       <div className="space-y-1">
         <MetaRow label="Title" value={fileName || 'Untitled'} />
