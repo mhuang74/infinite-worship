@@ -10,6 +10,15 @@ import SongLibrary from '@/components/SongLibrary';
 import SongSearch from '@/components/SongSearch';
 import { AudioEngine, createAudioBuffer } from '@/lib/audio';
 
+interface Song {
+  song_id: string;
+  original_filename: string;
+  duration: number;
+  tempo: number;
+  beats: number;
+  jump_points: number;
+}
+
 export default function HomePage() {
   const [songData, setSongData] = useState<any>(null);
   const [audioFile, setAudioFile] = useState<File | null>(null);
@@ -21,6 +30,9 @@ export default function HomePage() {
   const [selectedSongName, setSelectedSongName] = useState<string | null>(null);
   const [loadingLibrarySong, setLoadingLibrarySong] = useState(false);
   const [activeTab, setActiveTab] = useState<'upload' | 'library' | 'search'>('upload');
+  const [songs, setSongs] = useState<Song[]>([]);
+  const [libraryLoading, setLibraryLoading] = useState(false);
+  const [libraryError, setLibraryError] = useState<string | null>(null);
 
   const totalJumpPoints = useMemo(() => {
     if (!songData?.segments) return null;
@@ -153,6 +165,34 @@ export default function HomePage() {
     };
   }, [handlePlayPause]);
 
+  // Effect to fetch songs and randomly select one on initial load
+  useEffect(() => {
+    const fetchSongsAndSelectRandom = async () => {
+      try {
+        setLibraryLoading(true);
+        setLibraryError(null);
+        const response = await api.get('/songs');
+        const fetchedSongs = response.data.songs || [];
+        setSongs(fetchedSongs);
+
+        // Randomly select a song if library is not empty
+        if (fetchedSongs.length > 0) {
+          const randomIndex = Math.floor(Math.random() * fetchedSongs.length);
+          const randomSong = fetchedSongs[randomIndex];
+          setSelectedSongId(randomSong.song_id);
+          setSelectedSongName(randomSong.original_filename);
+        }
+      } catch (err) {
+        console.error('Error fetching songs:', err);
+        setLibraryError('Failed to load song library. Is the server running?');
+      } finally {
+        setLibraryLoading(false);
+      }
+    };
+
+    fetchSongsAndSelectRandom();
+  }, []);
+
   const handleUploadSuccess = (data: any) => {
     // This will trigger the useEffect above to set up the new engine
     setSongData(data);
@@ -263,16 +303,6 @@ export default function HomePage() {
           <div className="mb-4">
             <div className="flex border-b border-white/20">
               <button
-                onClick={() => setActiveTab('upload')}
-                className={`px-4 py-2 ${
-                  activeTab === 'upload'
-                    ? 'text-white border-b-2 border-blue-500'
-                    : 'text-white/60 hover:text-white'
-                }`}
-              >
-                Upload New Song
-              </button>
-              <button
                 onClick={() => setActiveTab('library')}
                 className={`px-4 py-2 ${
                   activeTab === 'library'
@@ -292,22 +322,32 @@ export default function HomePage() {
               >
                 Search Songs
               </button>
+              <button
+                onClick={() => setActiveTab('upload')}
+                className={`px-4 py-2 ${
+                  activeTab === 'upload'
+                    ? 'text-white border-b-2 border-blue-500'
+                    : 'text-white/60 hover:text-white'
+                }`}
+              >
+                Upload New Song
+              </button>
             </div>
           </div>
+
+          {activeTab === 'library' && (
+            <SongLibrary onSongSelect={handleSongSelect} songs={songs} loading={libraryLoading} error={libraryError} />
+          )}
+
+          {activeTab === 'search' && (
+            <SongSearch onSongSelect={handleSongSelect} />
+          )}
 
           {activeTab === 'upload' && (
             <div className="cdpanel-inner p-4 sm:p-6">
               <div className="engraved-label mb-2">Upload New Song</div>
               <FileUpload onUploadSuccess={handleUploadSuccess} onUploadError={handleUploadError} />
             </div>
-          )}
-
-          {activeTab === 'library' && (
-            <SongLibrary onSongSelect={handleSongSelect} />
-          )}
-
-          {activeTab === 'search' && (
-            <SongSearch onSongSelect={handleSongSelect} />
           )}
 
           {error && (

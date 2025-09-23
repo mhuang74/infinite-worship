@@ -1,7 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import api from '@/lib/api';
+import React from 'react';
 
 interface Song {
   song_id: string;
@@ -14,30 +13,12 @@ interface Song {
 
 interface SongLibraryProps {
   onSongSelect: (songId: string, filename: string) => void;
+  songs: Song[];
+  loading: boolean;
+  error: string | null;
 }
 
-const SongLibrary: React.FC<SongLibraryProps> = ({ onSongSelect }) => {
-  const [songs, setSongs] = useState<Song[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const fetchSongs = async () => {
-      try {
-        setLoading(true);
-        const response = await api.get('/songs');
-        setSongs(response.data.songs || []);
-        setError(null);
-      } catch (err) {
-        console.error('Error fetching songs:', err);
-        setError('Failed to load song library. Is the server running?');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchSongs();
-  }, []);
+const SongLibrary: React.FC<SongLibraryProps> = ({ onSongSelect, songs, loading, error }) => {
 
   const formatDuration = (seconds: number): string => {
     const minutes = Math.floor(seconds / 60);
