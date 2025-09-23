@@ -34,6 +34,14 @@ export default function HomePage() {
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [libraryError, setLibraryError] = useState<string | null>(null);
   const [shouldAutoplay, setShouldAutoplay] = useState(false);
+  const [totalJumps, setTotalJumps] = useState(0);
+  const [totalPlayingTimeSec, setTotalPlayingTimeSec] = useState(0);
+
+  // Effect to reset counters when song changes
+  useEffect(() => {
+    setTotalJumps(0);
+    setTotalPlayingTimeSec(0);
+  }, [songData]);
 
   const totalJumpPoints = useMemo(() => {
     if (!songData?.segments) return null;
@@ -68,7 +76,11 @@ export default function HomePage() {
             setCurrentBeat(beat);
           };
 
-          audioEngineRef.current = new AudioEngine(audioContextRef.current, audioBuffer, songData.segments, onBeatChange);
+          const onJump = (jumps: number) => {
+            setTotalJumps(jumps);
+          };
+
+          audioEngineRef.current = new AudioEngine(audioContextRef.current, audioBuffer, songData.segments, onBeatChange, onJump);
 
           // Set initial state
           setCurrentBeat(songData.segments[0]);
@@ -171,6 +183,17 @@ export default function HomePage() {
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, [handlePlayPause]);
+
+  // Effect to track playing time
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isPlaying) {
+      interval = setInterval(() => {
+        setTotalPlayingTimeSec(prevTime => prevTime + 1);
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [isPlaying]);
 
   // Effect to fetch songs and randomly select one on initial load
   useEffect(() => {
@@ -302,6 +325,8 @@ export default function HomePage() {
                   totalJumpPoints={totalJumpPoints}
                   currentBeat={currentBeat}
                   isPlaying={isPlaying}
+                  totalPlayingTimeSec={totalPlayingTimeSec}
+                  totalJumps={totalJumps}
                 />
               </aside>
             </div>
