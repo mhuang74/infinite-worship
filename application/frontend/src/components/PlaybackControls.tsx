@@ -61,16 +61,16 @@ const PlaybackControls: React.FC<PlaybackControlsProps> = ({
           {isPlaying ? <IconPause /> : <IconPlay />}
         </button>
 
-        <button
+        {/* <button
           type="button"
           onClick={onStop}
           className="transport-btn w-12 h-12 sm:w-14 sm:h-14 flex items-center justify-center text-navy-900"
           aria-label="Stop"
           title="Stop"
-        >
+        > 
           <span className="sr-only">Stop</span>
           <IconStop />
-        </button>
+        </button> */}
 
         <button
           type="button"
