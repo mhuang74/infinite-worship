@@ -313,16 +313,16 @@ export default function HomePage() {
                 </div>
               )}
 
-              <div className="h-24 flex items-center">
-                {selectedSongName && !loadingLibrarySong ? (
-                  <div className="text-white/90 truncate w-full">
-                    Selected song: {selectedSongName}
+              <div className="h-24 flex items-center justify-center text-white/70 text-sm">
+                {loadingLibrarySong ? (
+                  <div className="flex center">
+                    <div className="animate-spin h-4 w-4 border-2 border-white/30 border-t-white rounded-full mr-2"></div>
+                    Loading: {selectedSongName}...
                   </div>
+                ) : selectedSongId && selectedSongName ? (
+                  `Selected: ${selectedSongName}`
                 ) : (
-                  <div className="w-full">
-                    <div className="w-2/3 h-5 bg-white/10 rounded animate-pulse mb-2" />
-                    <div className="w-1/3 h-4 bg-white/10 rounded animate-pulse" />
-                  </div>
+                  'No song selected'
                 )}
               </div>
 
