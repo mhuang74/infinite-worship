@@ -38,6 +38,42 @@ export default function HomePage() {
   const [totalJumps, setTotalJumps] = useState(0);
   const [totalPlayingTimeSec, setTotalPlayingTimeSec] = useState(0);
 
+  const selectedSongIdRef = useRef<string | null>(null);
+
+  const loadSongs = useCallback(async ({ autoplayRandom = false }: { autoplayRandom?: boolean } = {}) => {
+    try {
+      setLibraryLoading(true);
+      setLibraryError(null);
+
+      const response = await api.get('/songs');
+      const fetchedSongs: Song[] = response.data.songs || [];
+      setSongs(fetchedSongs);
+
+      if (autoplayRandom && fetchedSongs.length > 0) {
+        const randomIndex = Math.floor(Math.random() * fetchedSongs.length);
+        const randomSong = fetchedSongs[randomIndex];
+        selectedSongIdRef.current = randomSong.song_id;
+        setShouldAutoplay(true);
+        setSelectedSongId(randomSong.song_id);
+        setSelectedSongName(randomSong.original_filename);
+      } else if (selectedSongIdRef.current) {
+        const matchingSong = fetchedSongs.find((song: Song) => song.song_id === selectedSongIdRef.current);
+        if (!matchingSong) {
+          selectedSongIdRef.current = null;
+          setSelectedSongId(null);
+          setSelectedSongName(null);
+        } else {
+          setSelectedSongName(matchingSong.original_filename);
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching songs:', err);
+      setLibraryError('Failed to load song library. Is the server running?');
+    } finally {
+      setLibraryLoading(false);
+    }
+  }, []);
+
   const isPlayerReady = Boolean(songData && audioFile);
 
   // Effect to reset counters when song changes
@@ -205,34 +241,9 @@ export default function HomePage() {
     return () => clearInterval(interval);
   }, [isPlaying]);
 
-  // Effect to fetch songs and randomly select one on initial load
   useEffect(() => {
-    const fetchSongsAndSelectRandom = async () => {
-      try {
-        setLibraryLoading(true);
-        setLibraryError(null);
-        const response = await api.get('/songs');
-        const fetchedSongs = response.data.songs || [];
-        setSongs(fetchedSongs);
-
-        // Randomly select a song if library is not empty
-        if (fetchedSongs.length > 0) {
-          const randomIndex = Math.floor(Math.random() * fetchedSongs.length);
-          const randomSong = fetchedSongs[randomIndex];
-          setShouldAutoplay(true);
-          setSelectedSongId(randomSong.song_id);
-          setSelectedSongName(randomSong.original_filename);
-        }
-      } catch (err) {
-        console.error('Error fetching songs:', err);
-        setLibraryError('Failed to load song library. Is the server running?');
-      } finally {
-        setLibraryLoading(false);
-      }
-    };
-
-    fetchSongsAndSelectRandom();
-  }, []);
+    loadSongs({ autoplayRandom: true });
+  }, [loadSongs]);
 
   const handleUploadSuccess = (data: any) => {
     // This will trigger the useEffect above to set up the new engine
@@ -242,8 +253,10 @@ export default function HomePage() {
       setAudioFile(fileInput.files[0]);
     }
     setError('');
+    selectedSongIdRef.current = null;
     setSelectedSongId(null);
     setSelectedSongName(null);
+    loadSongs();
   };
 
   const handleUploadError = (message: string) => {
@@ -281,6 +294,7 @@ export default function HomePage() {
   };
   
   const handleSongSelect = (songId: string, filename: string) => {
+    selectedSongIdRef.current = songId;
     setShouldAutoplay(true);
     setSelectedSongId(songId);
     setSelectedSongName(filename);
@@ -388,9 +402,18 @@ export default function HomePage() {
             </div>
           </div>
 
-          {activeTab === 'library' && (
-            <SongLibrary onSongSelect={handleSongSelect} songs={songs} loading={libraryLoading} error={libraryError} />
-          )}
+         {activeTab === 'library' && (
+           <SongLibrary
+             onSongSelect={handleSongSelect}
+             songs={songs}
+             loading={libraryLoading}
+             error={libraryError}
+             onRefresh={() => {
+               void loadSongs();
+             }}
+             refreshing={libraryLoading}
+           />
+         )}
 
           {activeTab === 'search' && (
             <SongSearch onSongSelect={handleSongSelect} />
