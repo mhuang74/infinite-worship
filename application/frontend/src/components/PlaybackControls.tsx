@@ -84,9 +84,10 @@ const PlaybackControls: React.FC<PlaybackControlsProps> = ({
         <button
           type="button"
           onClick={onRestart}
-          className="transport-btn w-12 h-12 sm:w-14 sm:h-14 flex items-center justify-center text-navy-900"
-          aria-label="Restart"
-          title="Restart"
+          disabled={isPlaybackPending}
+          className={`transport-btn w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center text-navy-900 ${isPlaying ? 'accent-glow' : ''} ${isPlaybackPending ? 'opacity-50 cursor-not-allowed' : ''}`}
+          aria-label={isPlaybackPending ? 'Loading...' : 'Restart'}
+          title={isPlaybackPending ? 'Loading...' : 'Restart'}
         >
           <span className="sr-only">Restart</span>
           <IconRestart />
@@ -94,7 +95,7 @@ const PlaybackControls: React.FC<PlaybackControlsProps> = ({
       </div>
 
       <div className="flex items-center gap-3">
-        <label htmlFor="jump-prob" className="engraved-label">Auto Remix</label>
+        <label htmlFor="jump-prob" className="engraved-label">Remix</label>
         <input
           type="range"
           id="jump-prob"
