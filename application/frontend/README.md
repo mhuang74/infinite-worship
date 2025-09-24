@@ -48,13 +48,23 @@ In this application, `wavesurfer.js` is used **exclusively for visualization**. 
 
 ### Installation
 
-1.  Navigate to the `application/frontend-2` directory.
+1.  Navigate to the `application/frontend` directory.
 2.  Install the required dependencies:
     ```bash
     npm install
     ```
 
-### Running in Development Mode
+### Development Setup with Docker
+
+This is the recommended setup for development, as it encapsulates the backend environment and picks up code changes on-the-fly.
+
+**Start both frontend and backend servers inside containers:**
+```bash
+cd application
+docker-compose -f docker-compose.dev.yml up
+```
+
+**Running npm in dev mode**
 
 1.  Make sure the backend server is running and accessible.
 2.  Start the frontend development server:

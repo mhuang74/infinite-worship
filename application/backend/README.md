@@ -20,22 +20,12 @@ A Flask-based API for processing audio files, detecting beats, and identifying s
 
 ### Development Setup with Docker
 
-This is the recommended setup for development, as it encapsulates the backend environment.
+This is the recommended setup for development, as it encapsulates the backend environment and picks up code changes on-the-fly.
 
-**Build the development Docker image:**
+**Start both frontend and backend servers inside containers:**
 ```bash
-docker build -t infinite-worship-app-dev -f dockerfile-dev .
-```
-
-**Start the development Docker container:**
-```bash
-docker run --rm --detach -p 5001:5001 --volume $(pwd):/app --name dev infinite-worship-app-dev
-```
-*Note: This command maps the backend's internal port 5001 to port 5001 on the host machine. Port 5001 is used by the `application-2` frontend because recent versions of macOS run an AirPlay Receiver service on port 5001, making it unavailable for development.*
-
-**Start the backend server inside the container:**
-```bash
-docker exec -it dev bash -c "cd /app && ./start-server.sh"
+cd application
+docker-compose -f docker-compose.dev.yml up
 ```
 
 ### Manual Setup

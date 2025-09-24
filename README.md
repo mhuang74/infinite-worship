@@ -27,16 +27,48 @@ Infinite Worship analyzes audio files to identify beats and segments, then creat
 
 This is the recommended way to run the application, as it ensures a consistent environment.
 
-**For Production:**
+**Build For Production:**
 
-1.  Navigate to the `application` directory:
+Currently hardcoded to build for ARM64 platform only since I use AWS graviton to lower cost (`t4g.medium` with 4GB memory and 2vCPU). Works on M2 Mac running MacOS Sequoia 15.6.
+    
+1.  Create and switch to a new builder instance that supports multi-platform builds.
+    ```bash
+    docker buildx create --name multiarch-builder --driver docker-container --use
+    docker buildx inspect --bootstrap
     ```
+
+2.  Navigate to the `application` directory:
+    ```bash
     cd application
     ```
 
-2.  Build and run the containers:
+3.  Build and publish the images to AWS ECR. 
+    ```bash
+    ./build.sh
     ```
-    docker-compose up --build
+
+**Deploy For Production:**
+1.  On the PROD server, install docker and docker-compose
+
+    ```bash
+    sudo apt update && sudo apt install docker.io -y && sudo apt install docker-compose -y && sudo usermod -aG docker $USER && newgrp docker
+    ```
+
+2.  Pull the latest images from my public AWS ECR repo
+
+    ```bash
+    docker pull public.ecr.aws/u4p9h6o7/mhuang74/infinite-worship:infinite-worship-backend-arm64-latest && docker pull public.ecr.aws/u4p9h6o7/mhuang74/infinite-worship:infinite-worship-frontend-arm64-latest
+    ```
+
+3.  Git clone the repo to pickup latest `docker-compose.prod.yml`
+
+    ```bash
+    git clone https://github.com/mhuang74/infinite-worship.git
+    ```
+
+4.  Bring up both frontend and backend services using docker-compose
+    ```bash
+    cd infinite-worship/application && docker-compose -f docker-compose.prod.yml down && docker-compose -f docker-compose.prod.yml up -d --no-build
     ```
 
 **For Development:**
@@ -125,48 +157,18 @@ The project uses environment variables to configure application settings.
 - **Librosa**: Audio analysis library
 - **Madmom**: Beat detection library
 
-## Deploying to Docker Hub
+## Setting up Cross-Platform Build (ARM64)
 
-These instructions cover how to build and upload single and multi-platform Docker images to Docker Hub.
+In order to run `build.sh` and build for ARM64, setup and use `buildx`.
 
-### Standard Build (x86)
 
-1.  **Login to Docker Hub:**
-    ```
-    docker login
-    ```
 
-2.  **Build and Tag the Image:**
+2.  **Test Build:**
     Replace `YYYYMMDD` with the current date.
     ```
-    docker build -t infinite-worship:YYYYMMDD .
-    docker tag infinite-worship:YYYYMMDD mhuang74/infinite-worship:YYYYMMDD
+    docker buildx build --platform linux/arm64 -t infinite-worship-arm64 . --load
     ```
 
-3.  **Push the Image to Docker Hub:**
-    ```
-    docker push mhuang74/infinite-worship:YYYYMMDD
-    ```
-
-### Cross-Platform Build (ARM64)
-
-1.  **Set Up `buildx`:**
-    Create and switch to a new builder instance that supports multi-platform builds.
-    ```
-    docker buildx create --name multiarch-builder --driver docker-container --use
-    docker buildx inspect --bootstrap
-    ```
-
-2.  **Build and Tag for ARM64:**
-    Replace `YYYYMMDD` with the current date.
-    ```
-    docker buildx build --platform linux/arm64 -t mhuang74/infinite-worship-arm64:YYYYMMDD . --load
-    ```
-
-3.  **Push the ARM64 Image:**
-    ```
-    docker push mhuang74/infinite-worship-arm64:YYYYMMDD
-    ```
 
 ## License
 
