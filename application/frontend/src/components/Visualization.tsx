@@ -63,7 +63,7 @@ const Visualization: React.FC<VisualizationProps> = ({ audioFile, beats, current
         waveColor: '#FFD95A',      // gold-400
         progressColor: '#F5C518',  // gold-500
         cursorColor: '#FFFFFF',
-        height: 88,
+        height: 100,
         barWidth: 2,
         barGap: 1,
         barRadius: 2,

@@ -10,6 +10,7 @@ interface PlaybackControlsProps {
   onRestart: () => void;
   onStop: () => void;
   onJumpProbabilityChange: (value: number) => void;
+  disabled?: boolean;
 }
 
 const IconPlay = () => (
@@ -44,6 +45,7 @@ const PlaybackControls: React.FC<PlaybackControlsProps> = ({
   onRestart,
   onStop,
   onJumpProbabilityChange,
+  disabled = false,
 }) => {
   return (
     <div
@@ -55,8 +57,8 @@ const PlaybackControls: React.FC<PlaybackControlsProps> = ({
         <button
           type="button"
           onClick={onPlayPause}
-          disabled={isPlaybackPending}
-          className={`transport-btn w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center text-navy-900 ${isPlaying ? 'accent-glow' : ''} ${isPlaybackPending ? 'opacity-50 cursor-not-allowed' : ''}`}
+          disabled={disabled || isPlaybackPending}
+          className={`transport-btn w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center text-navy-900 ${isPlaying ? 'accent-glow' : ''} ${(disabled || isPlaybackPending) ? 'opacity-50 cursor-not-allowed' : ''}`}
           aria-label={isPlaying ? 'Pause' : isPlaybackPending ? 'Loading...' : 'Play'}
           title={isPlaying ? 'Pause' : isPlaybackPending ? 'Loading...' : 'Play'}
         >
@@ -84,7 +86,8 @@ const PlaybackControls: React.FC<PlaybackControlsProps> = ({
         <button
           type="button"
           onClick={onRestart}
-          className="transport-btn w-12 h-12 sm:w-14 sm:h-14 flex items-center justify-center text-navy-900"
+          disabled={disabled}
+          className={`transport-btn w-12 h-12 sm:w-14 sm:h-14 flex items-center justify-center text-navy-900 ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
           aria-label="Restart"
           title="Restart"
         >
@@ -103,7 +106,8 @@ const PlaybackControls: React.FC<PlaybackControlsProps> = ({
           step="0.01"
           value={jumpProbability}
           onChange={(e) => onJumpProbabilityChange(parseFloat(e.target.value))}
-          className="w-36 sm:w-48 accent-gold-500"
+          disabled={disabled}
+          className={`w-36 sm:w-48 accent-gold-500 ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
           aria-valuemin={0}
           aria-valuemax={1}
           aria-valuenow={jumpProbability}

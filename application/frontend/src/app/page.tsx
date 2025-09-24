@@ -5,7 +5,9 @@ import api from '@/lib/api';
 import FileUpload from '@/components/FileUpload';
 import PlaybackControls from '@/components/PlaybackControls';
 import Visualization from '@/components/Visualization';
+import VisualizationSkeleton from '@/components/VisualizationSkeleton';
 import SongMetadata from '@/components/SongMetadata';
+import SongMetadataSkeleton from '@/components/SongMetadataSkeleton';
 import SongLibrary from '@/components/SongLibrary';
 import SongSearch from '@/components/SongSearch';
 import { AudioEngine, createAudioBuffer } from '@/lib/audio';
@@ -37,6 +39,7 @@ export default function HomePage() {
   const [shouldAutoplay, setShouldAutoplay] = useState(false);
   const [totalJumps, setTotalJumps] = useState(0);
   const [totalPlayingTimeSec, setTotalPlayingTimeSec] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
 
   // Effect to reset counters when song changes
   useEffect(() => {
@@ -122,6 +125,7 @@ export default function HomePage() {
       try {
         setLoadingLibrarySong(true);
         setError('');
+        setIsLoading(true);
         
         // Fetch song data from the API
         const response = await api.get(`/songs/${selectedSongId}`);
@@ -158,6 +162,7 @@ export default function HomePage() {
         setError('Failed to load song from library. Please try again.');
       } finally {
         setLoadingLibrarySong(false);
+        setIsLoading(false);
       }
     };
     
@@ -292,42 +297,49 @@ export default function HomePage() {
           <p className="mt-1 text-sm text-white/80">Infinite Remix of Your Favorite Worship Songs</p>
         </header>
 
-        {songData && (
-          <section className="cdpanel p-3 sm:p-4">
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
-              <div className="lg:col-span-2 space-y-4">
+        <section className="cdpanel p-3 sm:p-4">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
+            <div className="lg:col-span-2 space-y-4">
+              {isLoading || !songData ? (
+                <VisualizationSkeleton />
+              ) : (
                 <Visualization
                   audioFile={audioFile}
                   beats={songData.segments}
                   currentBeat={currentBeat}
                   onSeek={handleSeek}
                 />
+              )}
 
-                {selectedSongId && selectedSongName && !loadingLibrarySong && (
-                  <div className="h-24">
-                    Selected song: {selectedSongName}
-                    </div> 
-                )}
-
-                {/* {selectedSongId && selectedSongName && !loadingLibrarySong && (
-                  <div className="mt-3 rounded-md border border-green-400/40 bg-green-500/20 text-white px-3 py-2 text-sm">
-                    Selected song: {selectedSongName}
+              <div className="h-24 flex items-center justify-center text-white/70 text-sm">
+                {loadingLibrarySong ? (
+                  <div className="flex items-center">
+                    <div className="animate-spin h-4 w-4 border-2 border-white/30 border-t-white rounded-full mr-2"></div>
+                    Loading song: {selectedSongName}...
                   </div>
-                )} */}
-
-
-                <PlaybackControls
-                  isPlaying={isPlaying}
-                  isPlaybackPending={isPlaybackPending}
-                  jumpProbability={jumpProbability}
-                  onPlayPause={handlePlayPause}
-                  onRestart={handleRestart}
-                  onStop={handleStop}
-                  onJumpProbabilityChange={handleJumpProbabilityChange}
-                />
+                ) : selectedSongId && selectedSongName ? (
+                  `Selected song: ${selectedSongName}`
+                ) : (
+                  'No song selected'
+                )}
               </div>
 
-              <aside className="cdpanel-inner p-4 sm:p-6">
+              <PlaybackControls
+                isPlaying={isPlaying}
+                isPlaybackPending={isPlaybackPending}
+                jumpProbability={jumpProbability}
+                onPlayPause={handlePlayPause}
+                onRestart={handleRestart}
+                onStop={handleStop}
+                onJumpProbabilityChange={handleJumpProbabilityChange}
+                disabled={!songData}
+              />
+            </div>
+
+            <aside>
+              {isLoading || loadingLibrarySong ? (
+                <SongMetadataSkeleton />
+              ) : songData ? (
                 <SongMetadata
                   fileName={audioFile ? audioFile.name : null}
                   durationSec={audioEngineRef.current ? audioEngineRef.current.getDuration() : null}
@@ -338,10 +350,12 @@ export default function HomePage() {
                   totalPlayingTimeSec={totalPlayingTimeSec}
                   totalJumps={totalJumps}
                 />
-              </aside>
-            </div>
-          </section>
-        )}
+              ) : (
+                 <SongMetadataSkeleton />
+              )}
+            </aside>
+          </div>
+        </section>
 
         <section className="cdpanel p-3 sm:p-4">
           <div className="mb-4">
