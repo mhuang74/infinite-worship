@@ -140,6 +140,9 @@ const Visualization: React.FC<VisualizationProps> = ({ audioFile, beats, current
     return colors[cluster % colors.length];
   };
 
+  // Total duration for positioning beat bar overlays
+  const totalDuration = wavesurfer.current?.getDuration() || 0;
+
   return (
     <div className="p-4 sm:p-6 device-screen">
       <div className="relative">
@@ -164,21 +167,17 @@ const Visualization: React.FC<VisualizationProps> = ({ audioFile, beats, current
         </div>
       </div>
 
-      <div className="relative mt-4 w-full h-8 sm:h-10 bg-gray-100 rounded">
+      <div className="relative mt-4 w-full h-8 sm:h-10 bg-gray-100 rounded overflow-hidden">
+        {/* Beat segments (no borders) */}
         {beats.map((beat) => {
-          const duration = wavesurfer.current?.getDuration() || 0;
-          if (duration <= 0) return null;
-          const leftPercent = (beat.start / duration) * 100;
-          const widthPercent = (beat.duration / duration) * 100;
+          if (totalDuration <= 0) return null;
+          const leftPercent = (beat.start / totalDuration) * 100;
+          const widthPercent = (beat.duration / totalDuration) * 100;
           return (
             <div
               key={beat.id}
               id={`beat-${beat.id}`}
-              className={`absolute top-0 h-full ${getBeatColor(beat.cluster)} ${
-                currentBeat && currentBeat.id === beat.id ? 'border-2 border-gray-900' : ''
-              } ${
-                currentBeat && currentBeat.jump_candidates.includes(beat.id) ? 'border-2 border-gray-400' : ''
-              }`}
+              className={`absolute top-0 h-full ${getBeatColor(beat.cluster)}`}
               style={{
                 left: `${leftPercent}%`,
                 width: `${widthPercent}%`,
@@ -187,6 +186,44 @@ const Visualization: React.FC<VisualizationProps> = ({ audioFile, beats, current
             />
           );
         })}
+
+        {/* Overlay indicators: fixed-width vertical lines */}
+        <div className="pointer-events-none absolute inset-0 z-10">
+          {/* Current position: 2px full-height line */}
+          {totalDuration > 0 && currentBeat && Number.isFinite(currentBeat.start) && (
+            <div
+              className="absolute bg-gray-900"
+              style={{
+                left: `${(currentBeat.start / totalDuration) * 100}%`,
+                width: 2,
+                top: 0,
+                bottom: 0,
+                transform: 'translateX(-50%)'
+              }}
+            />
+          )}
+
+          {/* Jump candidate ticks: 1px vertical lines */}
+          {totalDuration > 0 &&
+            Array.isArray(currentBeat?.jump_candidates) &&
+            currentBeat!.jump_candidates.map((id: number) => {
+              const beat = (beats as any[]).find((b: any) => b.id === id);
+              if (!beat) return null;
+              return (
+                <div
+                  key={`tick-${id}`}
+                  className="absolute bg-gray-500/80"
+                  style={{
+                    left: `${(beat.start / totalDuration) * 100}%`,
+                    width: 1,
+                    top: 0,
+                    bottom: 0,
+                    transform: 'translateX(-50%)'
+                  }}
+                />
+              );
+            })}
+        </div>
       </div>
     </div>
   );
