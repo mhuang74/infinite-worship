@@ -175,7 +175,7 @@ const Visualization: React.FC<VisualizationProps> = ({ audioFile, beats, current
               key={beat.id}
               id={`beat-${beat.id}`}
               className={`absolute top-0 h-full ${getBeatColor(beat.cluster)} ${
-                currentBeat && currentBeat.id === beat.id ? 'border-2 border-gold-400' : ''
+                currentBeat && currentBeat.id === beat.id ? 'border-2 border-gray-900' : ''
               } ${
                 currentBeat && currentBeat.jump_candidates.includes(beat.id) ? 'animate-pulse' : ''
               }`}
