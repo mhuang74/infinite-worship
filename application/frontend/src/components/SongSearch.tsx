@@ -91,34 +91,27 @@ const SongSearch: React.FC<SongSearchProps> = ({ onSongSelect }) => {
       )}
       
       {results.length > 0 && (
-        <div className="mt-3 space-y-2 max-h-[300px] overflow-y-auto pr-2">
-          {results.map((song) => (
-            <div 
-              key={song.song_id}
-              onClick={() => onSongSelect(song.song_id, song.original_filename)}
-              className="flex items-center justify-between p-2 rounded-md bg-white/5 hover:bg-white/10 cursor-pointer transition-colors"
-            >
-              <div className="flex-1 truncate">
-                <div className="font-medium text-white truncate">{song.original_filename}</div>
-                <div className="text-xs text-white/60 flex space-x-2">
-                  <span>{formatDuration(song.duration)}</span>
-                  <span>•</span>
-                  <span>{song.tempo.toFixed(1)} BPM</span>
-                  <span>•</span>
-                  <span>{song.beats} beats</span>
-                  {song.jump_points && (
-                    <>
-                      <span>•</span>
-                      <span>{song.jump_points} jump points</span>
-                    </>
-                  )}
-                </div>
+        <div className="mt-4 max-h-[300px] space-y-3 overflow-y-auto pr-2">
+          {results.map((song) => {
+            const metadata = `${formatDuration(song.duration)} • ${Math.round(
+              song.tempo,
+            )} BPM • Jumps ${song.jump_points ?? 0}`;
+
+            return (
+              <div
+                key={song.song_id}
+                onClick={() => onSongSelect(song.song_id, song.original_filename)}
+                className="group flex items-center gap-3 rounded-md bg-white/5 px-3 py-2 transition-colors duration-150 hover:bg-white/10 cursor-pointer"
+              >
+                <span className="truncate text-sm font-semibold text-gold-400">
+                  {song.original_filename}
+                </span>
+                <span className="ml-auto flex-shrink-0 whitespace-nowrap text-xs text-white/60">
+                  {metadata}
+                </span>
               </div>
-              <button className="ml-2 px-2 py-1 text-xs bg-blue-500/30 hover:bg-blue-500/50 rounded text-white">
-                Select
-              </button>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
