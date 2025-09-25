@@ -177,7 +177,7 @@ const Visualization: React.FC<VisualizationProps> = ({ audioFile, beats, current
               className={`absolute top-0 h-full ${getBeatColor(beat.cluster)} ${
                 currentBeat && currentBeat.id === beat.id ? 'border-2 border-gray-900' : ''
               } ${
-                currentBeat && currentBeat.jump_candidates.includes(beat.id) ? 'animate-pulse' : ''
+                currentBeat && currentBeat.jump_candidates.includes(beat.id) ? 'border-2 border-gray-400' : ''
               }`}
               style={{
                 left: `${leftPercent}%`,
