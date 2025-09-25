@@ -130,12 +130,12 @@ const Visualization: React.FC<VisualizationProps> = ({ audioFile, beats, current
 
   const getBeatColor = (cluster: number) => {
     const colors = [
-      'bg-gold-500',
-      'bg-gold-400',
-      'bg-navy-600',
-      'bg-navy-700',
-      'bg-white/40',
-      'bg-white/20'
+      'bg-blue-100',
+      'bg-yellow-100',
+      'bg-gray-50',
+      'bg-cyan-100',
+      'bg-amber-100',
+      'bg-indigo-100'
     ];
     return colors[cluster % colors.length];
   };
@@ -150,7 +150,7 @@ const Visualization: React.FC<VisualizationProps> = ({ audioFile, beats, current
           {candidateMarkers.map((m) => (
             <div
               key={`jump-${m.id}`}
-              className="absolute bg-white/40 border border-white/80"
+              className="absolute bg-yellow/40 border border-white/80"
               style={{
                 left: `${m.left}px`,
                 width: 4,
