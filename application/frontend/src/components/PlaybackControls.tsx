@@ -45,9 +45,34 @@ const PlaybackControls: React.FC<PlaybackControlsProps> = ({
   onStop,
   onJumpProbabilityChange,
 }) => {
+  const allowedValues = React.useMemo(() => Array.from({ length: 8 }, (_, i) => 0.15 + i * 0.10), []);
+  const snapToAllowed = React.useCallback((v: number) => {
+    const clamped = Math.min(0.85, Math.max(0.15, v));
+    let closest = allowedValues[0];
+    let minDiff = Math.abs(clamped - closest);
+    for (const val of allowedValues) {
+      const d = Math.abs(clamped - val);
+      if (d < minDiff) {
+        minDiff = d;
+        closest = val;
+      }
+    }
+    return closest;
+  }, [allowedValues]);
+  const snappedProbability = snapToAllowed(jumpProbability);
+  const handleSelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const pct = parseInt(e.target.value, 10);
+    onJumpProbabilityChange(pct / 100);
+  };
+  const handleRangeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    onJumpProbabilityChange(snapToAllowed(parseFloat(e.target.value)));
+  };
+
+  const remixTooltip = "How likely to jump. Usually lower value works better for fast songs with high number of jump points, and vice versa.";
+
   return (
     <div
-      className="transport-surface px-4 py-4 sm:px-6 sm:py-5 flex items-center justify-between gap-4"
+      className="transport-surface px-4 py-4 sm:px-6 sm:py-5 flex items-center justify-between gap-4 flex-wrap"
       role="group"
       aria-label="Playback controls"
     >
@@ -94,26 +119,49 @@ const PlaybackControls: React.FC<PlaybackControlsProps> = ({
         </button>
       </div>
 
-      <div className="flex items-center gap-3">
-        <label htmlFor="jump-prob" className="engraved-label">Remix</label>
-        <input
-          type="range"
-          id="jump-prob"
-          min="0"
-          max="1"
-          step="0.01"
-          value={jumpProbability}
-          onChange={(e) => onJumpProbabilityChange(parseFloat(e.target.value))}
-          className="w-36 sm:w-48 accent-gold-500"
-          aria-valuemin={0}
-          aria-valuemax={1}
-          aria-valuenow={jumpProbability}
-          aria-label="Auto remix jump probability"
-          title="Auto remix jump probability"
-        />
-        <span className="w-12 text-gold-400 font-semibold tabular-nums">
-          {Math.round(jumpProbability * 100)}%
-        </span>
+      <div className="flex items-center gap-3 flex-1 min-w-0">
+        {/* Mobile: compact select with 10% steps, 15%–85% */}
+        <div className="flex sm:hidden items-center gap-3 w-full">
+          <label htmlFor="jump-prob-select" className="engraved-label">Remix</label>
+          <select
+            id="jump-prob-select"
+            value={Math.round(snappedProbability * 100)}
+            onChange={handleSelectChange}
+            className="w-full max-w-[180px] rounded-md bg-navy-700/40 text-navy-50 px-2 py-2"
+            aria-label={remixTooltip}
+            title={remixTooltip}
+          >
+            {allowedValues.map(v => {
+              const pct = Math.round(v * 100);
+              return (
+                <option key={pct} value={pct}>{pct}%</option>
+              );
+            })}
+          </select>
+        </div>
+
+        {/* ≥ sm: responsive slider, snaps to allowed values */}
+        <div className="hidden sm:flex items-center gap-3 flex-1 min-w-0">
+          <label htmlFor="jump-prob-range" className="engraved-label">Remix</label>
+          <input
+            type="range"
+            id="jump-prob-range"
+            min={0.15}
+            max={0.85}
+            step={0.1}
+            value={snappedProbability}
+            onChange={handleRangeChange}
+            className="w-full max-w-xs md:max-w-sm lg:max-w-md accent-gold-500"
+            aria-valuemin={0.15}
+            aria-valuemax={0.85}
+            aria-valuenow={snappedProbability}
+            aria-label={remixTooltip}
+            title={remixTooltip}
+          />
+          <span className="w-12 text-gold-400 font-semibold tabular-nums text-right">
+            {Math.round(snappedProbability * 100)}%
+          </span>
+        </div>
       </div>
     </div>
   );
