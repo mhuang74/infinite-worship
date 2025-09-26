@@ -20,6 +20,8 @@ interface Song {
 }
 
 export default function HomePage() {
+  const APP_DESCRIPTION = 'Infinite Worship uses song and audio characteristics to detect smooth transition points for endless remixing. Currently limited to within a song. The ultimate goal is to smoothly transition between songs!';
+
   const [songData, setSongData] = useState<any>(null);
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [error, setError] = useState('');
@@ -304,8 +306,17 @@ export default function HomePage() {
     <main className="min-h-screen w-full px-4 py-8 sm:py-12">
       <div className="mx-auto w-full max-w-6xl space-y-6 sm:space-y-8">
         <header className="text-center">
-          <h1 className="text-3xl sm:text-4xl font-bold text-white">Infinite Worship</h1>
-          <p className="mt-1 text-sm text-white/80">Infinite Remix of Your Favorite Worship Songs</p>
+          <div className="flex items-center justify-center">
+            <h1 className="text-3xl sm:text-4xl font-bold text-white" title={APP_DESCRIPTION}>Infinite Worship</h1>
+            <button
+              className="ml-2 text-white/60 hover:text-white text-lg"
+              onClick={() => alert(APP_DESCRIPTION)}
+              title="More info"
+            >
+              ℹ️
+            </button>
+          </div>
+          <p className="mt-1 text-sm text-white/80">Smooth Remix of Your Favorite Worship Songs</p>
         </header>
 
         <section className="cdpanel p-3 sm:p-4">
