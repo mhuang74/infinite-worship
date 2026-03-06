@@ -14,6 +14,10 @@ from werkzeug.utils import secure_filename
 # Import the song mapper
 import song_mapper
 
+# Import YouTube extraction modules
+from youtube_extractor import YouTubeExtractor
+from rate_limiter import RateLimiter
+
 # Add the remixatron directory to the path
 sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'exploration/remixatron'))
 
@@ -29,11 +33,17 @@ song_db = song_mapper.get_instance()
 
 # Configure upload folder
 UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
+TEMP_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(TEMP_FOLDER, exist_ok=True)
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024  # Increased to 32MB max upload size
 app.config['TIMEOUT'] = 300  # 5 minutes timeout
+
+# Initialize YouTube extractor and rate limiter
+youtube_extractor = YouTubeExtractor(output_dir=UPLOAD_FOLDER, temp_dir=TEMP_FOLDER)
+rate_limiter = RateLimiter(max_requests=10, window_seconds=3600)
 
 # Store processed songs
 processed_songs = {}
@@ -348,6 +358,224 @@ def search_songs():
         'songs': songs,
         'query': query
     })
+
+@app.route('/youtube-info', methods=['POST'])
+def get_youtube_info():
+    """
+    Get YouTube video metadata without downloading.
+    Used for preview before extraction.
+    """
+    try:
+        data = request.get_json()
+        url = data.get('url', '').strip()
+
+        if not url:
+            return jsonify({'error': 'URL is required'}), 400
+
+        # Validate URL
+        video_id = youtube_extractor.validate_url(url)
+        if not video_id:
+            return jsonify({'error': 'Invalid YouTube URL'}), 400
+
+        # Get video info
+        try:
+            info = youtube_extractor.get_video_info(url)
+            return jsonify(info), 200
+        except Exception as e:
+            return jsonify({
+                'error': 'Failed to fetch video info',
+                'message': str(e)
+            }), 400
+
+    except Exception as e:
+        print(f"Error in get_youtube_info: {str(e)}")
+        print(traceback.format_exc())
+        return jsonify({
+            'error': 'Server error',
+            'message': str(e)
+        }), 500
+
+@app.route('/extract-youtube', methods=['POST'])
+def extract_youtube():
+    """
+    Extract audio from YouTube URL and process it.
+    """
+    try:
+        # Get request data
+        data = request.get_json()
+        url = data.get('url', '').strip()
+
+        if not url:
+            return jsonify({'error': 'URL is required'}), 400
+
+        # Validate URL format
+        video_id = youtube_extractor.validate_url(url)
+        if not video_id:
+            return jsonify({'error': 'Invalid YouTube URL'}), 400
+
+        # Rate limiting
+        client_ip = request.remote_addr
+        allowed, remaining = rate_limiter.is_allowed(client_ip)
+
+        if not allowed:
+            retry_after = rate_limiter.get_retry_after(client_ip)
+            return jsonify({
+                'error': 'Rate limit exceeded',
+                'message': f'Please try again in {retry_after // 60} minutes',
+                'retry_after': retry_after
+            }), 429
+
+        # Log request
+        print(f"YouTube extraction request: {url} from {client_ip}")
+
+        # Extract audio
+        try:
+            file_path, video_info = youtube_extractor.extract_audio(url)
+            print(f"Extracted: {file_path}")
+        except Exception as e:
+            print(f"Extraction failed: {str(e)}")
+            print(traceback.format_exc())
+            return jsonify({
+                'error': 'Extraction failed',
+                'message': str(e)
+            }), 500
+
+        # Generate song_id (use video_id as base)
+        import hashlib
+        with open(file_path, 'rb') as f:
+            content_hash = hashlib.sha256(f.read()).hexdigest()[:16]
+
+        song_id = f"yt_{video_id}_{content_hash}"
+
+        # Check if already analyzed (load from cache)
+        jukebox_pickled_filename = file_path + '_jukebox.pkl'
+        jukebox = None
+
+        try:
+            with gzip.open(jukebox_pickled_filename + '.gz', 'rb') as f:
+                jukebox = pickle.load(f)
+            print(f"Loaded cached jukebox for YouTube video {video_id}")
+        except FileNotFoundError:
+            print(f"No cached jukebox found for YouTube video {video_id}")
+        except Exception as e:
+            print(f"Warning: Error loading cached jukebox: {e}")
+
+        # If not cached, process the audio
+        if jukebox is None:
+            # Load cached beats if available
+            beats_cache_filename = file_path + '_beats.npy'
+            cached_beats = np.array([])
+
+            try:
+                cached_beats = np.load(beats_cache_filename)
+                print(f"Loaded beat cache from {beats_cache_filename}")
+            except FileNotFoundError:
+                print(f"No beats cache file found: '{beats_cache_filename}'")
+            except Exception as e:
+                print(f"Warning: Error loading beat cache '{beats_cache_filename}': {e}")
+
+            # Process audio with InfiniteJukebox
+            try:
+                print(f"Starting to process YouTube audio with InfiniteJukebox...")
+
+                jukebox = InfiniteJukebox(
+                    filename=file_path,
+                    progress_callback=progress_callback,
+                    do_async=False,
+                    starting_beat_cache=cached_beats
+                )
+
+                # Check if beats were properly detected
+                if not hasattr(jukebox, 'beats') or len(jukebox.beats) == 0:
+                    return jsonify({'error': 'No beats detected in the audio file'}), 400
+
+                # Save the jukebox object as a pickled file for future use
+                try:
+                    with gzip.open(jukebox_pickled_filename + '.gz', 'wb') as f:
+                        pickle.dump(jukebox, f, protocol=pickle.HIGHEST_PROTOCOL)
+                    print(f"Successfully saved compressed pickled jukebox to {jukebox_pickled_filename}.gz")
+                except Exception as e:
+                    print(f"Warning: Error saving compressed pickled jukebox: {e}")
+
+                print(f"Successfully processed YouTube audio. Found {len(jukebox.beats)} beats.")
+
+            except Exception as e:
+                print(f"Error in InfiniteJukebox processing: {str(e)}")
+                print(traceback.format_exc())
+                return jsonify({'error': f'Error processing audio: {str(e)}'}), 500
+
+        # Convert beats to a serializable format
+        segments = []
+        for beat in jukebox.beats:
+            beat_copy = beat.copy()
+            segments.append(beat_copy)
+
+        # Store the processed data
+        processed_songs[song_id] = {
+            'filename': video_info['title'],
+            'segments': segments,
+            'duration': jukebox.duration,
+            'tempo': float(jukebox.tempo),
+            'sample_rate': jukebox.sample_rate,
+            'youtube_metadata': video_info
+        }
+
+        # Calculate clusters count
+        clusters_count = None
+        if hasattr(jukebox, 'clusters'):
+            if isinstance(jukebox.clusters, (list, tuple, set)):
+                clusters_count = len(jukebox.clusters)
+            elif isinstance(jukebox.clusters, int):
+                clusters_count = jukebox.clusters
+
+        # Calculate total jump points
+        jump_points_count = 0
+        for beat in jukebox.beats:
+            if (isinstance(beat, dict) and
+                'jump_candidates' in beat and
+                beat['jump_candidates'] and
+                len(beat['jump_candidates']) > 0):
+                jump_points_count += 1
+
+        # Save to database with YouTube metadata
+        encoded_filename = base64.urlsafe_b64encode(video_info['title'].encode('utf-8')).decode('ascii')
+
+        song_db.add_song(
+            song_id=song_id,
+            original_filename=video_info['title'],
+            encoded_filename=encoded_filename,
+            file_path=file_path,
+            duration=jukebox.duration,
+            tempo=float(jukebox.tempo),
+            beats=len(jukebox.beats),
+            clusters=clusters_count,
+            jump_points=jump_points_count,
+            sample_rate=jukebox.sample_rate,
+            youtube_video_id=video_id,
+            youtube_title=video_info['title'],
+            youtube_uploader=video_info.get('uploader'),
+            youtube_thumbnail=video_info.get('thumbnail'),
+            source='youtube'
+        )
+
+        # Return response
+        return jsonify({
+            'song_id': song_id,
+            'filename': video_info['title'],
+            'segments': segments,
+            'duration': jukebox.duration,
+            'tempo': float(jukebox.tempo),
+            'sample_rate': jukebox.sample_rate,
+            'youtube_metadata': video_info
+        }), 200
+
+    except Exception as e:
+        print(f"Unexpected error in extract_youtube: {str(e)}")
+        print(traceback.format_exc())
+        return jsonify({
+            'error': 'Server error',
+            'message': str(e)
+        }), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5001)

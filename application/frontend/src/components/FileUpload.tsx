@@ -3,13 +3,17 @@
 import React, { useState, useCallback } from 'react';
 import axios from 'axios';
 import api from '@/lib/api';
+import YouTubeUrlTab from './YouTubeUrlTab';
 
 interface FileUploadProps {
   onUploadSuccess: (data: any) => void;
   onUploadError: (message: string) => void;
 }
 
+type TabType = 'file' | 'youtube';
+
 const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess, onUploadError }) => {
+  const [activeTab, setActiveTab] = useState<TabType>('file');
   const [file, setFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
 
@@ -38,6 +42,8 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess, onUploadError 
         },
       });
       onUploadSuccess(response.data);
+      // Clear file after successful upload
+      setFile(null);
     } catch (error) {
       let errorMessage = 'An unexpected error occurred.';
       if (axios.isAxiosError(error)) {
@@ -62,22 +68,56 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess, onUploadError 
   }, [file, onUploadSuccess, onUploadError]);
 
   return (
-    <div className="p-6 border-2 border-dashed rounded-lg">
-      <div className="flex flex-col items-center">
-        <input
-          type="file"
-          onChange={handleFileChange}
-          className="mb-4"
-          accept="audio/*"
-        />
+    <div className="w-full">
+      {/* Tab Navigation */}
+      <div className="flex border-b border-gray-200 mb-4">
         <button
-          onClick={handleUpload}
-          disabled={!file || isUploading}
-          className="px-4 py-2 bg-blue-500 text-white rounded disabled:bg-gray-400"
+          onClick={() => setActiveTab('file')}
+          className={`px-6 py-3 font-medium text-sm transition-colors ${
+            activeTab === 'file'
+              ? 'border-b-2 border-blue-500 text-blue-600'
+              : 'text-gray-500 hover:text-gray-700'
+          }`}
         >
-          {isUploading ? 'Uploading...' : 'Upload Song'}
+          Upload File
+        </button>
+        <button
+          onClick={() => setActiveTab('youtube')}
+          className={`px-6 py-3 font-medium text-sm transition-colors ${
+            activeTab === 'youtube'
+              ? 'border-b-2 border-blue-500 text-blue-600'
+              : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          YouTube URL
         </button>
       </div>
+
+      {/* Tab Content */}
+      {activeTab === 'file' ? (
+        <div className="p-6 border-2 border-dashed rounded-lg">
+          <div className="flex flex-col items-center">
+            <input
+              type="file"
+              onChange={handleFileChange}
+              className="mb-4"
+              accept="audio/*"
+            />
+            <button
+              onClick={handleUpload}
+              disabled={!file || isUploading}
+              className="px-4 py-2 bg-blue-500 text-white rounded disabled:bg-gray-400 hover:bg-blue-600 transition-colors"
+            >
+              {isUploading ? 'Uploading...' : 'Upload Song'}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <YouTubeUrlTab
+          onExtractSuccess={onUploadSuccess}
+          onExtractError={onUploadError}
+        />
+      )}
     </div>
   );
 };

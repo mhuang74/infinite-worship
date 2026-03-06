@@ -51,19 +51,26 @@ class SongMapper:
             clusters INTEGER,
             jump_points INTEGER,
             sample_rate INTEGER,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            youtube_video_id TEXT,
+            youtube_title TEXT,
+            youtube_uploader TEXT,
+            youtube_thumbnail TEXT,
+            source TEXT DEFAULT 'upload'
         )
         ''')
         
         conn.commit()
         conn.close()
     
-    def add_song(self, song_id, original_filename, encoded_filename, file_path, 
-                 duration=None, tempo=None, beats=None, clusters=None, 
-                 jump_points=None, sample_rate=None):
+    def add_song(self, song_id, original_filename, encoded_filename, file_path,
+                 duration=None, tempo=None, beats=None, clusters=None,
+                 jump_points=None, sample_rate=None, youtube_video_id=None,
+                 youtube_title=None, youtube_uploader=None, youtube_thumbnail=None,
+                 source='upload'):
         """
         Add a song to the database.
-        
+
         Args:
             song_id (str): Unique identifier for the song
             original_filename (str): Original filename of the song
@@ -75,30 +82,41 @@ class SongMapper:
             clusters (int, optional): Number of clusters in the song
             jump_points (int, optional): Number of jump points in the song
             sample_rate (int, optional): Sample rate of the song
-            
+            youtube_video_id (str, optional): YouTube video ID
+            youtube_title (str, optional): YouTube video title
+            youtube_uploader (str, optional): YouTube video uploader
+            youtube_thumbnail (str, optional): YouTube video thumbnail URL
+            source (str, optional): Source of the song ('upload' or 'youtube')
+
         Returns:
             bool: True if the song was added successfully, False otherwise
         """
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            
+
             cursor.execute('''
-            INSERT OR REPLACE INTO songs 
-            (song_id, original_filename, encoded_filename, file_path, 
-             duration, tempo, beats, clusters, jump_points, sample_rate)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO songs
+            (song_id, original_filename, encoded_filename, file_path,
+             duration, tempo, beats, clusters, jump_points, sample_rate,
+             youtube_video_id, youtube_title, youtube_uploader, youtube_thumbnail, source)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
-                song_id, 
-                original_filename, 
-                encoded_filename, 
-                file_path, 
-                duration, 
-                tempo, 
-                beats, 
-                clusters, 
+                song_id,
+                original_filename,
+                encoded_filename,
+                file_path,
+                duration,
+                tempo,
+                beats,
+                clusters,
                 jump_points,
-                sample_rate
+                sample_rate,
+                youtube_video_id,
+                youtube_title,
+                youtube_uploader,
+                youtube_thumbnail,
+                source
             ))
             
             conn.commit()

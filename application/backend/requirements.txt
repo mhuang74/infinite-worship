@@ -5,3 +5,4 @@ numpy==1.24.3
 scipy==1.11.3
 python-dotenv==1.0.0
 Werkzeug==2.3.7
+yt-dlp>=2025.11.0
