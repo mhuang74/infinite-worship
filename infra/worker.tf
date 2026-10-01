@@ -50,9 +50,10 @@ data "aws_iam_policy_document" "worker" {
     ]
     resources = [
       aws_sqs_queue.analysis.arn,
-      # CreateLogGroup is unnecessary: aws_cloudwatch_log_group.worker is
-      # managed by Terraform; the role only needs to write streams into it.
+      # CreateLogGroup is unnecessary: both log groups are managed by
+      # Terraform; the role only needs to write streams into them.
       aws_cloudwatch_log_group.worker.arn,
+      aws_cloudwatch_log_group.reaper.arn,
     ]
   }
   statement {
@@ -71,6 +72,15 @@ resource "aws_iam_role_policy" "worker" {
 
 resource "aws_cloudwatch_log_group" "worker" {
   name              = "/aws/lambda/${var.resource_prefix}-worker"
+  retention_in_days = 14
+
+  tags = local.tags
+}
+
+# The reaper has its own group; without it AWS auto-creates one the role
+# can't write to (IAM below scopes logs to managed groups only).
+resource "aws_cloudwatch_log_group" "reaper" {
+  name              = "/aws/lambda/${var.resource_prefix}-reaper"
   retention_in_days = 14
 
   tags = local.tags
