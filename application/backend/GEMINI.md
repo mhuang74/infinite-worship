@@ -1,5 +1,7 @@
 # Project Overview
 
+> **LEGACY, pending deletion (#25).** This directory (`application/backend/`) is the old Flask stack, superseded by `worker/` (Lambda analysis Worker) and the BFF routes in `application/frontend/src/app/api/`. It will be deleted at cutover (ADR-0003). The current architecture is documented in the root `README.md`, `AGENTS.md`, and `docs/adr/`.
+
 This project is a web application called "Infinite Worship" that allows users to upload songs and experience an "infinite" playback loop. The application analyzes the musical structure of a song, identifies similar-sounding beats, and can seamlessly jump between them to create a continuous listening experience.
 
 The project is composed of two main parts:
