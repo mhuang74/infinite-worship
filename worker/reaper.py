@@ -6,7 +6,7 @@ prefix/age rule either matches nothing (uploads land at their final
 media/<song_id> key, no copy step) or expires READY Songs' objects, which
 would break the "immutable and playable indefinitely once ready" contract.
 So reaping is done here, with DB knowledge, on a weekly schedule
-(infra/worker.tf aws_cloudwatch_event_schedule.reaper).
+(infra/worker.tf aws_cloudwatch_event_rule.reaper).
 
 Rules:
 - Only Songs with status 'pending' older than GRACE_HOURS are reaped. A

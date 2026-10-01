@@ -24,7 +24,7 @@ BFF API routes (`src/app/api/`): `POST /uploads`, `GET /songs`, `GET /songs/sear
 - `exploration/` — research notebooks only (the old `exploration/remixatron` code lives on as `worker/jukebox`)
 - `music/` — sample MP3 assets; `REFERENCE/` — vendored third-party source, read-only, never built
 
-Legacy dirs still present but pending deletion (issue #25): `application/backend/`, `application/docker-compose*.yml`, `application/dockerfile*`, `application/nginx.conf`, `application/build.sh`. Do not treat them as current.
+Legacy stack deleted (issue #25, commit `fd9c38e`): `application/backend/`, `application/docker-compose*.yml`, `application/dockerfile*`, `application/nginx.conf`, `application/build.sh` are gone; only `application/frontend/` remains.
 
 ## Development Commands
 
@@ -85,14 +85,14 @@ Local emulator verification (used for #19–#23): run the BFF/worker against Doc
 - **setuptools gotcha**: pin `setuptools<81` — librosa 0.10.1 still imports `pkg_resources` (removed in setuptools 81).
 - **Pure-sine inputs hit a KMeans degenerate-input bug** in the jukebox clustering (degenerate covariance on synthetic tones) — do not "verify" analysis with generated sine waves; real music works.
 - Dev servers may already be running externally — do NOT restart them.
-- `application/frontend/GEMINI.md` and `application/backend/GEMINI.md` still describe the legacy Flask stack — read with that in mind; the backend one dies at cutover.
+- `application/frontend/GEMINI.md` describes the current frontend/BFF stack; `application/backend/GEMINI.md` was deleted with the legacy backend (issue #25).
 - `REFERENCE/` is vendored third-party code — read for patterns, never modify.
 
 ## Cutover (issue #25) — in-repo steps DONE; cloud steps remain
 
 In-repo (done, commit `fd9c38e` + this cleanup): legacy backend, docker-compose files, dockerfiles, nginx.conf, build.sh deleted; README/AGENTS rewritten. Remaining cloud-side steps (need creds / are irreversible):
 
-- [ ] Update the two `GEMINI.md` files (drop the legacy notes; delete `application/backend/GEMINI.md`) — banner-only cleanup left for the human
+- [x] Update the two `GEMINI.md` files (drop the legacy notes; delete `application/backend/GEMINI.md`)
 - [ ] Delete the legacy public ECR images (`public.ecr.aws/u4p9h6o7/mhuang74/infinite-worship` — 16 images, irreversible; DELETE with `aws ecr-public batch-delete-image`)
 - [ ] Decommission the Graviton host (`t4g.medium`, docker-compose deployment) — no such instance exists in the current AWS account inventory (only `sow-render-worker`, which belongs to a different app and must NOT be touched); if the host still exists it is in another account/region
 - [ ] Final repo-wide grep: no remaining references to the Flask backend, docker-compose, or port 5001 (done at cutover; remaining hits are intentional legacy banners/cutover notes)

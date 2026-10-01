@@ -94,7 +94,8 @@ class AnalysisError(Exception):
 # ~160 kB/s ceiling for MAX_SONG_SECONDS of audio (≈96 MB for 10 minutes).
 # An object larger than this for a ≤10-minute song implies a bitrate/format
 # worth rejecting before download; the true duration check still runs after
-# decode (Content-Length alone cannot know length).
+# decode (Content-Length alone cannot know length; Content-Encoding is not
+# used on R2 audio objects).
 MAX_SIZE_BYTES = MAX_SONG_SECONDS * 160_000
 
 
@@ -215,10 +216,12 @@ def _analyze(r2, conn, song_id: str, audio_key: str) -> None:
     # ---- validate BEFORE downloading (ADR-0001: presigned PUTs cannot
     # enforce size or content type) ----
     head = r2.head_object(Bucket=R2_BUCKET, Key=audio_key)
-    content_type = head.get("ContentType", "")
+    content_type = head.get("ContentType")
     size_bytes = head["ContentLength"]
 
-    if content_type and content_type.split(";")[0].strip() not in ALLOWED_CONTENT_TYPES:
+    # Empty/missing ContentType is a reject, not a skip: a presigned PUT can
+    # omit it, and an unknown-format object must not reach the decoder.
+    if not content_type or content_type.split(";")[0].strip() not in ALLOWED_CONTENT_TYPES:
         raise AnalysisError(
             f"unsupported content type {content_type!r}; "
             f"allowed: {sorted(ALLOWED_CONTENT_TYPES)}"
@@ -290,14 +293,6 @@ def _analyze(r2, conn, song_id: str, audio_key: str) -> None:
         jukebox.duration,
         analysis_url,
     )
-
-
-# ~320 kbps ceiling for MAX_SONG_SECONDS of audio, with headroom. Audio above
-# this size for a ≤10-minute song implies a bitrate/format worth rejecting
-# before download (Content-Length is authoritative; Content-Encoding is not
-# used on R2 audio objects).
-MAX_SIZE_BYTES = MAX_SONG_SECONDS * 40_000 * 4  # ~96 MB
-
 
 def _to_analysis_json(jukebox: Any, filename: str) -> dict[str, Any]:
     """Convert InfiniteJukebox results to the public Analysis JSON shape.
