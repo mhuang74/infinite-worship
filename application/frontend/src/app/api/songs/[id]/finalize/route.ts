@@ -7,11 +7,17 @@
  *
  * Env vars (set in Vercel project settings, per environment):
  *   DATABASE_URL             — Neon connection string (NEW project; never SOW_*)
- *   R2_S3_ENDPOINT           — R2 S3 endpoint, e.g. https://<account_id>.r2.cloudflarestorage.com
+ *   R2_ENDPOINT (or R2_ACCOUNT_ID) — R2 S3 endpoint; r2.ts derives
+ *                     https://<account_id>.r2.cloudflarestorage.com from the
+ *                     account id when R2_ENDPOINT is unset
  *   R2_BUCKET                — bucket name (default: infinite-worship-media)
  *   R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY — R2 API token (S3-compatible credentials)
  *   SQS_QUEUE_URL            — analysis queue URL from `terraform output analysis_queue_url`
  *   AWS_REGION               — queue region (default us-east-1)
+ *   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY — IAM creds for the SQS client
+ *                     (default provider chain; on Vercel set these for a user
+ *                     allowed only sqs:SendMessage on the queue — without
+ *                     them finalize 502s)
  *
  * Depends on sibling-owned helpers: `r2HeadObject(r2, key)` in src/lib/r2.ts
  * (null on missing object) and `getDb()` in src/lib/db.ts.

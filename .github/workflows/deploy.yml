@@ -71,25 +71,19 @@ jobs:
         working-directory: infra
         run: terraform init -input=false
 
-      # Phase 1 — bootstrap/refresh infra: creates the ECR repo and the Lambda
-      # (with whatever worker_image_uri the state last had) plus SQS, IAM,
-      # CloudWatch, and the Cloudflare/R2 resources. Must run BEFORE the image
-      # push so the repository exists.
+      # Phase 1 — bootstrap/refresh infra: creates the ECR repo, SQS, IAM,
+      # CloudWatch, and the Cloudflare/R2 resources, and re-asserts the
+      # Lambda's non-image config. State is REMOTE (infra/backend.tf: S3 +
+      # DynamoDB lock), so the required worker_image_uri resolves to the
+      # value the previous run recorded — this run's push is applied in
+      # phase 3. On a truly EMPTY state (first ever run) there is no prior
+      # value: bootstrap once from a laptop (see infra/README.md "First run").
       - name: Terraform apply (bootstrap infra)
-        id: bootstrap
         working-directory: infra
-        # worker_image_uri is required (no default) but unknown before the
-        # first build; the state's last value is the truth until phase 3
-        # updates it. The placeholder only matters on a truly empty state.
-        run: |
-          terraform apply -auto-approve -input=false -var-file=terraform.ci.tfvars \
-            -var "worker_image_uri=${AWS_ACCOUNT_ID_PLACEHOLDER}"
-        env:
-          AWS_ACCOUNT_ID_PLACEHOLDER: unused-on-first-run
-        # On a clean state this first apply cannot wire a real image yet;
-        # phase 3 re-applies with the built URI. If the Lambda resource would
-        # be created with an invalid image_uri, use the refresh-then-ship
-        # ordering instead (see infra/README.md "First run").
+        # No -var here: passing a placeholder would overwrite the recorded
+        # image URI with garbage and fail the Lambda update. Phase 3 passes
+        # the real one.
+        run: terraform apply -auto-approve -input=false -var-file=terraform.ci.tfvars
 
       - name: Resolve AWS account ID
         run: echo "ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)" >> "$GITHUB_ENV"
