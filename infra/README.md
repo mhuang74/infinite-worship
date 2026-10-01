@@ -15,6 +15,7 @@ Postgres Song schema.
 | `locals.tf` | Shared resource tags |
 | `variables.tf` | All knobs (Cloudflare token/account/zone, domain, CORS origins, worker image/DB/R2 credentials) |
 | `sql/song_schema.sql` | Song table applied to Neon (plain SQL, psql) |
+| `terraform.ci.tfvars` | Non-secret config used by CI's `terraform apply` (see CI/CD below) |
 | `sql/migrations/` | Additive migrations applied AFTER the base schema, in filename order |
 
 ## What Terraform manages
@@ -132,6 +133,92 @@ Once `api.neon.tech` is reachable (retry `curl -s https://api.neon.tech/v2/users
    `analysis_url`, `created_at timestamptz`.
 5. Record the connection string wherever the BFF/worker read their
    `DATABASE_URL` (never commit it; never use SOW_* credentials).
+
+## CI/CD (ADR-0004, issue #24)
+
+`.github/workflows/deploy.yml` runs on push to `main`:
+
+1. Build `worker/Dockerfile` → tag `us-west-2.dkr.ecr.amazonaws.com/infinite-worship-worker:<git-sha>`
+2. `docker push` to ECR
+3. `aws lambda update-function-code --image-uri` on `infinite-worship-worker`,
+   then `aws lambda wait function-updated` so the next Lambda invocation
+   (and any Terraform in-flight drift read) sees the new image
+4. `terraform -chdir=infra apply -auto-approve` (pins the Lambda's
+   `worker_image_uri` variable and any infra drift)
+
+One deploy at a time (`concurrency: deploy-main`, in-progress runs are
+cancelled — a queued sequential apply of a stale SHA is pure waste). Every
+step fails loudly; there is no `continue-on-error` anywhere.
+
+### Required GitHub secrets (Settings → Secrets and variables → Actions)
+
+NEW credentials for this app only — **never** the stream-of-worship values.
+
+| Secret | Feeds | Notes |
+| --- | --- | --- |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | ECR push, Lambda update, Terraform apply | IAM key for the deployer; region pinned to `us-west-2` in the workflow |
+| `CLOUDFLARE_API_TOKEN` | `TF_VAR_cloudflare_api_token` | NEW token (R2:Edit, Zone:Read, DNS:Edit) |
+| `CLOUDFLARE_ACCOUNT_ID` | `TF_VAR_cloudflare_account_id` | account owning the NEW R2 bucket |
+| `CLOUDFLARE_ZONE_ID` | `TF_VAR_cloudflare_zone_id` | zone serving the bucket's custom domain |
+| `WORKER_DATABASE_URL` | `TF_VAR_worker_database_url` | Neon URI for the NEW project |
+| `WORKER_R2_ACCESS_KEY_ID` / `WORKER_R2_SECRET_ACCESS_KEY` | `TF_VAR_worker_r2_*` | NEW R2 API token for the worker |
+
+`gh secret list` from the automation token is denied (HTTP 403) — a human
+with admin must create these; the workflow fails loudly if one is missing.
+
+### Non-secret Terraform inputs
+
+The workflow applies with `-var-file=terraform.ci.tfvars` (committed,
+non-secret). Copy the relevant lines from `terraform.tfvars.example` into
+`terraform.ci.tfvars` and keep only the non-secret keys:
+
+```hcl
+media_domain           = "media.yourdomain.com"
+cors_allowed_origins   = ["http://localhost:3000", "https://infinite-worship.vercel.app"]
+```
+
+Secret keys (`cloudflare_api_token`, `worker_database_url`,
+`worker_r2_*`) come from `TF_VAR_*` env sourced from GH secrets (mapped in
+the workflow's `env:` block) — the simplest robust pattern: no secret ever
+touches the repo or appears in a plan file.
+
+### Vercel git integration (frontend; dashboard setup, no code)
+
+The frontend deploys on push to `main` via Vercel's git integration —
+nothing about it lives in CI. One-time dashboard steps:
+
+1. [vercel.com/dashboard](https://vercel.com/dashboard) → **Add New… → Project**
+2. Import the `mhuang74/infinite-worship` Git repository (grant the Vercel
+   GitHub App access if asked)
+3. **Configure Project**:
+   - **Framework Preset**: `Next.js` (auto-detected)
+   - **Root Directory**: `application/frontend` — expand and **enable**
+     "Root Directory override"; `next.config.ts` is clean (issue #19 removed
+     `output: 'export'`; no `out/` remnants, nothing to ignore, so no
+     `.vercelignore` was needed)
+   - **Build / Install / Development commands**: leave default (`npm`, the
+     lockfile is `package-lock.json`)
+4. **Environment Variables** (Production + Preview; NEW values only):
+
+   | Name | Value |
+   | --- | --- |
+   | `DATABASE_URL` | Neon URI for the NEW project (same value as `WORKER_DATABASE_URL`) |
+   | `R2_ENDPOINT` **or** `R2_ACCOUNT_ID` | `https://<account_id>.r2.cloudflarestorage.com`, or just the account id — `src/lib/r2.ts` builds the endpoint from `R2_ACCOUNT_ID` unless `R2_ENDPOINT` is set |
+   | `R2_BUCKET` | `infinite-worship-media` (or the applied `r2_bucket_name`) |
+   | `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | NEW R2 API token credentials |
+   | `R2_PUBLIC_BASE` | `https://media.yourdomain.com` (the custom domain from `media_domain`) |
+   | `SQS_QUEUE_URL` | `terraform output analysis_queue_url` |
+   | `AWS_REGION` | `us-west-2` (SQS client region) |
+
+5. **Deploy** — every subsequent push to `main` deploys Production
+   automatically; PRs get Preview deployments.
+
+### First run
+
+The workflow assumes Terraform has been applied once manually (issue #17
+created the ECR repo, Lambda, queue). If a run fails because the Lambda or
+ECR repo doesn't exist yet, do the bootstrap apply locally first
+(see "Human steps" above), then re-run the workflow.
 
 ## Local commands
 

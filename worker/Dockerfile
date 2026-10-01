@@ -8,13 +8,19 @@
 FROM public.ecr.aws/lambda/python:3.11
 
 # ffmpeg (static build, no distro bloat) for librosa/madmom audio decoding.
-RUN dnf install -y tar xz && \
+# The Lambda base image is Amazon Linux 2 — yum, not dnf (dnf: command not found).
+# Tarball layout: ffmpeg-<ver>-amd64-static/{ffmpeg,ffprobe} — both globs
+# must match `ffmpeg-*-static` (the old `ffmpeg-*--static` never matched ffprobe).
+# git: pip needs it to clone madmom from GitHub (requirements.txt + Dockerfile
+# both install madmom @ git+...). gcc: madmom's Cython extensions compile at
+# install time.
+RUN yum install -y tar xz git gcc && \
     curl -fsSL https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz \
     | tar -xJ -C /tmp && \
     mv /tmp/ffmpeg-*-static/ffmpeg /usr/local/bin/ffmpeg && \
-    mv /tmp/ffmpeg-*--static/ffprobe /usr/local/bin/ffprobe && \
+    mv /tmp/ffmpeg-*-static/ffprobe /usr/local/bin/ffprobe && \
     rm -rf /tmp/ffmpeg-*-static && \
-    dnf clean all
+    yum clean all
 
 COPY requirements.txt ${LAMBDA_TASK_ROOT}/
 
@@ -23,7 +29,14 @@ RUN pip install --no-cache-dir \
       boto3 "psycopg[binary]" && \
     # setuptools<81: librosa 0.10.1 still imports pkg_resources (removed in 81)
     pip install --no-cache-dir "setuptools<81" && \
-    pip install --no-cache-dir --no-deps madmom@git+https://github.com/CPJKU/madmom && \
+    # Cython is madmom's build dep; --no-build-isolation keeps its build from
+    # pulling numpy>2 sources (needs a full toolchain AND would ABI-mismatch
+    # the pinned numpy 1.24.3 runtime). madmom lives ONLY here — it is
+    # deliberately absent from requirements.txt so pip never rebuilds it
+    # inside an isolated env (that rebuild pulls numpy>2 sources and fails).
+    pip install --no-cache-dir "cython<3" && \
+    pip install --no-cache-dir --no-deps --no-build-isolation \
+      madmom@git+https://github.com/CPJKU/madmom && \
     pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt
 
 COPY handler.py ${LAMBDA_TASK_ROOT}/
