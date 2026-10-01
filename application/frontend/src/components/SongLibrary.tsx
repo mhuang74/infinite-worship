@@ -96,16 +96,25 @@ const SongLibrary: React.FC<SongLibraryProps> = ({
             ]
               .filter(Boolean)
               .join(' • ');
+            const failed = song.status === 'failed';
 
             return (
               <div
                 key={song.song_id}
                 onClick={() => onSongSelect(song.song_id, song.title)}
+                title={failed && song.failure_reason ? `Analysis failed: ${song.failure_reason}` : undefined}
                 className="group flex items-center gap-3 rounded-md bg-white/5 px-3 py-2 transition-colors duration-150 hover:bg-white/10 cursor-pointer"
               >
-                <span className="truncate text-sm font-semibold text-gold-400">
-                  {song.title}
-                </span>
+                <div className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-semibold text-gold-400">
+                    {song.title}
+                  </span>
+                  {failed && song.failure_reason && (
+                    <span className="block truncate text-xs text-red-300/80">
+                      {song.failure_reason}
+                    </span>
+                  )}
+                </div>
                 <span className="ml-auto flex-shrink-0 whitespace-nowrap text-xs text-white/60">
                   {metadata}
                 </span>

@@ -2,10 +2,10 @@
 
 import React, { useState, useCallback } from 'react';
 import { uploadSong } from '@/lib/upload';
-import type { Song } from '@/lib/types';
 
 interface FileUploadProps {
-  onUploadSuccess: (song: Song | null) => void;
+  /** Called with the uploaded Song's id so the parent can poll its status. */
+  onUploadSuccess: (songId: string) => void;
   onUploadError: (message: string) => void;
 }
 
@@ -32,8 +32,10 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess, onUploadError 
     onUploadError('');
 
     try {
-      await uploadSong(file);
-      onUploadSuccess(null);
+      const ticket = await uploadSong(file);
+      // Report the uploaded Song id so the parent can poll its status through
+      // pending → processing → ready | failed (issue #23).
+      onUploadSuccess(ticket.song_id);
     } catch (error) {
       console.error('Upload failed:', error);
       let errorMessage = 'An unexpected error occurred.';
