@@ -40,6 +40,7 @@ RUN pip install --no-cache-dir \
     pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt
 
 COPY handler.py ${LAMBDA_TASK_ROOT}/
+COPY reaper.py ${LAMBDA_TASK_ROOT}/
 COPY jukebox/ ${LAMBDA_TASK_ROOT}/jukebox/
 
 CMD ["handler.lambda_handler"]
