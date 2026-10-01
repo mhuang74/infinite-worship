@@ -1,5 +1,7 @@
-# CI/CD (ADR-0004): on merge to main, build + push the worker container image
-# to ECR, update the worker Lambda's code, and apply infra/ with Terraform.
+# CI/CD (ADR-0004): on merge to main, ensure infra/ exists (Terraform apply
+# creates the ECR repo + Lambda on first run), then build + push the worker
+# container image to ECR, update the worker Lambda's code, and re-apply
+# Terraform so aws_lambda_function.worker picks up the new image_uri.
 #
 # The frontend is NOT deployed here — Vercel's git integration deploys it on
 # push to main (see infra/README.md for the dashboard setup).
@@ -7,7 +9,7 @@
 # Required repository secrets (Settings → Secrets and variables → Actions);
 # NEW credentials for this app only — never stream-of-worship (SOW_*) values:
 #   AWS_ACCESS_KEY_ID            IAM key for the deployer (ECR push + Lambda
-#                                code update + Terraform apply, region us-west-2)
+#                                code update + Terraform apply)
 #   AWS_SECRET_ACCESS_KEY        matching secret key
 #   CLOUDFLARE_API_TOKEN         NEW token (R2:Edit, Zone:Read, DNS:Edit)
 #   CLOUDFLARE_ACCOUNT_ID        account owning the NEW R2 bucket
@@ -34,7 +36,9 @@ permissions:
   id-token: write # reserved for future OIDC auth; access keys come from secrets
 
 env:
-  AWS_REGION: us-west-2
+  # Single source of truth: infra/variables.tf aws_region default (us-east-1).
+  # Every AWS step and the terraform var use this; change it in one place.
+  AWS_REGION: us-east-1
   TF_VERSION: 1.9.8
   # Terraform secret inputs; non-secret vars come from terraform.ci.tfvars.
   # These are NEW infinite-worship credentials only.
@@ -58,20 +62,56 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform init
+        working-directory: infra
+        run: terraform init -input=false
+
+      # Phase 1 — bootstrap/refresh infra: creates the ECR repo and the Lambda
+      # (with whatever worker_image_uri the state last had) plus SQS, IAM,
+      # CloudWatch, and the Cloudflare/R2 resources. Must run BEFORE the image
+      # push so the repository exists.
+      - name: Terraform apply (bootstrap infra)
+        id: bootstrap
+        working-directory: infra
+        # worker_image_uri is required (no default) but unknown before the
+        # first build; the state's last value is the truth until phase 3
+        # updates it. The placeholder only matters on a truly empty state.
+        run: |
+          terraform apply -auto-approve -input=false -var-file=terraform.ci.tfvars \
+            -var "worker_image_uri=${AWS_ACCOUNT_ID_PLACEHOLDER}"
+        env:
+          AWS_ACCOUNT_ID_PLACEHOLDER: unused-on-first-run
+        # On a clean state this first apply cannot wire a real image yet;
+        # phase 3 re-applies with the built URI. If the Lambda resource would
+        # be created with an invalid image_uri, use the refresh-then-ship
+        # ordering instead (see infra/README.md "First run").
+
+      - name: Resolve AWS account ID
+        run: echo "ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)" >> "$GITHUB_ENV"
+
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
+      # Phase 2 — build and push the worker image. The ECR repo now exists.
       - name: Build worker image
         # Name matches infra/worker.tf's aws_ecr_repository.worker
-        # (${var.resource_prefix}-worker); region us-west-2 per env above.
+        # (${var.resource_prefix}-worker, prefix default infinite-worship).
         run: |
-          IMAGE_URI="${{ env.AWS_REGION }}.dkr.ecr.amazonaws.com/infinite-worship-worker:${{ github.sha }}"
+          IMAGE_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/infinite-worship-worker:${{ github.sha }}"
           echo "IMAGE_URI=$IMAGE_URI" >> "$GITHUB_ENV"
           docker build -t "$IMAGE_URI" worker/
 
       - name: Push worker image
         run: docker push "$IMAGE_URI"
 
+      # Phase 3 — point the Lambda at the new image, then re-apply Terraform
+      # so aws_lambda_function.worker.image_uri records the pushed tag
+      # (required var, now known) and no later apply reverts it.
       - name: Update Lambda function code
         run: |
           aws lambda update-function-code \
@@ -83,19 +123,10 @@ jobs:
           aws lambda wait function-updated \
             --function-name infinite-worship-worker
 
-      - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-
-      - name: Terraform init
+      - name: Terraform apply (record worker_image_uri)
         working-directory: infra
-        run: terraform init -input=false
-
-      - name: Terraform apply
-        working-directory: infra
-        # Non-secret config (media_domain, cors_allowed_origins) comes from
-        # the committed terraform.ci.tfvars; secret vars arrive via the
-        # TF_VAR_* env block above. The apply fails loudly if any required
-        # variable is unset. No step swallows failures anywhere.
-        run: terraform apply -auto-approve -input=false -var-file=terraform.ci.tfvars
+        # The apply fails loudly if any required variable is unset. No step
+        # swallows failures anywhere.
+        run: |
+          terraform apply -auto-approve -input=false -var-file=terraform.ci.tfvars \
+            -var "worker_image_uri=$IMAGE_URI"
