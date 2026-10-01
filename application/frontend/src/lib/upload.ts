@@ -25,8 +25,8 @@ export async function computeSongId(file: File): Promise<string> {
 }
 
 /**
- * Full upload flow: presign via BFF, then PUT the raw file to R2.
- * Finalize (analysis kickoff) is a separate route — not called here (#21).
+ * Full upload flow (ADR-0002): presign via BFF, PUT the raw file to R2 at its
+ * final key, then ask the BFF to finalize — enqueueing the analysis Worker.
  */
 export async function uploadSong(file: File): Promise<UploadTicket> {
   const song_id = await computeSongId(file);
@@ -52,6 +52,15 @@ export async function uploadSong(file: File): Promise<UploadTicket> {
   });
   if (!putResponse.ok) {
     throw new Error(`Upload to storage failed: ${putResponse.status} ${putResponse.statusText}`);
+  }
+
+  // Kick off analysis: finalize enqueues the SQS message for the Worker.
+  const finalizeResponse = await fetch(`/api/songs/${encodeURIComponent(song_id)}/finalize`, {
+    method: 'POST',
+  });
+  if (!finalizeResponse.ok) {
+    const detail = await finalizeResponse.json().catch(() => null);
+    throw new Error(detail?.error || `Finalize request failed: ${finalizeResponse.status} ${finalizeResponse.statusText}`);
   }
 
   return ticket;

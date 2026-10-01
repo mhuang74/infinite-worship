@@ -20,8 +20,8 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess, onUploadError 
   };
 
   // Presign-then-PUT flow (ADR-0002): compute song_id client-side, get a
-  // presigned URL from the BFF, PUT the file straight to R2. No finalize call
-  // here — analysis kickoff is ticket #21.
+  // presigned URL from the BFF, PUT the file straight to R2, then finalize to
+  // enqueue analysis (issue #21).
   const handleUpload = useCallback(async () => {
     if (!file) {
       onUploadError('Please select a file first.');
