@@ -1,75 +1,40 @@
 # Infinite Worship Frontend
 
-This is a Next.js application built to provide a user interface for the Infinite Worship audio processing backend. It allows users to upload songs, visualize their musical structure, and experience an "infinite" playback loop where the song seamlessly jumps between similar-sounding beats.
+Next.js 15 (App Router) UI + BFF. The BFF API routes under `src/app/api/` are
+the only HTTP surface; the browser talks to them plus the R2 custom domain
+directly (uploads PUT to presigned URLs; the Player fetches audio/Analysis
+straight from storage).
 
-## Tech Stack
+## Structure
 
-*   **Framework**: [Next.js](https://nextjs.org/)
-*   **Language**: [TypeScript](https://www.typescriptlang.org/)
-*   **UI Library**: [React](https://reactjs.org/)
-*   **Styling**: [Tailwind CSS](https://tailwindcss.com/)
-*   **Audio Visualization**: [wavesurfer.js](https://wavesurfer.xyz/)
-*   **API Communication**: [axios](https://axios-http.com/)
+- `src/app/` — pages and BFF route handlers (`api/uploads`, `api/songs`,
+  `api/songs/[id]/finalize`, `api/songs/search`)
+- `src/components/` — `FileUpload`, `SongLibrary`, `SongSearch`,
+  `PlaybackControls`, `Visualization`, `SongMetadata`
+- `src/lib/` — `upload.ts` (client song_id + presign→PUT→finalize flow),
+  `player.ts` (direct-from-R2 loading), `audio.ts` (Web Audio `AudioEngine`),
+  `r2.ts`/`db.ts` (server-side helpers), `api.ts`, `types.ts`
 
-## Major Features & Improvements
+## Development
 
-*   **Song Upload**: A simple interface to select and upload an audio file to the backend for processing.
-*   **Robust Audio Engine**: The application features a decoupled, self-contained `AudioEngine` that uses a look-ahead scheduler with the Web Audio API. This ensures perfectly smooth, gapless playback and seamless transitions, even when jumping between segments.
-*   **Dynamic Jumping**: At each potential jump point, the application randomly decides whether to jump to a musically similar section of the song, creating a unique and endless listening experience.
-*   **Interactive Playback Controls**:
-    *   Play, Pause, Stop, and Restart functionality.
-    *   A dynamic slider to control the probability of a jump occurring (from 0% to 100%).
-*   **Advanced Visualization**:
-    *   Displays the full audio waveform.
-    *   Overlays each beat as a colored block, with the color corresponding to its musical cluster.
-    *   Highlights the currently playing beat.
-    *   Indicates potential jump candidates with a "glowing" animation.
-
-## Key Libraries & Design Choices
-
-### `wavesurfer.js` for Visualization
-
-The rich visualization of the song's waveform is a core feature of the UI. Manually implementing this is complex, involving low-level Web Audio API analysis and HTML Canvas drawing.
-
-`wavesurfer.js` is a specialized library that handles this complexity for us, providing a simple API to render a beautiful and performant waveform.
-
-In this application, `wavesurfer.js` is used **exclusively for visualization**. The actual audio playback is handled by our custom `AudioEngine`. This separation is crucial for enabling the complex beat-scheduling and jumping logic. The process is as follows:
-
-1.  **Loading**: When a song is uploaded, `wavesurfer.js` is given the audio file to render the waveform.
-2.  **Synchronization**: As our internal `AudioEngine` plays each beat, it notifies the React UI of the `currentBeat`.
-3.  **Updating**: A `useEffect` hook in the `Visualization` component listens for changes to `currentBeat` and calls `wavesurfer.current.seekTo()` to move the visual playhead to the correct position, keeping the waveform perfectly in sync with the audio.
-
-## Getting Started
-
-### Prerequisites
-
-*   [Node.js](https://nodejs.org/) (v18 or later recommended)
-*   [npm](https://www.npmjs.com/)
-
-### Installation
-
-1.  Navigate to the `application/frontend` directory.
-2.  Install the required dependencies:
-    ```bash
-    npm install
-    ```
-
-### Development Setup with Docker
-
-This is the recommended setup for development, as it encapsulates the backend environment and picks up code changes on-the-fly.
-
-**Start both frontend and backend servers inside containers:**
 ```bash
-cd application
-docker-compose -f docker-compose.dev.yml up
+npm install
+npm run dev        # http://localhost:3000
 ```
 
-**Running npm in dev mode**
+The BFF needs env vars (dev: `.env.local`): `DATABASE_URL` (Neon; local dev
+can point at a docker Postgres with the schema from `infra/sql/`),
+`R2_ENDPOINT` (or `R2_ACCOUNT_ID`), `R2_BUCKET`, `R2_ACCESS_KEY_ID`,
+`R2_SECRET_ACCESS_KEY`, `R2_PUBLIC_BASE`, `SQS_QUEUE_URL`, `AWS_REGION`.
+Local emulators (docker Postgres + MinIO + ElasticMQ) work; see the root
+`README.md` and `AGENTS.md`.
 
-1.  Make sure the backend server is running and accessible.
-2.  Start the frontend development server:
-    ```bash
-    npm run dev
-    ```
-3.  Open your browser and navigate to [http://localhost:3000](http://localhost:3000).
+There is no docker-compose in this repo anymore — the legacy container stack
+was deleted (ADR-0003).
 
+## QA
+
+```bash
+npx tsc --noEmit   # typecheck (strict)
+npm run lint       # eslint via next lint
+```

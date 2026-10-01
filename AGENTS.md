@@ -88,16 +88,14 @@ Local emulator verification (used for #19–#23): run the BFF/worker against Doc
 - `application/frontend/GEMINI.md` and `application/backend/GEMINI.md` still describe the legacy Flask stack — read with that in mind; the backend one dies at cutover.
 - `REFERENCE/` is vendored third-party code — read for patterns, never modify.
 
-## Cutover pending (issue #25) — human steps once creds exist
+## Cutover (issue #25) — in-repo steps DONE; cloud steps remain
 
-Requires: Cloudflare token + Neon project created (new resources only), #24 pipeline merged/live. Then delete rather than archive (ADR-0003):
+In-repo (done, commit `fd9c38e` + this cleanup): legacy backend, docker-compose files, dockerfiles, nginx.conf, build.sh deleted; README/AGENTS rewritten. Remaining cloud-side steps (need creds / are irreversible):
 
-- [ ] `git rm -r application/backend/` (Flask API + DSP)
-- [ ] `git rm application/docker-compose.yml application/docker-compose.dev.yml application/docker-compose.prod.yml application/dockerfile application/dockerfile-dev application/nginx.conf application/build.sh`
-- [ ] Update the two `GEMINI.md` files (drop the legacy notes; delete `application/backend/GEMINI.md`)
-- [ ] Delete the legacy public ECR images (`public.ecr.aws/u4p9h6o7/mhuang74/infinite-worship:*`)
-- [ ] Decommission the Graviton host (`t4g.medium`, docker-compose deployment)
-- [ ] Final repo-wide grep: no remaining references to the Flask backend, docker-compose, or port 5001
+- [ ] Update the two `GEMINI.md` files (drop the legacy notes; delete `application/backend/GEMINI.md`) — banner-only cleanup left for the human
+- [ ] Delete the legacy public ECR images (`public.ecr.aws/u4p9h6o7/mhuang74/infinite-worship` — 16 images, irreversible; DELETE with `aws ecr-public batch-delete-image`)
+- [ ] Decommission the Graviton host (`t4g.medium`, docker-compose deployment) — no such instance exists in the current AWS account inventory (only `sow-render-worker`, which belongs to a different app and must NOT be touched); if the host still exists it is in another account/region
+- [ ] Final repo-wide grep: no remaining references to the Flask backend, docker-compose, or port 5001 (done at cutover; remaining hits are intentional legacy banners/cutover notes)
 
 ## Agent skills
 
