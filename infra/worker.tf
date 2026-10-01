@@ -189,6 +189,13 @@ resource "aws_lambda_function" "reaper" {
   image_uri     = var.worker_image_uri
   architectures = ["x86_64"]
 
+  # Same container as the analysis worker, but enter through reaper.py's
+  # handler — without this override the image CMD (handler.lambda_handler)
+  # would run on the EventBridge payload and silently do nothing.
+  image_config {
+    commands = ["reaper.lambda_handler"]
+  }
+
   memory_size = 512
   timeout     = 120
 

@@ -139,14 +139,23 @@ def process_record(record: dict[str, Any], r2=None, connect=None) -> str:
                 LOGGER.error("song %s not found; dropping message", song_id)
                 return "not_found"
             status = row[0]
-            if status != "pending":
-                # Idempotent redrive: already processed (or in flight).
+            if status not in ("pending", "processing"):
+                # Idempotent redrive: already terminal (ready/failed) or
+                # otherwise not analyzable. 'processing' must RETRY: a
+                # transient crash commits 'processing' before _analyze and
+                # re-raises with the status rolled back only inside the same
+                # transaction — if the Lambda dies hard (OOM, timeout), the
+                # row stays 'processing' and a redelivery that skipped it
+                # would let SQS consume the message before maxReceiveCount,
+                # so the DLQ/alarm could never fire.
                 LOGGER.info(
-                    "song %s status is %s (not pending); skipping", song_id, status
+                    "song %s status is %s; skipping", song_id, status
                 )
                 return status
 
             with conn.cursor() as cur:
+                # Idempotent: on a redelivery of a hard-crashed 'processing'
+                # row this is a no-op (already processing).
                 cur.execute(
                     "UPDATE songs SET status = 'processing' WHERE song_id = %s",
                     (song_id,),
@@ -165,15 +174,19 @@ def process_record(record: dict[str, Any], r2=None, connect=None) -> str:
                 return "failed"
             except Exception as exc:
                 # Transient/infra failure (DB down, R2 5xx, jukebox crash):
-                # do NOT persist a terminal status — redelivery re-enters the
-                # pending guard above only if the status is still 'pending',
-                # so writing 'failed' here would make the first retry consume
-                # the message and the DLQ/alarm would never fire (ADR-0004).
-                # Roll back to 'pending' and re-raise: SQS retries, and after
+                # do NOT persist a terminal status. The redelivery guard
+                # above admits BOTH 'pending' and 'processing' — either way
+                # the next attempt re-enters analysis. Writing 'failed'
+                # here would make the first retry consume the message and
+                # the DLQ/alarm could never fire (ADR-0004). Roll the row
+                # back to 'pending' (covers this run having committed
+                # 'processing') and re-raise: SQS retries, and after
                 # maxReceiveCount the DLQ + alarm fire. If every retry
-                # exhausts without any run succeeding, the message dies in
-                # the DLQ with the Song stuck 'pending' — that is precisely
-                # the broken-pipeline signal the alarm exists for.
+                # exhausts without success, the message dies in the DLQ
+                # with the Song stuck — precisely the broken-pipeline
+                # signal the alarm exists for. (A hard crash — OOM/timeout
+                # — skips this handler entirely; the row stays 'processing'
+                # and the guard admits the retry too.)
                 LOGGER.error(
                     "analysis of %s failed\n%s", song_id, traceback.format_exc()
                 )
