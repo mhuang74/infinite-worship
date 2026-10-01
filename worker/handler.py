@@ -164,13 +164,27 @@ def process_record(record: dict[str, Any], r2=None, connect=None) -> str:
                 _mark_failed(conn, song_id, str(exc))
                 return "failed"
             except Exception as exc:
-                # Transient/infra failure: re-raise so SQS redrives and,
-                # after maxReceiveCount, the DLQ + alarm fire (ADR-0004).
+                # Transient/infra failure (DB down, R2 5xx, jukebox crash):
+                # do NOT persist a terminal status — redelivery re-enters the
+                # pending guard above only if the status is still 'pending',
+                # so writing 'failed' here would make the first retry consume
+                # the message and the DLQ/alarm would never fire (ADR-0004).
+                # Roll back to 'pending' and re-raise: SQS retries, and after
+                # maxReceiveCount the DLQ + alarm fire. If every retry
+                # exhausts without any run succeeding, the message dies in
+                # the DLQ with the Song stuck 'pending' — that is precisely
+                # the broken-pipeline signal the alarm exists for.
                 LOGGER.error(
                     "analysis of %s failed\n%s", song_id, traceback.format_exc()
                 )
                 conn.rollback()  # discard any uncommitted work from _analyze
-                _mark_failed(conn, song_id, str(exc))
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE songs SET status = 'pending' WHERE song_id = %s"
+                        " AND status = 'processing'",
+                        (song_id,),
+                    )
+                conn.commit()
                 raise
         except Exception:
             conn.rollback()
