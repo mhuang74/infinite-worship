@@ -8,3 +8,7 @@
 *.wav
 *.ogg
 **/uploads/
+
+# Python build artifacts
+__pycache__/
+*.egg-info/

@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jukebox"
+version = "0.1.0"
+description = "Infinite Jukebox audio analysis pipeline (Infinite Worship Worker)"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy==1.24.3",
+    "librosa==0.10.1",
+    "scipy==1.11.3",
+    "scikit-learn",
+    "madmom @ git+https://github.com/CPJKU/madmom",
+]
+
+[tool.setuptools]
+packages = ["jukebox"]
