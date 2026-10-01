@@ -1,0 +1,101 @@
+# CI/CD (ADR-0004): on merge to main, build + push the worker container image
+# to ECR, update the worker Lambda's code, and apply infra/ with Terraform.
+#
+# The frontend is NOT deployed here — Vercel's git integration deploys it on
+# push to main (see infra/README.md for the dashboard setup).
+#
+# Required repository secrets (Settings → Secrets and variables → Actions);
+# NEW credentials for this app only — never stream-of-worship (SOW_*) values:
+#   AWS_ACCESS_KEY_ID            IAM key for the deployer (ECR push + Lambda
+#                                code update + Terraform apply, region us-west-2)
+#   AWS_SECRET_ACCESS_KEY        matching secret key
+#   CLOUDFLARE_API_TOKEN         NEW token (R2:Edit, Zone:Read, DNS:Edit)
+#   CLOUDFLARE_ACCOUNT_ID        account owning the NEW R2 bucket
+#   CLOUDFLARE_ZONE_ID           zone serving the bucket's custom domain
+#   WORKER_DATABASE_URL          Neon connection string for the NEW project
+#   WORKER_R2_ACCESS_KEY_ID      NEW R2 API token access key (worker)
+#   WORKER_R2_SECRET_ACCESS_KEY  NEW R2 API token secret (worker)
+# Non-secret config (media domain, CORS origins) lives in
+# infra/terraform.ci.tfvars, applied via -var-file.
+name: deploy
+
+on:
+  push:
+    branches: [main]
+
+# Only one deploy at a time; a queued run is superseded by the next push
+# instead of piling up stale sequential applies.
+concurrency:
+  group: deploy-main
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write # reserved for future OIDC auth; access keys come from secrets
+
+env:
+  AWS_REGION: us-west-2
+  TF_VERSION: 1.9.8
+  # Terraform secret inputs; non-secret vars come from terraform.ci.tfvars.
+  # These are NEW infinite-worship credentials only.
+  TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+  TF_VAR_cloudflare_account_id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+  TF_VAR_cloudflare_zone_id: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+  TF_VAR_worker_database_url: ${{ secrets.WORKER_DATABASE_URL }}
+  TF_VAR_worker_r2_access_key_id: ${{ secrets.WORKER_R2_ACCESS_KEY_ID }}
+  TF_VAR_worker_r2_secret_access_key: ${{ secrets.WORKER_R2_SECRET_ACCESS_KEY }}
+
+jobs:
+  worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build worker image
+        # Name matches infra/worker.tf's aws_ecr_repository.worker
+        # (${var.resource_prefix}-worker); region us-west-2 per env above.
+        run: |
+          IMAGE_URI="${{ env.AWS_REGION }}.dkr.ecr.amazonaws.com/infinite-worship-worker:${{ github.sha }}"
+          echo "IMAGE_URI=$IMAGE_URI" >> "$GITHUB_ENV"
+          docker build -t "$IMAGE_URI" worker/
+
+      - name: Push worker image
+        run: docker push "$IMAGE_URI"
+
+      - name: Update Lambda function code
+        run: |
+          aws lambda update-function-code \
+            --function-name infinite-worship-worker \
+            --image-uri "$IMAGE_URI"
+
+      - name: Wait for Lambda update to settle
+        run: |
+          aws lambda wait function-updated \
+            --function-name infinite-worship-worker
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform init
+        working-directory: infra
+        run: terraform init -input=false
+
+      - name: Terraform apply
+        working-directory: infra
+        # Non-secret config (media_domain, cors_allowed_origins) comes from
+        # the committed terraform.ci.tfvars; secret vars arrive via the
+        # TF_VAR_* env block above. The apply fails loudly if any required
+        # variable is unset. No step swallows failures anywhere.
+        run: terraform apply -auto-approve -input=false -var-file=terraform.ci.tfvars
