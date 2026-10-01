@@ -166,3 +166,60 @@ output "worker_ecr_repository_url" {
   description = "ECR repo GitHub Actions pushes the worker image to (ADR-0004)."
   value       = aws_ecr_repository.worker.repository_url
 }
+
+# -----------------------------------------------------------------------------
+# Scheduled reaper (ADR-0002 "expire never-finalized uploads"): R2 lifecycle
+# rules cannot join against the songs table, so orphaned pending uploads are
+# reaped by this weekly Lambda instead (worker/reaper.py). It deletes objects
+# ONLY for Songs stuck 'pending' past the grace window; ready Songs are never
+# touched (no time-based retention — playable indefinitely per ADR-0002).
+# Reuses the worker image (reaper.py ships in the same container) with a
+# smaller memory/timeout budget; reserved concurrency 1 is plenty for weekly.
+# -----------------------------------------------------------------------------
+resource "aws_cloudwatch_event_rule" "reaper" {
+  name                = "${var.resource_prefix}-reaper"
+  schedule_expression = "rate(7 days)"
+  tags                = local.tags
+}
+
+resource "aws_lambda_function" "reaper" {
+  function_name = "${var.resource_prefix}-reaper"
+  role          = aws_iam_role.worker.arn
+  package_type  = "Image"
+  image_uri     = var.worker_image_uri
+  architectures = ["x86_64"]
+
+  memory_size = 512
+  timeout     = 120
+
+  reserved_concurrent_executions = 1
+
+  environment {
+    variables = {
+      DATABASE_URL         = var.worker_database_url
+      R2_S3_ENDPOINT       = "https://${var.cloudflare_account_id}.r2.cloudflarestorage.com"
+      R2_BUCKET            = var.r2_bucket_name
+      R2_ACCESS_KEY_ID     = var.worker_r2_access_key_id
+      R2_SECRET_ACCESS_KEY = var.worker_r2_secret_access_key
+      REAP_GRACE_HOURS     = "24"
+      AWS_REGION           = var.aws_region
+    }
+  }
+
+  depends_on = [aws_cloudwatch_log_group.worker]
+
+  tags = local.tags
+}
+
+resource "aws_cloudwatch_event_target" "reaper" {
+  rule = aws_cloudwatch_event_rule.reaper.name
+  arn  = aws_lambda_function.reaper.arn
+}
+
+resource "aws_lambda_permission" "reaper" {
+  statement_id  = "AllowExecutionFromEventBridge"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.reaper.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.reaper.arn
+}

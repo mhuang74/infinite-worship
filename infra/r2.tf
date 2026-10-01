@@ -52,29 +52,32 @@ resource "cloudflare_r2_bucket_cors" "media_cors" {
 # uploads PUT directly to their FINAL key — there is no pending/-to-media/
 # copy step, so a prefix filter on "pending/" would match nothing).
 #
-# R2 lifecycle rules can't join against the `songs` table, so expiry is by
-# object AGE alone: every object in the bucket expires after
-# pending_upload_expiry_days. This is sound with content-addressed Song IDs:
-# a Song stays playable only while its objects exist, so the retention window
-# doubles as the effective library retention. The value must exceed how long
-# users reasonably expect to keep playing a Song (default: 90 days) — it is
-# NOT a 7-day "orphan sweep", because finalized and orphaned objects are
-# indistinguishable to R2.
+# R2 lifecycle rules cannot join against the `songs` table, so a whole-bucket
+# age rule would also delete READY (playable) Songs' objects — a user-facing
+# retention policy, not orphan cleanup, and rejected as such. Instead the
+# Worker exposes a scheduled "reap" entry point (worker/reaper.py, invoked
+# weekly by the reaper Lambda in worker.tf): it queries `songs` for rows stuck
+# pending beyond the grace window and deletes only THEIR objects. Ready Songs
+# are never touched — a Song is immutable and playable indefinitely once
+# ready (ADR-0002), so there is intentionally NO time-based expiry on ready
+# objects.
 # -----------------------------------------------------------------------------
 resource "cloudflare_r2_bucket_lifecycle" "media_lifecycle" {
+  count = 0 # object-level reaping is done by the scheduled Worker (worker/reaper.py)
+  # (kept as a disabled stub so the R2 lifecycle story lives in one file; the
+  #  resource below is what a prefix-based rule would look like if reaping by
+  #  DB join is ever replaced with a retention policy — a user-facing decision
+  #  that must be confirmed first)
   account_id  = var.cloudflare_account_id
   bucket_name = cloudflare_r2_bucket.media.name
 
   rules = [{
-    id      = "expire-stale-objects"
-    enabled = true
+    id      = "expire-stale-objects-NOT-ACTIVE"
+    enabled = false
     conditions = {
-      prefix = "" # whole bucket; R2 cannot distinguish finalized from orphaned
+      prefix = ""
     }
     delete_objects_transition = {
-      # Days ANY object (audio or Analysis JSON) survives. See infra/README.md
-      # and the ADR-0002 consequence: crashed-tab orphans are collected by the
-      # same rule as everything else.
       type    = "age"
       max_age = var.pending_upload_expiry_days
     }
