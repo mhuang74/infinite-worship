@@ -1,18 +1,10 @@
 'use client';
 
 import React from 'react';
-
-interface Song {
-  song_id: string;
-  original_filename: string;
-  duration: number;
-  tempo: number;
-  beats: number;
-  jump_points: number;
-}
+import type { Song } from '@/lib/types';
 
 interface SongLibraryProps {
-  onSongSelect: (songId: string, filename: string) => void;
+  onSongSelect: (songId: string, title: string) => void;
   songs: Song[];
   loading: boolean;
   error: string | null;
@@ -32,6 +24,13 @@ const SongLibrary: React.FC<SongLibraryProps> = ({
     const minutes = Math.floor(seconds / 60);
     const remainingSeconds = Math.floor(seconds % 60);
     return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+  };
+
+  const statusColors: Record<string, string> = {
+    pending: 'text-yellow-300',
+    processing: 'text-blue-300',
+    ready: 'text-green-400',
+    failed: 'text-red-400',
   };
 
   const refreshIconClasses = refreshing
@@ -91,21 +90,29 @@ const SongLibrary: React.FC<SongLibraryProps> = ({
       {songs.length > 0 && (
         <div className="mt-4 max-h-[300px] space-y-3 overflow-y-auto pr-2">
           {songs.map((song) => {
-            const metadata = `${formatDuration(song.duration)} • ${Math.round(
-              song.tempo,
-            )} BPM • Jumps ${song.jump_points ?? 0}`;
+            const metadata = [
+              song.duration !== null ? formatDuration(song.duration) : null,
+              song.status,
+            ]
+              .filter(Boolean)
+              .join(' • ');
 
             return (
               <div
                 key={song.song_id}
-                onClick={() => onSongSelect(song.song_id, song.original_filename)}
+                onClick={() => onSongSelect(song.song_id, song.title)}
                 className="group flex items-center gap-3 rounded-md bg-white/5 px-3 py-2 transition-colors duration-150 hover:bg-white/10 cursor-pointer"
               >
                 <span className="truncate text-sm font-semibold text-gold-400">
-                  {song.original_filename}
+                  {song.title}
                 </span>
                 <span className="ml-auto flex-shrink-0 whitespace-nowrap text-xs text-white/60">
                   {metadata}
+                </span>
+                <span
+                  className={`flex-shrink-0 text-xs font-medium ${statusColors[song.status] ?? 'text-white/60'}`}
+                >
+                  {song.status}
                 </span>
               </div>
             );
