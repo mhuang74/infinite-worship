@@ -1,175 +1,110 @@
 # Infinite Worship
 
-A modern application for infinite playback of worship songs through intelligent remixing.
+A web app that plays worship songs as a seamless, endless remix: it analyzes a song's musical structure, then jumps probabilistically between acoustically similar beats while keeping playback musically coherent — forever.
 
-## Overview
+## Architecture
 
-Infinite Worship analyzes audio files to identify beats and segments, then creates intelligent remixes that can play indefinitely while maintaining musical coherence. The system uses advanced audio processing techniques to find similar sections of a song and create seamless transitions between them.
+Fully serverless (see `docs/adr/0001-serverless-stack.md`):
 
-## Features
+- **Frontend + BFF** — Next.js on Vercel. The UI is a single-page client; Next.js API routes (`src/app/api/`) are the only HTTP surface ("BFF"). Deploys via Vercel's git integration.
+- **Worker** — the analysis pipeline (`InfiniteJukebox`, ported into `worker/` as the `jukebox` Python package) runs as a container-image AWS Lambda, triggered from SQS — never synchronously (analysis takes minutes).
+- **Storage** — Cloudflare R2: one public-read bucket behind a custom domain holds both audio and Analysis JSON (zero egress fees; CDN-cached playback).
+- **Metadata** — Neon serverless Postgres: the `songs` table with a `pending → processing → ready | failed` status lifecycle.
 
-- **Song Upload**: Upload MP3, WAV, or OGG files for processing
-- **Beat Detection**: Automatically detect beats and their musical characteristics
-- **Segment Analysis**: Group similar beats into segments based on harmonic and rhythmic patterns
-- **Visualization**: See song segments color-coded by similarity
-- **Intelligent Playback**: Experience seamless transitions between similar segments
-- **Progress Tracking**: Monitor current segment, next jump, and beats until jump
+Data flow (ADR-0002):
 
-## Project Structure
+1. `POST /api/uploads` (BFF) mints a presigned R2 PUT URL and inserts a `pending` Song row in Neon. `song_id = urlsafe_base64(filename) + '_' + sha256hex(contents)` is computed **client-side** (`src/lib/upload.ts`).
+2. The browser PUTs the audio directly to its final public key `media/<song_id>`.
+3. `POST /api/songs/{id}/finalize` (BFF) enqueues `{song_id, audio_key}` on SQS — this explicit handoff exists because R2 event notifications cannot reach SQS.
+4. The Worker Lambda downloads, analyzes, writes `analysis/<song_id>.json`, and marks the Song `ready` (or `failed` with a human-readable `failure_reason`; failures redrive to a DLQ that alarms).
+5. The Player loads the audio blob and Analysis JSON **directly from R2** (no BFF proxy) and schedules beats with the Web Audio API; the UI polls Song status until analysis finishes.
 
-- **Frontend**: A Next.js web application with audio visualization and playback controls
-- **Backend**: A Flask API that processes audio files and identifies segments
-- **Exploration**: Notebooks and reference code for audio analysis techniques
+## Repository Layout
 
-## Getting Started
+```
+application/frontend/   Next.js app: UI + BFF API routes (the only app under application/)
+worker/                 jukebox Python package + Lambda handler + Dockerfile + tests
+infra/                  Terraform (R2, SQS+DLQ, Lambda) + Neon SQL schema/migrations
+exploration/            Research notebooks (laplacian segmentation, etc.)
+music/                  Sample MP3 assets
+docs/adr/               Architecture decision records (0001–0004)
+```
 
-### Running with Docker
+`REFERENCE/` is vendored third-party source for reading only. The legacy Flask stack (`application/backend/`, docker-compose files, `nginx.conf`, `build.sh`) is **pending deletion** — see [Cutover pending](#cutover-pending-issue-25).
 
-This is the recommended way to run the application, as it ensures a consistent environment.
+## Development
 
-**Build For Production:**
+Prerequisites: Node.js ≥ 18.17, Python 3.11, Docker (for local emulators).
 
-Currently hardcoded to build for ARM64 platform only since I use AWS graviton to lower cost (`t4g.medium` with 4GB memory and 2vCPU). Works on M2 Mac running MacOS Sequoia 15.6.
-    
-1.  Create and switch to a new builder instance that supports multi-platform builds.
-    ```bash
-    docker buildx create --name multiarch-builder --driver docker-container --use
-    docker buildx inspect --bootstrap
-    ```
+### Frontend + BFF
 
-2.  Navigate to the `application` directory:
-    ```bash
-    cd application
-    ```
+```sh
+cd application/frontend
+npm install
+npm run dev        # http://localhost:3000 — UI and API routes together
+npm run lint       # ESLint (next lint)
+npx tsc --noEmit   # typecheck
+```
 
-3.  Build and publish the images to AWS ECR. 
-    ```bash
-    ./build.sh
-    ```
+BFF env vars (`.env.local` for dev): `DATABASE_URL`, `R2_ENDPOINT` (or `R2_ACCOUNT_ID`), `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_PUBLIC_BASE`, and `SQS_QUEUE_URL` for the finalize route. Server-side only — never `NEXT_PUBLIC_*`.
 
-**Deploy For Production:**
-1.  On the PROD server, install docker and docker-compose
+### Local emulators
 
-    ```bash
-    sudo apt update && sudo apt install docker.io -y && sudo apt install docker-compose -y && sudo usermod -aG docker $USER && newgrp docker
-    ```
+The BFF and Worker work against any S3-compatible endpoint and plain Postgres, so local verification runs on Docker emulators (as used in the #19–#23 verifications):
 
-2.  Pull the latest images from my public AWS ECR repo
+```sh
+docker run -d --name iw-postgres -p 5432:5432 -e POSTGRES_PASSWORD=postgres postgres:16
+docker run -d --name iw-minio -p 9000:9000 -p 9001:9001 minio/minio server /data --console-address ":9001"
+docker run -d --name iw-localstack -p 4566:4566 localstack/localstack
 
-    ```bash
-    docker pull public.ecr.aws/u4p9h6o7/mhuang74/infinite-worship:infinite-worship-backend-arm64-latest && docker pull public.ecr.aws/u4p9h6o7/mhuang74/infinite-worship:infinite-worship-frontend-arm64-latest
-    ```
+# point the BFF/worker at them: R2_ENDPOINT=http://localhost:9000,
+# SQS_ENDPOINT=http://localhost:4566, DATABASE_URL=postgres://...
+```
 
-3.  Git clone the repo to pickup latest `docker-compose.prod.yml`
+### Worker
 
-    ```bash
-    git clone https://github.com/mhuang74/infinite-worship.git
-    ```
+```sh
+cd worker
+pip install -e .
+python -m unittest test_remixatron
+```
 
-4.  Bring up both frontend and backend services using docker-compose
-    ```bash
-    cd infinite-worship/application && docker-compose -f docker-compose.prod.yml down && docker-compose -f docker-compose.prod.yml up -d --no-build
-    ```
+Pins matter here — see the gotchas in `AGENTS.md` before touching `requirements.txt` or the Dockerfile.
 
-**For Development:**
+### Database schema
 
-1.  Navigate to the `application` directory:
-    ```
-    cd application
-    ```
+```sh
+psql "$DATABASE_URL" -f infra/sql/song_schema.sql
+psql "$DATABASE_URL" -f infra/sql/migrations/0001_add_failure_reason.sql   # after base schema
+```
 
-2.  Build and run the containers:
-    ```
-    docker-compose -f docker-compose.dev.yml up --build
-    ```
-    This will start the services with hot-reloading for both the frontend and backend.
+## Deployment
 
-### Manual Setup
+- **Frontend/BFF**: push to `main` → Vercel git integration deploys (ADR-0004).
+- **Worker + infra**: GitHub Actions on merge to `main` builds the container image, pushes to ECR, updates the Lambda, and runs `terraform apply` (ADR-0004). Cloudflare credentials gate the apply.
 
-### Prerequisites
+## How the remix works
 
-- Node.js 18.17 or later (for frontend)
-- Python 3.8 or later (for backend)
-- FFmpeg (for audio processing)
+1. **Beat/downbeat detection** — librosa load + madmom DBN downbeat tracking.
+2. **Segmentation** — CQT chromagram → Laplacian segmentation (McFee 2014).
+3. **Clustering** — sklearn KMeans over beat features; for each beat, jump candidates among similar beats.
+4. **Playback** — the client-side `AudioEngine` schedules beats with a lookahead loop and jumps with probability 0.15 to a weighted-random candidate, crossfading — looping forever.
 
-### Running the Frontend
+## Technologies
 
-1. Navigate to the frontend directory:
-   ```
-   cd application/frontend
-   ```
+Next.js 15 · React 19 · TypeScript · Tailwind CSS 4 · Web Audio API · wavesurfer.js · Python 3.11 · librosa · madmom · scikit-learn · AWS Lambda + SQS · Terraform · Cloudflare R2 · Neon Postgres · Vercel
 
-2. Install dependencies:
-   ```
-   npm install
-   ```
+## Cutover pending (issue #25)
 
-3. Start the development server:
-   ```
-   ./start-dev.sh
-   ```
+The legacy deployment stack is still in-tree but is **not** the current architecture. The following human/decommission steps are deferred until the new Cloudflare/Neon credentials exist and the #24 pipeline is live — do not treat the files below as current:
 
-4. Open [http://localhost:3000](http://localhost:3000) in your browser
+- [ ] Delete `application/backend/` (Flask API + DSP)
+- [ ] Delete `application/docker-compose*.yml`, `application/dockerfile*`, `application/nginx.conf`, `application/build.sh`
+- [ ] Delete the legacy public ECR images (`public.ecr.aws/u4p9h6o7/mhuang74/infinite-worship:*`)
+- [ ] Decommission the Graviton host (`t4g.medium` running docker-compose)
 
-### Running the Backend
-
-1. Navigate to the backend directory:
-   ```
-   cd application/backend
-   ```
-
-2. Install dependencies:
-   ```
-   pip install -r requirements.txt
-   ```
-
-3. Start the server:
-   ```
-   ./start-server.sh
-   ```
-
-The backend API will be available at [http://localhost:5001](http://localhost:5001)
-
-## Environment Variables
-
-The project uses environment variables to configure application settings.
-
--   **`application/frontend/.env`**: This file is for Frontend Production settings.
--   **`application/frontend/.env.local`**: This file is for Frontend Development settings.
-
-    -   `NEXT_PUBLIC_API_BASE_URL`: Specifies the base URL for the backend API. Defaults to `http://localhost:5001`.
-
-## How It Works
-
-1. **Audio Analysis**: The system analyzes the audio file to identify beats and their characteristics
-2. **Clustering**: Similar beats are grouped into clusters based on harmonic and rhythmic features
-3. **Segmentation**: Contiguous beats in the same cluster are grouped into segments
-4. **Jump Candidates**: For each beat, the system identifies potential "jump points" to other similar beats
-5. **Playback**: During playback, the system can seamlessly transition between similar segments
-
-## Technologies Used
-
-- **Next.js**: React framework for the frontend
-- **TypeScript**: Type-safe JavaScript
-- **Tailwind CSS**: Utility-first CSS framework
-- **WaveSurfer.js**: Audio visualization
-- **Flask**: Python web framework for the backend
-- **Librosa**: Audio analysis library
-- **Madmom**: Beat detection library
-
-## Setting up Cross-Platform Build (ARM64)
-
-In order to run `build.sh` and build for ARM64, setup and use `buildx`.
-
-
-
-2.  **Test Build:**
-    Replace `YYYYMMDD` with the current date.
-    ```
-    docker buildx build --platform linux/arm64 -t infinite-worship-arm64 . --load
-    ```
-
+Until then, everything under `application/` except `frontend/` is legacy and unmaintained.
 
 ## License
 
-This project is licensed under the Apache License 2.0 - see the LICENSE file for details.
+Apache License 2.0 — see the [LICENSE](LICENSE) file.
