@@ -3,15 +3,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import api from '@/lib/api';
 import { debounce } from 'lodash';
-
-interface Song {
-  song_id: string;
-  original_filename: string;
-  duration: number;
-  tempo: number;
-  beats: number;
-  jump_points: number;
-}
+import type { Song } from '@/lib/types';
 
 interface SongSearchProps {
   onSongSelect: (songId: string, filename: string) => void;
@@ -93,21 +85,17 @@ const SongSearch: React.FC<SongSearchProps> = ({ onSongSelect }) => {
       {results.length > 0 && (
         <div className="mt-4 max-h-[300px] space-y-3 overflow-y-auto pr-2">
           {results.map((song) => {
-            const metadata = `${formatDuration(song.duration)} • ${Math.round(
-              song.tempo,
-            )} BPM • Jumps ${song.jump_points ?? 0}`;
-
             return (
               <div
                 key={song.song_id}
-                onClick={() => onSongSelect(song.song_id, song.original_filename)}
+                onClick={() => onSongSelect(song.song_id, song.title)}
                 className="group flex items-center gap-3 rounded-md bg-white/5 px-3 py-2 transition-colors duration-150 hover:bg-white/10 cursor-pointer"
               >
                 <span className="truncate text-sm font-semibold text-gold-400">
-                  {song.original_filename}
+                  {song.title}
                 </span>
                 <span className="ml-auto flex-shrink-0 whitespace-nowrap text-xs text-white/60">
-                  {metadata}
+                  {song.status}
                 </span>
               </div>
             );

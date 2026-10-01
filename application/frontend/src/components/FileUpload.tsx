@@ -1,11 +1,11 @@
 'use client';
 
 import React, { useState, useCallback } from 'react';
-import axios from 'axios';
-import api from '@/lib/api';
+import { uploadSong } from '@/lib/upload';
+import type { Song } from '@/lib/types';
 
 interface FileUploadProps {
-  onUploadSuccess: (data: any) => void;
+  onUploadSuccess: (song: Song | null) => void;
   onUploadError: (message: string) => void;
 }
 
@@ -19,6 +19,9 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess, onUploadError 
     }
   };
 
+  // Presign-then-PUT flow (ADR-0002): compute song_id client-side, get a
+  // presigned URL from the BFF, PUT the file straight to R2. No finalize call
+  // here — analysis kickoff is ticket #21.
   const handleUpload = useCallback(async () => {
     if (!file) {
       onUploadError('Please select a file first.');
@@ -28,31 +31,13 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess, onUploadError 
     setIsUploading(true);
     onUploadError('');
 
-    const formData = new FormData();
-    formData.append('file', file);
-
     try {
-      const response = await api.post('/upload', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      });
-      onUploadSuccess(response.data);
+      await uploadSong(file);
+      onUploadSuccess(null);
     } catch (error) {
+      console.error('Upload failed:', error);
       let errorMessage = 'An unexpected error occurred.';
-      if (axios.isAxiosError(error)) {
-        if (error.response) {
-          // The request was made and the server responded with a status code
-          // that falls out of the range of 2xx
-          errorMessage = `Error: ${error.response.status} - ${error.response.data?.error || error.response.statusText}`;
-        } else if (error.request) {
-          // The request was made but no response was received
-          errorMessage = 'Network Error: The server is not responding. Is the backend running?';
-        } else {
-          // Something happened in setting up the request that triggered an Error
-          errorMessage = error.message;
-        }
-      } else if (error instanceof Error) {
+      if (error instanceof Error) {
         errorMessage = error.message;
       }
       onUploadError(errorMessage);

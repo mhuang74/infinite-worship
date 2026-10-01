@@ -9,15 +9,7 @@ import SongMetadata from '@/components/SongMetadata';
 import SongLibrary from '@/components/SongLibrary';
 import SongSearch from '@/components/SongSearch';
 import { AudioEngine, createAudioBuffer } from '@/lib/audio';
-
-interface Song {
-  song_id: string;
-  original_filename: string;
-  duration: number;
-  tempo: number;
-  beats: number;
-  jump_points: number;
-}
+import type { Song } from '@/lib/types';
 
 export default function HomePage() {
   const APP_DESCRIPTION = 'Infinite Worship uses song and audio characteristics to detect smooth transition points for endless remixing. Currently limited to within a song. The ultimate goal is to smoothly transition between songs!';
@@ -47,17 +39,24 @@ export default function HomePage() {
       setLibraryLoading(true);
       setLibraryError(null);
 
-      const response = await api.get('/songs');
+      const response = await api.get('/api/songs');
       const fetchedSongs: Song[] = response.data.songs || [];
       setSongs(fetchedSongs);
 
       if (autoplayRandom && fetchedSongs.length > 0) {
-        const randomIndex = Math.floor(Math.random() * fetchedSongs.length);
-        const randomSong = fetchedSongs[randomIndex];
-        selectedSongIdRef.current = randomSong.song_id;
-        setShouldAutoplay(true);
-        setSelectedSongId(randomSong.song_id);
-        setSelectedSongName(randomSong.original_filename);
+        const playableSongs = fetchedSongs.filter((song: Song) => song.status === 'ready');
+        if (playableSongs.length === 0) {
+          selectedSongIdRef.current = null;
+          setSelectedSongId(null);
+          setSelectedSongName(null);
+        } else {
+          const randomIndex = Math.floor(Math.random() * playableSongs.length);
+          const randomSong = playableSongs[randomIndex];
+          selectedSongIdRef.current = randomSong.song_id;
+          setShouldAutoplay(true);
+          setSelectedSongId(randomSong.song_id);
+          setSelectedSongName(randomSong.title);
+        }
       } else if (selectedSongIdRef.current) {
         const matchingSong = fetchedSongs.find((song: Song) => song.song_id === selectedSongIdRef.current);
         if (!matchingSong) {
@@ -65,7 +64,7 @@ export default function HomePage() {
           setSelectedSongId(null);
           setSelectedSongName(null);
         } else {
-          setSelectedSongName(matchingSong.original_filename);
+          setSelectedSongName(matchingSong.title);
         }
       }
     } catch (err) {
@@ -247,13 +246,9 @@ export default function HomePage() {
     loadSongs({ autoplayRandom: true });
   }, [loadSongs]);
 
-  const handleUploadSuccess = (data: any) => {
-    // This will trigger the useEffect above to set up the new engine
-    setSongData(data);
-    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
-    if (fileInput && fileInput.files) {
-      setAudioFile(fileInput.files[0]);
-    }
+  // Presign-then-PUT upload finished; the Song row exists as `pending` and the
+  // audio is in R2. No playback setup — analysis (finalize) is ticket #21.
+  const handleUploadSuccess = () => {
     setError('');
     selectedSongIdRef.current = null;
     setSelectedSongId(null);
@@ -295,11 +290,11 @@ export default function HomePage() {
     audioEngineRef.current.seekToTime(targetTime);
   };
   
-  const handleSongSelect = (songId: string, filename: string) => {
+  const handleSongSelect = (songId: string, title: string) => {
     selectedSongIdRef.current = songId;
     setShouldAutoplay(true);
     setSelectedSongId(songId);
-    setSelectedSongName(filename);
+    setSelectedSongName(title);
   };
 
   return (
