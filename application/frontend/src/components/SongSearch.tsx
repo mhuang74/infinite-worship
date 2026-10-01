@@ -10,6 +10,13 @@ interface SongSearchProps {
 }
 
 const SongSearch: React.FC<SongSearchProps> = ({ onSongSelect }) => {
+  const statusBadgeClasses: Record<string, string> = {
+    pending: 'border-yellow-300/40 bg-yellow-300/10 text-yellow-300',
+    processing: 'border-blue-300/40 bg-blue-300/10 text-blue-300',
+    ready: 'border-green-400/40 bg-green-400/10 text-green-400',
+    failed: 'border-red-400/40 bg-red-400/10 text-red-400',
+  };
+
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Song[]>([]);
   const [loading, setLoading] = useState(false);
@@ -79,7 +86,7 @@ const SongSearch: React.FC<SongSearchProps> = ({ onSongSelect }) => {
       )}
       
       {query.trim() !== '' && results.length === 0 && !loading && !error && (
-        <p className="mt-3 text-white/70 text-sm">No songs found matching "{query}"</p>
+        <p className="mt-3 text-white/70 text-sm">No songs found matching &quot;{query}&quot;</p>
       )}
       
       {results.length > 0 && (
@@ -95,6 +102,11 @@ const SongSearch: React.FC<SongSearchProps> = ({ onSongSelect }) => {
                   {song.title}
                 </span>
                 <span className="ml-auto flex-shrink-0 whitespace-nowrap text-xs text-white/60">
+                  {song.duration !== null ? formatDuration(song.duration) : null}
+                </span>
+                <span
+                  className={`flex-shrink-0 rounded-full border px-2 py-0.5 text-xs font-medium ${statusBadgeClasses[song.status] ?? 'border-white/30 bg-white/10 text-white/60'}`}
+                >
                   {song.status}
                 </span>
               </div>
