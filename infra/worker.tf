@@ -193,7 +193,7 @@ resource "aws_lambda_function" "reaper" {
   # handler — without this override the image CMD (handler.lambda_handler)
   # would run on the EventBridge payload and silently do nothing.
   image_config {
-    commands = ["reaper.lambda_handler"]
+    command = ["reaper.lambda_handler"]
   }
 
   memory_size = 512
