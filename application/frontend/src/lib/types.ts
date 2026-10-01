@@ -21,6 +21,7 @@ export interface Song {
   status: SongStatus;
   audio_url: string | null;
   analysis_url: string | null;
+  failure_reason?: string | null;
   created_at: string;
 }
 

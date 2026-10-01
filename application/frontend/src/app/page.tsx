@@ -9,6 +9,8 @@ import SongMetadata from '@/components/SongMetadata';
 import SongLibrary from '@/components/SongLibrary';
 import SongSearch from '@/components/SongSearch';
 import { AudioEngine, createAudioBuffer } from '@/lib/audio';
+import { loadSongForPlayback } from '@/lib/player';
+import { isPlayable } from '@/lib/upload';
 import type { Song } from '@/lib/types';
 
 export default function HomePage() {
@@ -153,55 +155,58 @@ export default function HomePage() {
     };
   }, [audioFile, songData]);
 
-  // Effect to fetch song data when a song is selected from the library
+  // Effect to fetch song data when a song is selected from the library.
+  // Serverless stack (issue #22): load the Analysis JSON + audio blob directly
+  // from the Song's public R2 URLs (CORS-open custom domain) — no BFF proxy.
+  // Only `ready` Songs are playable (ADR-0002); failed Songs show why.
   useEffect(() => {
-    const fetchSongData = async () => {
+    const loadSelectedSong = async () => {
       if (!selectedSongId) return;
-      
+
+      const song = songs.find((s) => s.song_id === selectedSongId);
+      if (!song) {
+        setError('Selected song is no longer in the library. Refresh and try again.');
+        return;
+      }
+
+      if (!isPlayable(song.status)) {
+        // Stop any running playback and clear the loaded song — the engine
+        // effect tears down when audioFile/songData go null.
+        audioEngineRef.current?.stop();
+        audioEngineRef.current = null;
+        setSongData(null);
+        setAudioFile(null);
+        setCurrentBeat(null);
+        setIsPlaying(false);
+        setIsPlaybackPending(false);
+        if (song.status === 'failed') {
+          setError(`Song "${song.title}" failed analysis${song.failure_reason ? `: ${song.failure_reason}` : '.'}`);
+        } else {
+          // pending/processing: not playable yet; clear any stale error
+          setError(`Song "${song.title}" is ${song.status} — it becomes playable when analysis finishes.`);
+        }
+        return;
+      }
+
       try {
         setLoadingLibrarySong(true);
         setError('');
-        
-        // Fetch song data from the API
-        const response = await api.get(`/songs/${selectedSongId}`);
-        const songData = response.data;
-        
-        // Fetch segments data
-        const segmentsResponse = await api.get(`/segments/${selectedSongId}`);
-        
-        if (!segmentsResponse.data || !segmentsResponse.data.segments) {
-          throw new Error('No segments data available for this song');
-        }
-        
-        // Create a blob from the file path and create a File object
-        const audioResponse = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/uploads/${selectedSongId}`, {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'audio/*',
-          },
-        });
-        
-        if (!audioResponse.ok) {
-          throw new Error(`Failed to fetch audio file: ${audioResponse.statusText}`);
-        }
-        
-        const blob = await audioResponse.blob();
-        const file = new File([blob], songData.original_filename, { type: blob.type });
-        
+
+        const loaded = await loadSongForPlayback(song);
+
         // Update state with the fetched data
-        setSongData(segmentsResponse.data);
-        setAudioFile(file);
-        
+        setSongData({ segments: loaded.beats });
+        setAudioFile(loaded.audioFile);
       } catch (err) {
-        console.error('Error loading song from library:', err);
-        setError('Failed to load song from library. Please try again.');
+        console.error('Error loading song from storage:', err);
+        setError('Failed to load song from storage. Please try again.');
       } finally {
         setLoadingLibrarySong(false);
       }
     };
-    
-    fetchSongData();
-  }, [selectedSongId]);
+
+    loadSelectedSong();
+  }, [selectedSongId, songs]);
 
   const handlePlayPause = useCallback(() => {
     if (!audioEngineRef.current) return;
