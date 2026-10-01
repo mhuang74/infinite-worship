@@ -1,6 +1,6 @@
 # Project Overview
 
-> **LEGACY, pending deletion (#25).** This describes the pre-serverless architecture (Flask backend, static-export frontend, docker-compose). The current architecture is: Next.js on Vercel with BFF API routes, Lambda analysis Worker via SQS, Cloudflare R2 storage, Neon Postgres — see the root `README.md`, `AGENTS.md`, and `docs/adr/`. The backend portion is superseded by `worker/` and `application/frontend/src/app/api/`.
+> **LEGACY, pending deletion (#25).** This file describes the pre-serverless architecture (Flask backend, static-export frontend, docker-compose). The current architecture is: Next.js on Vercel with BFF API routes, Lambda analysis Worker via SQS, Cloudflare R2 storage, Neon Postgres — see the root `README.md`, `AGENTS.md`, and `docs/adr/`. Everything below is historical; the "Backend" sections are superseded by `worker/` and `application/frontend/src/app/api/` (the BFF).
 
 This project is a web application called "Infinite Worship" that allows users to upload songs and experience an "infinite" playback loop. The application analyzes the musical structure of a song, identifies similar-sounding beats, and can seamlessly jump between them to create a continuous listening experience.
 
