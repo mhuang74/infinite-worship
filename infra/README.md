@@ -30,12 +30,14 @@ Postgres Song schema.
   and `PUT` (browser presigned uploads) for the origins in
   `cors_allowed_origins` (default `http://localhost:3000`; add the production
   Vercel origin(s) via tfvars).
-- **Lifecycle rule** — uploads PUT directly to their final `media/<song_id>`
-  key (ADR-0002: no copy step, no doubled storage), so R2 cannot distinguish
-  a finalized object from a crashed-tab orphan. The rule therefore expires
-  **every object** after `pending_upload_expiry_days` (default **90**) —
-  it is both the orphan cleanup and the effective Song-retention window;
-  raise it if Songs should outlive that.
+- **Lifecycle rule** — none is active. Uploads PUT directly to their final
+  `media/<song_id>` key (ADR-0002: no copy step), so an R2 prefix rule can't
+  separate orphans from live Songs, and a whole-bucket age rule would delete
+  ready Songs' objects (a retention policy, not orphan cleanup). Instead a
+  weekly EventBridge-scheduled **reaper** Lambda (`worker/reaper.py`, same
+  container image) deletes objects only for Songs stuck `pending` past a 24 h
+  grace window and marks them `failed` with a reason. Ready Songs are never
+  touched — playable indefinitely (no time-based retention).
 - **AWS provider** — Lambda + SQS resources for the analysis worker are
   declared (see the next section); nothing touches the stream-of-worship
   account.
