@@ -80,7 +80,15 @@ def _r2_client():
 
 
 class AnalysisError(Exception):
-    """Validation or analysis failure: Song is marked failed with a reason."""
+    """Deterministic validation/analysis failure (bad content-type, oversize,
+    >10 min, corrupt audio). The Song is marked failed with a reason and the
+    SQS message is deleted normally — redrive would just repeat the same
+    deterministic outcome three times and then page the DLQ alarm for a
+    non-problem (ADR-0004 reserves DLQ depth for pipeline breakage).
+
+    Anything else (DB down, R2 5xx, jukebox crash) is NOT an AnalysisError:
+    it re-raises unhandled so SQS retries and, after maxReceiveCount, the
+    DLQ + alarm fire."""
 
 
 # ~160 kB/s ceiling for MAX_SONG_SECONDS of audio (≈96 MB for 10 minutes).
@@ -147,7 +155,17 @@ def process_record(record: dict[str, Any], r2=None, connect=None) -> str:
 
             try:
                 _analyze(r2, conn, song_id, audio_key)
+            except AnalysisError as exc:
+                # Deterministic failure: record the reason, consume the
+                # message. A redrive would deterministically fail again and
+                # pollute the DLQ/alarm (ADR-0004).
+                LOGGER.error("analysis of %s failed: %s", song_id, exc)
+                conn.rollback()  # discard any uncommitted work from _analyze
+                _mark_failed(conn, song_id, str(exc))
+                return "failed"
             except Exception as exc:
+                # Transient/infra failure: re-raise so SQS redrives and,
+                # after maxReceiveCount, the DLQ + alarm fire (ADR-0004).
                 LOGGER.error(
                     "analysis of %s failed\n%s", song_id, traceback.format_exc()
                 )

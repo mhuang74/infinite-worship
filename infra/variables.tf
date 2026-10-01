@@ -47,7 +47,7 @@ variable "cors_allowed_origins" {
 }
 
 variable "pending_upload_expiry_days" {
-  description = "Lifecycle expiry for objects in the pending-uploads prefix (never finalized). See infra/README.md."
+  description = "Whole-bucket object age expiry in days. Doubles as orphaned-upload cleanup (R2 can't distinguish finalized from orphaned) and effective Song retention. See infra/README.md."
   type        = number
-  default     = 7
+  default     = 90
 }

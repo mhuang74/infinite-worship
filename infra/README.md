@@ -31,11 +31,11 @@ Postgres Song schema.
   `cors_allowed_origins` (default `http://localhost:3000`; add the production
   Vercel origin(s) via tfvars).
 - **Lifecycle rule** — uploads PUT directly to their final `media/<song_id>`
-  key (ADR-0002: no copy step, no doubled storage). Anything still under
-  `pending/` was never uploaded at all (e.g. crashed browser tab before the
-  PUT finished) and expires after **7 days**
-  (`pending_upload_expiry_days`) — generous headroom while bounding orphan
-  storage.
+  key (ADR-0002: no copy step, no doubled storage), so R2 cannot distinguish
+  a finalized object from a crashed-tab orphan. The rule therefore expires
+  **every object** after `pending_upload_expiry_days` (default **90**) —
+  it is both the orphan cleanup and the effective Song-retention window;
+  raise it if Songs should outlive that.
 - **AWS provider** — Lambda + SQS resources for the analysis worker are
   declared (see the next section); nothing touches the stream-of-worship
   account.
@@ -67,11 +67,23 @@ Postgres Song schema.
    psql "$NEON_CONNECTION_URI" -f sql/migrations/0001_add_failure_reason.sql
    ```
 
-#### BFF env vars (set in Vercel; the finalize route reads them)
+#### BFF env vars (set in Vercel; the BFF routes read them)
 
-`DATABASE_URL`, `R2_S3_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`,
-`R2_SECRET_ACCESS_KEY`, `SQS_QUEUE_URL` (from `terraform output
-analysis_queue_url`), optional `SQS_ENDPOINT`/`AWS_REGION`.
+- `DATABASE_URL` — Neon connection string (`src/lib/db.ts`)
+- `R2_ENDPOINT` (or `R2_ACCOUNT_ID`, from which `src/lib/r2.ts` derives
+  `https://<account>.r2.cloudflarestorage.com`) — **note**: the Worker's
+  Lambda uses `R2_S3_ENDPOINT` (wired by Terraform); the BFF uses
+  `R2_ENDPOINT`. Different components, different names — set both where
+  relevant.
+- `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` — NEW R2 token
+  (uploads + finalize HeadObject)
+- `SQS_QUEUE_URL` (from `terraform output analysis_queue_url`), optional
+  `SQS_ENDPOINT` (localstack dev) / `AWS_REGION`
+- **AWS credentials for the SQS client** — the finalize route's `SQSClient`
+  uses the default provider chain; on Vercel there is no instance role, so
+  set `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` for an IAM user whose
+  policy allows only `sqs:SendMessage` on the analysis queue's ARN. Without
+  them every finalize 502s ("Could not load credentials").
 
 ## Human steps: Cloudflare credentials (required before `apply`)
 
@@ -136,15 +148,24 @@ Once `api.neon.tech` is reachable (retry `curl -s https://api.neon.tech/v2/users
 
 ## CI/CD (ADR-0004, issue #24)
 
-`.github/workflows/deploy.yml` runs on push to `main`:
+State is remote (S3 bucket `infinite-worship-tfstate` + DynamoDB lock
+`infinite-worship-tflock`, see `infra/backend.tf`) — **required**, because
+each GH Actions run is a fresh runner. Bootstrap them once from a laptop:
+
+```sh
+aws s3 mb s3://infinite-worship-tfstate --region us-east-1
+aws dynamodb create-table --table-name infinite-worship-tflock \
+  --attribute-definitions AttributeName=LockID,AttributeType=S \
+  --key-schema AttributeName=LockID,KeyType=HASH \
+  --billing-mode PAY_PER_REQUEST --region us-east-1
+```
+
+`.github/workflows/deploy.yml` then runs on push to `main`:
 
 1. `terraform apply` (bootstrap) — creates the ECR repo, Lambda, SQS, IAM,
-   CloudWatch, and Cloudflare/R2 resources BEFORE anything is pushed. On a
-   truly empty state the required `worker_image_uri` has no real value yet; if
-   the Lambda resource fails to create on that first apply, push a first
-   image manually (steps 2–3 below, done once from a laptop with the AWS
-   profile) and re-run the workflow. Subsequent runs read the last known
-   image from state.
+   CloudWatch, and Cloudflare/R2 resources BEFORE anything is pushed, with
+   the `worker_image_uri` recorded by the previous run (remote state). The
+   very first run ever needs a laptop bootstrap instead (below).
 2. Build `worker/Dockerfile` → tag
    `${ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/infinite-worship-worker:<git-sha>`
    and `docker push` it (the repo exists after step 1).
@@ -154,6 +175,22 @@ Once `api.neon.tech` is reachable (retry `curl -s https://api.neon.tech/v2/users
 4. `terraform apply` again with `-var worker_image_uri=<pushed URI>` (pins the
    Lambda's image and records the new tag in state; the required
    `worker_image_uri` variable is satisfied here and in step 1).
+
+**First run ever (empty remote state)**: step 1 has no prior
+`worker_image_uri` to resolve, and the Lambda can't be created without one.
+Bootstrap once from a laptop with the AWS profile + Cloudflare token:
+
+```sh
+cd infra
+terraform init
+docker build -t "$(aws sts get-caller-identity --query Account --output text).dkr.ecr.us-east-1.amazonaws.com/infinite-worship-worker:bootstrap" ../worker/
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin "$(aws sts get-caller-identity --query Account --output text).dkr.ecr.us-east-1.amazonaws.com"
+docker push "$(aws sts get-caller-identity --query Account --output text).dkr.ecr.us-east-1.amazonaws.com/infinite-worship-worker:bootstrap"
+terraform apply -var-file=terraform.ci.tfvars \
+  -var "worker_image_uri=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.us-east-1.amazonaws.com/infinite-worship-worker:bootstrap"
+```
+
+Every subsequent push to `main` deploys via the workflow with no manual step.
 
 One deploy at a time (`concurrency: deploy-main`, in-progress runs are
 cancelled — a queued sequential apply of a stale SHA is pure waste). Every

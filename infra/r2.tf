@@ -48,26 +48,33 @@ resource "cloudflare_r2_bucket_cors" "media_cors" {
 
 # -----------------------------------------------------------------------------
 # Lifecycle: expire objects that never finalize. A crashed browser tab leaves
-# orphaned audio at its final key with a `pending` Song row (ADR-0002); this
-# rule collects it. Presigned uploads PUT to `pending/<song_id>`; the finalize
-# BFF step (POST /api/songs/{id}/finalize) copies the object to its public
-# `media/` key — anything still under pending/ after pending_upload_expiry_days
-# was never finalized and expires.
-# Expiry is 7 days: generous headroom for an interrupted upload while bounding
-# orphan storage at ~7 days of failed uploads.
+# orphaned audio at `media/<song_id>` with a `pending` Song row (ADR-0002:
+# uploads PUT directly to their FINAL key — there is no pending/-to-media/
+# copy step, so a prefix filter on "pending/" would match nothing).
+#
+# R2 lifecycle rules can't join against the `songs` table, so expiry is by
+# object AGE alone: every object in the bucket expires after
+# pending_upload_expiry_days. This is sound with content-addressed Song IDs:
+# a Song stays playable only while its objects exist, so the retention window
+# doubles as the effective library retention. The value must exceed how long
+# users reasonably expect to keep playing a Song (default: 90 days) — it is
+# NOT a 7-day "orphan sweep", because finalized and orphaned objects are
+# indistinguishable to R2.
 # -----------------------------------------------------------------------------
 resource "cloudflare_r2_bucket_lifecycle" "media_lifecycle" {
   account_id  = var.cloudflare_account_id
   bucket_name = cloudflare_r2_bucket.media.name
 
   rules = [{
-    id      = "expire-never-finalized-uploads"
+    id      = "expire-stale-objects"
     enabled = true
     conditions = {
-      prefix = "pending/"
+      prefix = "" # whole bucket; R2 cannot distinguish finalized from orphaned
     }
     delete_objects_transition = {
-      # Days an orphaned (never-finalized) upload survives. See infra/README.md.
+      # Days ANY object (audio or Analysis JSON) survives. See infra/README.md
+      # and the ADR-0002 consequence: crashed-tab orphans are collected by the
+      # same rule as everything else.
       type    = "age"
       max_age = var.pending_upload_expiry_days
     }
