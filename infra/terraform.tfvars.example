@@ -1,0 +1,12 @@
+# Cloudflare credentials + identifiers for the infinite-worship app.
+# Copy to terraform.tfvars (git-ignored) and fill in real values.
+# NEVER put stream-of-worship credentials here.
+
+cloudflare_api_token   = "NEW-token-for-infinite-worship" # R2:Edit, Zone:Read, DNS:Edit on the target zone
+cloudflare_account_id  = "your-cloudflare-account-id"
+cloudflare_zone_id     = "your-cloudflare-zone-id"
+r2_bucket_name         = "infinite-worship-media"
+media_domain           = "media.example.com" # hostname within the zone above
+
+# Add the production Vercel origin(s) once known (keep localhost for dev):
+# cors_allowed_origins = ["http://localhost:3000", "https://infinite-worship.vercel.app"]

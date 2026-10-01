@@ -1,0 +1,9 @@
+# Terraform state, plans, and real variable values never get committed.
+*.tfstate
+*.tfstate.*
+*.tfplan
+terraform.tfvars
+*.auto.tfvars
+.terraform/
+# Keep .terraform.lock.hcl committed: ADR-0004 CI applies must pin providers.
+crash.log
