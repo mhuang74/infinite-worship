@@ -3,3 +3,5 @@ librosa==0.10.1
 scipy==1.11.3
 scikit-learn
 madmom @ git+https://github.com/CPJKU/madmom
+boto3
+psycopg[binary]
