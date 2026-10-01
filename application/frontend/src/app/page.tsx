@@ -34,11 +34,22 @@ export default function HomePage() {
   const [totalJumps, setTotalJumps] = useState(0);
   const [totalPlayingTimeSec, setTotalPlayingTimeSec] = useState(0);
 
+  const [pollingSongId, setPollingSongId] = useState<string | null>(null);
+
+  // Song id whose Analysis + audio are already loaded into the player, so a
+  // library refresh does not refetch them (they are immutable once ready).
+  const loadedSongIdRef = useRef<string | null>(null);
+  // Consecutive polls that did not see the polling target; a few misses mean
+  // the Song vanished from the library and polling should give up.
+  const pollMissesRef = useRef(0);
+
   const selectedSongIdRef = useRef<string | null>(null);
 
-  const loadSongs = useCallback(async ({ autoplayRandom = false }: { autoplayRandom?: boolean } = {}) => {
+  const loadSongs = useCallback(async ({ autoplayRandom = false, silent = false }: { autoplayRandom?: boolean; silent?: boolean } = {}) => {
     try {
-      setLibraryLoading(true);
+      if (!silent) {
+        setLibraryLoading(true);
+      }
       setLibraryError(null);
 
       const response = await api.get('/api/songs');
@@ -174,6 +185,7 @@ export default function HomePage() {
         // effect tears down when audioFile/songData go null.
         audioEngineRef.current?.stop();
         audioEngineRef.current = null;
+        loadedSongIdRef.current = null;
         setSongData(null);
         setAudioFile(null);
         setCurrentBeat(null);
@@ -189,11 +201,20 @@ export default function HomePage() {
       }
 
       try {
+        // The Analysis + audio are immutable once the Song is ready; skip the
+        // refetch when this Song is already loaded (library refreshes must not
+        // re-download the blob — see the polling effect). The ref is cleared
+        // everywhere the player state is cleared.
+        if (loadedSongIdRef.current === song.song_id) {
+          return;
+        }
+
         setLoadingLibrarySong(true);
         setError('');
 
         const loaded = await loadSongForPlayback(song);
 
+        loadedSongIdRef.current = song.song_id;
         // Update state with the fetched data
         setSongData({ segments: loaded.beats });
         setAudioFile(loaded.audioFile);
@@ -251,13 +272,62 @@ export default function HomePage() {
     loadSongs({ autoplayRandom: true });
   }, [loadSongs]);
 
+  // Status polling (issue #23): after an upload, the Song row starts as
+  // `pending` and the Worker moves it to `processing` → `ready` | `failed`.
+  // Re-fetch the library every 3s until the polled Song reaches a terminal
+  // status; the interval is cleared on terminal status, on a new upload, and
+  // on unmount. Silent refreshes never spin the library refresh affordance.
+  useEffect(() => {
+    if (!pollingSongId) return;
+
+    pollMissesRef.current = 0;
+    let cancelled = false;
+
+    const tick = async () => {
+      try {
+        const response = await api.get('/api/songs');
+        if (cancelled) return;
+        const fetchedSongs: Song[] = response.data.songs || [];
+        setSongs(fetchedSongs);
+
+        const polled = fetchedSongs.find((song: Song) => song.song_id === pollingSongId);
+        if (!polled) {
+          // Song vanished from the library (e.g. deleted) — give up soon.
+          pollMissesRef.current += 1;
+          if (pollMissesRef.current >= 3) {
+            setPollingSongId(null);
+          }
+          return;
+        }
+
+        pollMissesRef.current = 0;
+        if (polled.status === 'ready' || polled.status === 'failed') {
+          setPollingSongId(null);
+        }
+      } catch (err) {
+        // Transient network/BFF errors: keep polling; the next tick retries.
+        console.error('Status poll failed:', err);
+      }
+    };
+
+    const interval = setInterval(tick, 3000);
+    void tick();
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [pollingSongId]);
+
   // Presign-then-PUT upload finished; the Song row exists as `pending` and the
   // audio is in R2. No playback setup — analysis (finalize) is ticket #21.
-  const handleUploadSuccess = () => {
+  // Poll the library until the new Song reaches a terminal status (issue #23).
+  const handleUploadSuccess = (songId: string) => {
     setError('');
     selectedSongIdRef.current = null;
     setSelectedSongId(null);
     setSelectedSongName(null);
+    setPollingSongId(songId);
     loadSongs();
   };
 
