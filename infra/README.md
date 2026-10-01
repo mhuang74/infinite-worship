@@ -138,13 +138,22 @@ Once `api.neon.tech` is reachable (retry `curl -s https://api.neon.tech/v2/users
 
 `.github/workflows/deploy.yml` runs on push to `main`:
 
-1. Build `worker/Dockerfile` → tag `us-west-2.dkr.ecr.amazonaws.com/infinite-worship-worker:<git-sha>`
-2. `docker push` to ECR
+1. `terraform apply` (bootstrap) — creates the ECR repo, Lambda, SQS, IAM,
+   CloudWatch, and Cloudflare/R2 resources BEFORE anything is pushed. On a
+   truly empty state the required `worker_image_uri` has no real value yet; if
+   the Lambda resource fails to create on that first apply, push a first
+   image manually (steps 2–3 below, done once from a laptop with the AWS
+   profile) and re-run the workflow. Subsequent runs read the last known
+   image from state.
+2. Build `worker/Dockerfile` → tag
+   `${ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/infinite-worship-worker:<git-sha>`
+   and `docker push` it (the repo exists after step 1).
 3. `aws lambda update-function-code --image-uri` on `infinite-worship-worker`,
    then `aws lambda wait function-updated` so the next Lambda invocation
-   (and any Terraform in-flight drift read) sees the new image
-4. `terraform -chdir=infra apply -auto-approve` (pins the Lambda's
-   `worker_image_uri` variable and any infra drift)
+   (and any Terraform in-flight drift read) sees the new image.
+4. `terraform apply` again with `-var worker_image_uri=<pushed URI>` (pins the
+   Lambda's image and records the new tag in state; the required
+   `worker_image_uri` variable is satisfied here and in step 1).
 
 One deploy at a time (`concurrency: deploy-main`, in-progress runs are
 cancelled — a queued sequential apply of a stale SHA is pure waste). Every
@@ -156,7 +165,7 @@ NEW credentials for this app only — **never** the stream-of-worship values.
 
 | Secret | Feeds | Notes |
 | --- | --- | --- |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | ECR push, Lambda update, Terraform apply | IAM key for the deployer; region pinned to `us-west-2` in the workflow |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | ECR push, Lambda update, Terraform apply | IAM key for the deployer; region pinned to `us-east-1` in the workflow (matches the `aws_region` Terraform default) |
 | `CLOUDFLARE_API_TOKEN` | `TF_VAR_cloudflare_api_token` | NEW token (R2:Edit, Zone:Read, DNS:Edit) |
 | `CLOUDFLARE_ACCOUNT_ID` | `TF_VAR_cloudflare_account_id` | account owning the NEW R2 bucket |
 | `CLOUDFLARE_ZONE_ID` | `TF_VAR_cloudflare_zone_id` | zone serving the bucket's custom domain |
@@ -208,7 +217,7 @@ nothing about it lives in CI. One-time dashboard steps:
    | `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | NEW R2 API token credentials |
    | `R2_PUBLIC_BASE` | `https://media.yourdomain.com` (the custom domain from `media_domain`) |
    | `SQS_QUEUE_URL` | `terraform output analysis_queue_url` |
-   | `AWS_REGION` | `us-west-2` (SQS client region) |
+   | `AWS_REGION` | `us-east-1` (SQS client region; matches the Terraform `aws_region` default) |
 
 5. **Deploy** — every subsequent push to `main` deploys Production
    automatically; PRs get Preview deployments.
