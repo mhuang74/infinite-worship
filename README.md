@@ -30,7 +30,7 @@ music/                  Sample MP3 assets
 docs/adr/               Architecture decision records (0001–0004)
 ```
 
-`REFERENCE/` is vendored third-party source for reading only. The legacy Flask stack (`application/backend/`, docker-compose files, `nginx.conf`, `build.sh`) is **pending deletion** — see [Cutover pending](#cutover-pending-issue-25).
+`REFERENCE/` is vendored third-party source for reading only. The legacy Flask stack (`application/backend/`, docker-compose files, `nginx.conf`, `build.sh`) was **deleted at cutover** (ADR-0003) — see [Cutover](#cutover-issue-25).
 
 ## Development
 
@@ -94,16 +94,15 @@ psql "$DATABASE_URL" -f infra/sql/migrations/0001_add_failure_reason.sql   # aft
 
 Next.js 15 · React 19 · TypeScript · Tailwind CSS 4 · Web Audio API · wavesurfer.js · Python 3.11 · librosa · madmom · scikit-learn · AWS Lambda + SQS · Terraform · Cloudflare R2 · Neon Postgres · Vercel
 
-## Cutover pending (issue #25)
+## Cutover (issue #25)
 
-The legacy deployment stack is still in-tree but is **not** the current architecture. The following human/decommission steps are deferred until the new Cloudflare/Neon credentials exist and the #24 pipeline is live — do not treat the files below as current:
+The in-repo legacy deletion is done (ADR-0003): `application/backend/`, the
+docker-compose files, `dockerfile*`, `nginx.conf`, and `build.sh` are gone;
+`exploration/` is notebooks-only. Remaining decommission steps are cloud-side
+and irreversible — see the checklist in `AGENTS.md`:
 
-- [ ] Delete `application/backend/` (Flask API + DSP)
-- [ ] Delete `application/docker-compose*.yml`, `application/dockerfile*`, `application/nginx.conf`, `application/build.sh`
-- [ ] Delete the legacy public ECR images (`public.ecr.aws/u4p9h6o7/mhuang74/infinite-worship:*`)
-- [ ] Decommission the Graviton host (`t4g.medium` running docker-compose)
-
-Until then, everything under `application/` except `frontend/` is legacy and unmaintained.
+- [ ] Delete the legacy public ECR images (`public.ecr.aws/u4p9h6o7/mhuang74/infinite-worship` — 16 images)
+- [ ] Decommission the Graviton host (`t4g.medium` running docker-compose) — none exists in the current AWS account; verify other accounts/regions
 
 ## License
 
