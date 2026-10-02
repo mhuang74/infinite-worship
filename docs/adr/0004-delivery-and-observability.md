@@ -1,0 +1,3 @@
+# Delivery: Vercel git integration for frontend, GitHub Actions for worker + infra
+
+Frontend deploys via Vercel's git integration (push to main → deploy). The worker image and Terraform are delivered by GitHub Actions on merge to main: build the container image, push to ECR, update the Lambda function, `terraform apply`. Split rationale: Vercel's integration is free and idiomatic for Next.js, while the worker/infra pipeline has no equivalent zero-config path — and the "all manual" option was rejected because every deploy becoming a laptop ritual contradicts the ops-elimination goal. Observability is deliberately minimal: CloudWatch log groups, SQS redrive to a DLQ, one CloudWatch alarm on DLQ depth > 0, and failed Songs surfaced via status in the UI.
