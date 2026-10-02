@@ -12,3 +12,6 @@
 # Python build artifacts
 __pycache__/
 *.egg-info/
+
+# Vendored third-party reference material (read-only, never built)
+REFERENCE/
