@@ -2,6 +2,8 @@
 # Environments
 .env
 .env.*
+infra/secrets.env
+infra/secrets.env.backup
 
 # Audio files
 *.mp3

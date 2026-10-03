@@ -41,9 +41,8 @@ marked; the rest are created once by hand in the named phase.
 
 | Resource | Name | Provisioned by / when |
 | --- | --- | --- |
-| S3 bucket | `infinite-worship-tfstate` | by hand, Phase 3 (Terraform remote state — plumbing only, not app data) |
-| DynamoDB table | `infinite-worship-tflock` | by hand, Phase 3 (Terraform state lock — plumbing only, not app data) |
-| IAM user | deployer (ECR push, `lambda:UpdateFunctionCode`, Terraform apply, S3/DynamoDB state access — Terraform remote state only, not app data) | by hand, Phase 1 |
+| S3 bucket | `infinite-worship-tfstate` | by hand, Phase 3 (Terraform remote state + lock — plumbing only, not app data) |
+| IAM user | deployer (ECR push + repo create/delete, `lambda:UpdateFunctionCode`, Terraform apply, S3 state access — Terraform remote state only, not app data) | by hand, Phase 1 |
 | IAM user | BFF finalize (`sqs:SendMessage` on the analysis queue ARN only) | by hand, Phase 1 |
 | ECR repository | `infinite-worship-worker` | Terraform |
 | SQS queue | `infinite-worship-analysis` | Terraform |
@@ -87,9 +86,8 @@ already exists. Per-run setup only: 8 Actions secrets (Phase 4).
 | Project | import of `mhuang74/infinite-worship`, Root Directory `application/frontend` | by hand, Phase 6 |
 | Environment variables | `DATABASE_URL`, `R2_*`, `SQS_QUEUE_URL`, `AWS_*` (see Phase 6 table) | by hand, Phase 6 |
 
-No other AWS services (no EC2/Graviton, no RDS/DynamoDB app tables — DynamoDB
-above is Terraform state plumbing), no new Cloudflare zones, no other Neon
-projects.
+No other AWS services (no EC2/Graviton, no RDS/DynamoDB app tables), no new
+Cloudflare zones, no other Neon projects.
 
 ## Resources Terraform manages
 
@@ -111,10 +109,11 @@ Database: Neon `songs` table — `infra/sql/song_schema.sql` (base) +
 `infra/sql/migrations/0001_add_failure_reason.sql` (applied after, in
 filename order).
 
-Terraform state is remote (S3 `infinite-worship-tfstate` + DynamoDB lock
-`infinite-worship-tflock`, `backend.tf`) — required, because each CI run is
-a fresh runner. This is state plumbing only: no application data lives here
-(the app's only database is Neon Postgres).
+Terraform state is remote (S3 backend `infinite-worship-tfstate` with
+S3-native lockfile locking, `backend.tf`; requires Terraform ≥ 1.10) —
+required, because each CI run is a fresh runner. This is state plumbing
+only: no application data lives here (the app's only database is Neon
+Postgres).
 
 ## Phase 0 — Prerequisites
 
@@ -123,7 +122,8 @@ GitHub admin on `mhuang74/infinite-worship`, Vercel.
 
 Local tooling:
 
-- `terraform` ≥ 1.6 (CI pins 1.9.8)
+- `terraform` ≥ 1.10 (CI pins 1.16.4) — the S3 backend's `use_lockfile`
+  locking needs ≥ 1.10 (`infra/backend.tf`)
 - `aws` CLI (configured with the deployer credentials from Phase 1)
 - `docker`
 - `psql`
@@ -181,63 +181,201 @@ Vercel `DATABASE_URL`.
 
 ### IAM deployer user
 
-Powers CI: ECR push, `lambda:UpdateFunctionCode`, and Terraform apply
-(including S3/DynamoDB access for Terraform remote state only — not app
-data). Terraform's Cloudflare-resource permissions ride the **Cloudflare API
-token** above, not this AWS user.
+Powers CI: ECR push and repository create/delete (Terraform manages the repo
+resource), `lambda:UpdateFunctionCode`, and Terraform apply (including S3
+access for Terraform remote state + lockfile only — not app data). Terraform's
+Cloudflare-resource permissions ride the **Cloudflare API token** above, not
+this AWS user.
 
 **Console:** AWS IAM console → Users → **Create user** → name it (e.g.
-`infinite-worship-deployer`) → attach policies: the inline policy below,
-plus `AmazonEC2ContainerRegistryPowerUser` (or an equivalent ECR
-push policy) → **Create access key** → CLI use case → record both values.
+`infinite-worship-deployer`) → attach the inline policy below → **Create
+access key** → CLI use case → record both values. (Do not rely on
+`AmazonEC2ContainerRegistryPowerUser` — it grants push/pull only, not
+`ecr:CreateRepository`, which the Terraform-managed ECR repo needs.)
 
 **CLI:**
 
 ```sh
 aws iam create-user --user-name infinite-worship-deployer
 
-# Minimal inline policy: ECR push, Lambda update, Terraform remote state.
-# Terraform apply also needs broad create/update/delete across the AWS
-# resources it manages (SQS, IAM role, Lambda, CloudWatch) — scope to taste;
-# the state bucket/table lines are the "not app data" part.
-cat > /tmp/deployer-policy.json <<'EOF'
+# Minimal inline policies: ECR push + repo lifecycle, Lambda lifecycle +
+# configuration, SQS/IAM/CloudWatch Logs/EventBridge/CloudWatch alarms
+# management (Terraform provisions all of these), Terraform remote state.
+# Two documents because a single inline policy caps at 2048 chars; every
+# action stays enumerated (no service wildcards - iam:* on * would let the
+# deployer key grant itself anything). Split: 1 = ECR/Lambda-code/S3 state +
+# SQS + PassRole, 2 = IAM/Logs/Events/CloudWatch/Lambda-config.
+cat > /tmp/deployer-policy-1.json <<'EOF'
 {
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": ["ecr:GetAuthorizationToken", "ecr:BatchCheckLayerAvailability",
-                 "ecr:InitiateLayerUpload", "ecr:UploadLayerPart",
-                 "ecr:CompleteLayerUpload", "ecr:PutImage"],
-      "Resource": "*"
-    },
-    {
-      "Effect": "Allow",
-      "Action": ["lambda:UpdateFunctionCode", "lambda:GetFunctionConfiguration",
-                 "lambda:WaitForFunctionUpdate"],
-      "Resource": ["arn:aws:lambda:us-west-2:<account-id>:infinite-worship-worker",
-                   "arn:aws:lambda:us-west-2:<account-id>:infinite-worship-reaper"]
-    },
-    {
-      "Effect": "Allow",
-      "Action": ["s3:GetObject", "s3:PutObject", "s3:ListBucket",
-                 "s3:GetBucketLocation", "s3:ListBucketVersions",
-                 "s3:GetBucketVersioning"],
-      "Resource": ["arn:aws:s3:::infinite-worship-tfstate",
-                   "arn:aws:s3:::infinite-worship-tfstate/*"]
-    },
-    {
-      "Effect": "Allow",
-      "Action": ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:DeleteItem",
-                 "dynamodb:DescribeTable"],
-      "Resource": "arn:aws:dynamodb:us-west-2:<account-id>:table/infinite-worship-tflock"
-    }
-  ]
+ "Version": "2012-10-17",
+ "Statement": [
+  {
+   "Effect": "Allow",
+   "Action": [
+    "ecr:GetAuthorizationToken",
+    "ecr:BatchCheckLayerAvailability",
+    "ecr:InitiateLayerUpload",
+    "ecr:UploadLayerPart",
+    "ecr:CompleteLayerUpload",
+    "ecr:PutImage",
+    "ecr:CreateRepository",
+    "ecr:DescribeRepositories",
+    "ecr:DeleteRepository",
+    "ecr:ListTagsForResource",
+    "ecr:TagResource",
+    "ecr:UntagResource"
+   ],
+   "Resource": "*"
+  },
+  {
+   "Effect": "Allow",
+   "Action": [
+    "lambda:UpdateFunctionCode",
+    "lambda:GetFunctionConfiguration",
+    "lambda:GetFunction",
+    "lambda:ListTags",
+    "lambda:TagResource",
+    "lambda:UntagResource",
+    "lambda:CreateFunction",
+    "lambda:DeleteFunction",
+    "lambda:GetFunctionCodeSigningConfig"
+   ],
+   "Resource": [
+    "arn:aws:lambda:us-west-2:<account-id>:function:infinite-worship-worker",
+    "arn:aws:lambda:us-west-2:<account-id>:function:infinite-worship-reaper"
+   ]
+  },
+  {
+   "Effect": "Allow",
+   "Action": [
+    "s3:GetObject",
+    "s3:PutObject",
+    "s3:DeleteObject",
+    "s3:ListBucket",
+    "s3:GetBucketLocation",
+    "s3:ListBucketVersions",
+    "s3:GetBucketVersioning"
+   ],
+   "Resource": [
+    "arn:aws:s3:::infinite-worship-tfstate",
+    "arn:aws:s3:::infinite-worship-tfstate/*"
+   ]
+  },
+  {
+   "Effect": "Allow",
+   "Action": [
+    "sqs:CreateQueue",
+    "sqs:DeleteQueue",
+    "sqs:GetQueueAttributes",
+    "sqs:GetQueueUrl",
+    "sqs:ListQueues",
+    "sqs:ListQueueTags",
+    "sqs:TagQueue",
+    "sqs:UntagQueue",
+    "sqs:SetQueueAttributes"
+   ],
+   "Resource": "*"
+  },
+  {
+   "Effect": "Allow",
+   "Action": "iam:PassRole",
+   "Resource": [
+    "arn:aws:iam::<account-id>:role/infinite-worship-worker"
+   ]
+  }
+ ]
+}
+EOF
+cat > /tmp/deployer-policy-2.json <<'EOF'
+{
+ "Version": "2012-10-17",
+ "Statement": [
+  {
+   "Effect": "Allow",
+   "Action": [
+    "iam:CreateRole",
+    "iam:DeleteRole",
+    "iam:GetRole",
+    "iam:PutRolePolicy",
+    "iam:DeleteRolePolicy",
+    "iam:GetPolicy",
+    "iam:GetRolePolicy",
+    "iam:ListRolePolicies",
+    "iam:UpdateAssumeRolePolicy",
+    "iam:TagRole",
+    "iam:UntagRole",
+    "iam:ListRoleTags"
+   ],
+   "Resource": "*"
+  },
+  {
+   "Effect": "Allow",
+   "Action": [
+    "logs:CreateLogGroup",
+    "logs:DeleteLogGroup",
+    "logs:DescribeLogGroups",
+    "logs:CreateLogStream",
+    "logs:PutLogEvents",
+    "logs:PutRetentionPolicy",
+    "logs:ListTagsForResource",
+    "logs:TagResource",
+    "logs:UntagResource",
+    "logs:AssociateKmsKey"
+   ],
+   "Resource": "*"
+  },
+  {
+   "Effect": "Allow",
+   "Action": [
+    "events:PutRule",
+    "events:DeleteRule",
+    "events:DescribeRule",
+    "events:ListTargetsByRule",
+    "events:PutTargets",
+    "events:RemoveTargets",
+    "events:PutPermission",
+    "events:RemovePermission",
+    "events:ListTagsForResource",
+    "events:TagResource",
+    "events:UntagResource"
+   ],
+   "Resource": "*"
+  },
+  {
+   "Effect": "Allow",
+   "Action": [
+    "cloudwatch:PutMetricAlarm",
+    "cloudwatch:DeleteAlarms",
+    "cloudwatch:DescribeAlarms",
+    "cloudwatch:ListTagsForResource",
+    "cloudwatch:TagResource",
+    "cloudwatch:UntagResource"
+   ],
+   "Resource": "*"
+  },
+  {
+   "Effect": "Allow",
+   "Action": [
+    "lambda:AddPermission",
+    "lambda:RemovePermission",
+    "lambda:GetPolicy",
+    "lambda:GetEventSourceMapping",
+    "lambda:CreateEventSourceMapping",
+    "lambda:DeleteEventSourceMapping",
+    "lambda:UpdateFunctionConfiguration",
+    "lambda:PutFunctionConcurrency",
+    "lambda:DeleteFunctionConcurrency",
+    "lambda:ListEventSourceMappings"
+   ],
+   "Resource": "*"
+  }
+ ]
 }
 EOF
 aws iam put-user-policy --user-name infinite-worship-deployer \
-  --policy-name deployer-inline --policy-document file:///tmp/deployer-policy.json
-
+  --policy-name deployer-infra --policy-document file:///tmp/deployer-policy-1.json
+aws iam put-user-policy --user-name infinite-worship-deployer \
+  --policy-name deployer-app --policy-document file:///tmp/deployer-policy-2.json
 aws iam create-access-key --user-name infinite-worship-deployer
 ```
 
@@ -320,21 +458,17 @@ and `WORKER_DATABASE_URL` (worker/CI). Never commit it.
 CI can't do the first apply: the Lambda needs a `worker_image_uri` and an
 empty remote state has no prior value to resolve.
 
-1. Create the remote state bucket + lock table (once) — Terraform backend
-   plumbing, not app storage; the app's database is Neon (Phase 2):
+1. Create the remote state bucket (once) — Terraform backend plumbing, not
+   app storage; the app's database is Neon (Phase 2). Locking is S3-native
+   (lockfile objects in this bucket, `backend.tf` `use_lockfile = true`) —
+   no DynamoDB table needed:
 
    ```sh
    aws s3 mb s3://infinite-worship-tfstate --region us-west-2
-   aws dynamodb create-table --table-name infinite-worship-tflock \
-     --attribute-definitions AttributeName=LockID,AttributeType=S \
-     --key-schema AttributeName=LockID,KeyType=HASH \
-     --billing-mode PAY_PER_REQUEST --region us-west-2
    ```
 
    Console equivalent: S3 console → **Create bucket** (name
-   `infinite-worship-tfstate`, region `us-west-2`); DynamoDB console →
-   **Create table** (name `infinite-worship-tflock`, partition key `LockID`
-   (string), Default settings = on-demand billing).
+   `infinite-worship-tfstate`, region `us-west-2`).
 
 2. Fill tfvars:
 
@@ -345,6 +479,24 @@ empty remote state has no prior value to resolve.
    # media_domain, cors_allowed_origins, worker_database_url, worker_r2_*
    # (or export them as TF_VAR_* instead of putting them in the file).
    ```
+
+   Alternatively, keep every credential in the git-ignored
+   `secrets.env` (template: `secrets.env.example`, the same file Phase 4
+   syncs to GitHub Actions) and export the Terraform mapping from it:
+
+   ```sh
+   set -a; source secrets.env; set +a
+   export TF_VAR_cloudflare_api_token="$CLOUDFLARE_API_TOKEN" \
+          TF_VAR_cloudflare_account_id="$CLOUDFLARE_ACCOUNT_ID" \
+          TF_VAR_cloudflare_zone_id="$CLOUDFLARE_ZONE_ID" \
+          TF_VAR_worker_database_url="$WORKER_DATABASE_URL" \
+          TF_VAR_worker_r2_access_key_id="$WORKER_R2_ACCESS_KEY_ID" \
+          TF_VAR_worker_r2_secret_access_key="$WORKER_R2_SECRET_ACCESS_KEY"
+   ```
+
+   Run this from `infra/`. The AWS deployer keys (`AWS_ACCESS_KEY_ID` /
+   `AWS_SECRET_ACCESS_KEY`) are not Terraform inputs — the provider reads
+   them from the sourced environment directly.
 
 3. Init, validate, build + push a bootstrap image, apply:
 
@@ -371,13 +523,20 @@ empty remote state has no prior value to resolve.
    already-pushed image.
 
    Note: `terraform plan` and the targeted apply both stop at provider
-   configuration without the Cloudflare token ("API tokens must only
-   contain characters a-z, A-Z, 0-9, hyphens and underscores" — the
-   provider validates `api_token` before any API call; Terraform
-   initializes every provider in the config even under `-target`), so
-   export `TF_VAR_cloudflare_api_token` first. `terraform validate` does
-   NOT need the token and always passes — which is why validate moved
-   after the targeted apply.
+   configuration without a valid `cloudflare_api_token`; Terraform
+   initializes every provider in the config even under `-target`.
+   Two distinct causes, checked in this order:
+   1. No token reaching the provider at all — the charset error
+      ("API tokens must only contain characters a-z, A-Z, 0-9,
+      hyphens and underscores") also fires when `var.cloudflare_api_token`
+      is unset/empty. Export `TF_VAR_cloudflare_api_token`.
+   2. A placeholder winning precedence: auto-loaded `terraform.tfvars`
+      (or any `-var-file`) ranks ABOVE `TF_VAR_*` env vars, so a
+      placeholder credential in a tfvars file silently overrides the
+      exported real one. Credential placeholders must not remain in
+      any tfvars file (see Troubleshooting).
+   `terraform validate` does NOT need the token and always passes —
+   which is why validate moved after the targeted apply.
 
    ECR login/build/push is CLI-only — the AWS console cannot push container
    images. The targeted apply creates the repository before the push;
@@ -397,9 +556,25 @@ empty remote state has no prior value to resolve.
 **Console:** repo → Settings → Secrets and variables → Actions →
 **New repository secret** — one per name below.
 
-**CLI:** `gh secret set` each of the 8 secrets (names match the header
+**CLI:** set all 8 secrets (names match the header
 comment in `.github/workflows/deploy.yml`; a human with admin must create
-them — the workflow fails loudly if one is missing):
+them — the workflow fails loudly if one is missing).
+
+From `infra/`, the one-shot path — sync all 8 at once from the
+`secrets.env` file (template: `secrets.env.example`, the same file Phase 3
+sources for Terraform):
+
+```sh
+gh secret set -f secrets.env -R mhuang74/infinite-worship   # all 8 at once
+gh secret list -R mhuang74/infinite-worship                 # verify names
+```
+
+One caveat:
+
+- GitHub secrets are write-only — `secrets.env` is the only recoverable
+  copy; keep it backed up outside the repo.
+
+Or set each secret interactively (paste the value at each prompt):
 
 ```sh
 gh secret set AWS_ACCESS_KEY_ID            # deployer IAM access key
@@ -599,9 +774,10 @@ In-repo cutover is done (issue #25); these legacy-cloud items remain:
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
+| `terraform apply` fails with `AccessDeniedException: User …infinite-worship-deployer is not authorized to perform: <service>:<Action>` | The attached inline policies predate the README's current Phase 1 policies (e.g. missing `ecr:CreateRepository`, `ecr:TagResource`, `s3:DeleteObject`) — seen live when Phase 3's targeted apply could not tag the ECR repo. A single inline policy caps at 2048 chars, so Phase 1 splits the grant across two inline policies (`deployer-infra` + `deployer-app`) with every action enumerated | Re-apply both current Phase 1 policies with an admin identity (`aws iam put-user-policy …deployer-policy-1.json` + `…-2.json`), re-source the new access keys if rotated, then rerun the apply |
 | Finalize route 502s, logs say "Could not load credentials" | Vercel has no `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` for the finalize IAM user | Set both in Vercel (Phase 6); the SQS default provider chain has nothing else to fall back to |
 | Browser upload/blob fetch fails with CORS errors | Origin not in `cors_allowed_origins` | Add the origin (every Vercel domain, incl. previews, + localhost) to `terraform.ci.tfvars` / `terraform.tfvars`, re-apply |
-| `terraform plan` stops at "API tokens must only contain…" | No `TF_VAR_cloudflare_api_token` yet — expected before Phase 1 | Provide the token; `terraform validate` works without it |
+| `terraform plan` stops at "API tokens must only contain…" | A placeholder token is winning precedence: auto-loaded `terraform.tfvars` (or the `-var-file`) overrides `TF_VAR_cloudflare_api_token` env vars — placeholders must not stay in any tfvars file | Remove credential placeholders from `terraform.tfvars` and export `TF_VAR_cloudflare_api_token` (source `secrets.env`); `terraform validate` works without the token |
 | Song `failed` with "audio exceeds 10 minute limit" | Expected validation (`MAX_SONG_SECONDS=600`) | Not a bug — trim the audio or raise the ceiling deliberately |
 | DLQ alarm fires | Worker crash loop: messages exhausted 3 receives without a recorded failure | Read worker logs + DLQ message, fix, redrive with `start-message-move-task` |
 | Player loads but stays silent; console shows blob fetch/CORS error | Custom domain not applied, or the page's origin is missing from CORS | Verify `media_base_url` output + `curl -I` the analysis JSON; fix `cors_allowed_origins` |
