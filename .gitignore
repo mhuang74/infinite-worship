@@ -17,3 +17,5 @@ __pycache__/
 
 # Vendored third-party reference material (read-only, never built)
 REFERENCE/
+.vercel
+.env*
