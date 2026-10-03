@@ -74,7 +74,7 @@ def _r2_client():
         endpoint_url=os.environ.get("R2_S3_ENDPOINT"),
         aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
         aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
-        region_name=os.environ.get("AWS_REGION", "us-west-2"),
+        region_name=os.environ.get("R2_REGION", "auto"),
         config=_BOTO_CONFIG,
     )
 
@@ -125,6 +125,16 @@ def process_record(record: dict[str, Any], r2=None, connect=None) -> str:
     body = json.loads(record["body"])
     song_id = body["song_id"]
     audio_key = body["audio_key"]
+    LOGGER.info(
+        json.dumps(
+            {
+                "event": "run_start",
+                "song_id": song_id,
+                "audio_key": audio_key,
+                "message_id": record.get("messageId"),
+            }
+        )
+    )
 
     r2 = r2 if r2 is not None else _r2_client()
     connect = connect if connect is not None else _connect_default
@@ -138,6 +148,7 @@ def process_record(record: dict[str, Any], r2=None, connect=None) -> str:
                 row = cur.fetchone()
             if row is None:
                 LOGGER.error("song %s not found; dropping message", song_id)
+                LOGGER.info(json.dumps({"event": "run_end", "song_id": song_id, "status": "not_found"}))
                 return "not_found"
             status = row[0]
             if status not in ("pending", "processing"):
@@ -151,6 +162,9 @@ def process_record(record: dict[str, Any], r2=None, connect=None) -> str:
                 # so the DLQ/alarm could never fire.
                 LOGGER.info(
                     "song %s status is %s; skipping", song_id, status
+                )
+                LOGGER.info(
+                    json.dumps({"event": "run_end", "song_id": song_id, "status": status})
                 )
                 return status
 
@@ -172,6 +186,9 @@ def process_record(record: dict[str, Any], r2=None, connect=None) -> str:
                 LOGGER.error("analysis of %s failed: %s", song_id, exc)
                 conn.rollback()  # discard any uncommitted work from _analyze
                 _mark_failed(conn, song_id, str(exc))
+                LOGGER.info(
+                    json.dumps({"event": "run_end", "song_id": song_id, "status": "failed"})
+                )
                 return "failed"
             except Exception as exc:
                 # Transient/infra failure (DB down, R2 5xx, jukebox crash):
@@ -203,6 +220,7 @@ def process_record(record: dict[str, Any], r2=None, connect=None) -> str:
         except Exception:
             conn.rollback()
             raise
+    LOGGER.info(json.dumps({"event": "run_end", "song_id": song_id, "status": "ready"}))
     return "ready"
 
 
@@ -232,6 +250,17 @@ def _analyze(r2, conn, song_id: str, audio_key: str) -> None:
             f"audio object is {size_bytes} bytes, over the "
             f"{MAX_SIZE_BYTES} byte ceiling for a {MAX_SONG_SECONDS}s song"
         )
+
+    LOGGER.info(
+        json.dumps(
+            {
+                "event": "input_validated",
+                "song_id": song_id,
+                "content_type": content_type,
+                "size_bytes": size_bytes,
+            }
+        )
+    )
 
     # ---- download to /tmp (Lambda scratch; ~10 min audio at typical bitrates
     # is well under 10 GB) ----
@@ -265,6 +294,19 @@ def _analyze(r2, conn, song_id: str, audio_key: str) -> None:
                 f"song is {jukebox.duration:.0f}s long, over the "
                 f"{MAX_SONG_SECONDS}s (10 minute) limit"
             )
+
+        LOGGER.info(
+            json.dumps(
+                {
+                    "event": "analysis_complete",
+                    "song_id": song_id,
+                    "duration_s": round(float(jukebox.duration), 2),
+                    "segments": len(jukebox.beats),
+                    "tempo_bpm": round(float(jukebox.tempo), 1),
+                    "clusters": int(jukebox.clusters),
+                }
+            )
+        )
 
         analysis = _to_analysis_json(jukebox, os.path.basename(audio_key))
 

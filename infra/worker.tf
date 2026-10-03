@@ -52,8 +52,8 @@ data "aws_iam_policy_document" "worker" {
       aws_sqs_queue.analysis.arn,
       # CreateLogGroup is unnecessary: both log groups are managed by
       # Terraform; the role only needs to write streams into them.
-      aws_cloudwatch_log_group.worker.arn,
-      aws_cloudwatch_log_group.reaper.arn,
+      "${aws_cloudwatch_log_group.worker.arn}:*",
+      "${aws_cloudwatch_log_group.reaper.arn}:*",
     ]
   }
   statement {
