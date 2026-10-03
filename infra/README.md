@@ -171,9 +171,9 @@ empty remote state has no prior value to resolve.
 4. Record the outputs for later phases:
 
    ```sh
-   terraform output analysis_queue_url     # → Vercel SQS_QUEUE_URL
-   terraform output analysis_queue_arn     # → finalize IAM user policy
-   terraform output media_base_url         # → Vercel R2_PUBLIC_BASE
+   terraform output -raw analysis_queue_url     # → Vercel SQS_QUEUE_URL
+   terraform output -raw analysis_queue_arn     # → finalize IAM user policy
+   terraform output -raw media_base_url         # → Vercel R2_PUBLIC_BASE
    ```
 
 ## Phase 4 — GitHub secrets
@@ -243,7 +243,7 @@ Environment variables (Production + Preview):
 | `R2_BUCKET` | `infinite-worship-media` |
 | `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | R2 API token from Phase 1 |
 | `R2_PUBLIC_BASE` | `https://media.yourdomain.com` (the `media_domain` custom domain) |
-| `SQS_QUEUE_URL` | `terraform output analysis_queue_url` |
+| `SQS_QUEUE_URL` | `terraform output -raw analysis_queue_url` |
 | `AWS_REGION` | `us-east-1` |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | finalize IAM user credentials (Phase 1) — the finalize route's `SQSClient` uses the default provider chain and Vercel has no instance role |
 
@@ -274,7 +274,7 @@ Against the deployed stack:
 
    ```sh
    aws sqs get-queue-attributes \
-     --queue-url "$(cd infra && terraform output -raw analysis_dlq_url)" \
+     --queue-url "$(terraform -chdir=infra output -raw analysis_dlq_url)" \
      --attribute-names ApproximateNumberOfMessagesVisible   # expect "0"
    ```
 
@@ -312,8 +312,8 @@ Terraform, plus `REAP_GRACE_HOURS=24`.
 
   ```sh
   aws sqs start-message-move-task \
-    --source-arn "$(cd infra && terraform output -raw analysis_dlq_arn)" \
-    --destination-arn "$(cd infra && terraform output -raw analysis_queue_arn)"
+    --source-arn "$(terraform -chdir=infra output -raw analysis_dlq_arn)" \
+    --destination-arn "$(terraform -chdir=infra output -raw analysis_queue_arn)"
   ```
 
   (The message's Song row stays `processing`; a successful redrive marks it
