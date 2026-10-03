@@ -1,277 +1,356 @@
-# infra/ — Terraform + database bootstrap
+# infra/ — Deployment guide (serverless stack)
 
-Cloud foundation for the serverless migration (ADR-0001..0004):
-Cloudflare R2 storage + custom-domain public access, and the Neon
-Postgres Song schema.
+Single ordered runbook for standing up the Infinite Worship cloud stack from
+nothing: **credentials → Neon → Terraform bootstrap → GitHub secrets → CI →
+Vercel → smoke test → operations → teardown**. Execute top-to-bottom; every
+phase assumes only the previous ones.
 
-## Layout
+For local development and emulator verification (Docker Postgres + MinIO +
+LocalStack), see the root [`README.md`](../README.md) — not duplicated here.
 
-| Path | Purpose |
-| --- | --- |
-| `providers.tf`, `versions.tf` | AWS + Cloudflare provider wiring |
-| `r2.tf` | New R2 bucket, custom domain, CORS, lifecycle |
-| `sqs.tf` | Analysis queue + DLQ (redrive after 3 receives) + DLQ-depth alarm (issue #21) |
-| `worker.tf` | Analysis Worker Lambda (container image, ECR, reserved concurrency 2) + SQS trigger (issue #21) |
-| `locals.tf` | Shared resource tags |
-| `variables.tf` | All knobs (Cloudflare token/account/zone, domain, CORS origins, worker image/DB/R2 credentials) |
-| `sql/song_schema.sql` | Song table applied to Neon (plain SQL, psql) |
-| `terraform.ci.tfvars` | Non-secret config used by CI's `terraform apply` (see CI/CD below) |
-| `sql/migrations/` | Additive migrations applied AFTER the base schema, in filename order |
+Architecture (ADR-0001..0004): Next.js on Vercel is the only HTTP surface
+(UI + BFF API routes); a container-image AWS Lambda analyzes uploads
+triggered from SQS; audio + Analysis JSON live in a public-read Cloudflare
+R2 bucket behind a custom domain; Song metadata lives in Neon Postgres.
 
-## What Terraform manages
+```mermaid
+flowchart LR
+    B[Browser] -- "1. POST /api/uploads" --> V[Vercel BFF]
+    V --> N[(Neon Postgres<br/>songs table)]
+    V -- "presigned PUT URL" --> B
+    B -- "2. PUT media/&lt;song_id&gt;" --> R[(R2 bucket<br/>infinite-worship-media)]
+    B -- "3. POST /api/songs/{id}/finalize" --> V
+    V -- "SendMessage" --> Q[(SQS analysis queue)]
+    Q -- "batch size 1" --> L[Lambda infinite-worship-worker]
+    L -- "analysis/&lt;song_id&gt;.json" --> R
+    L -- "status ready/failed" --> N
+    B -- "4. fetch audio + analysis blobs" --> D[R2 custom domain<br/>media.yourdomain.com]
+    ER[EventBridge rate(7 days)] --> RP[Lambda infinite-worship-reaper]
+    RP --> N
+    RP --> R
+    Q -- "3 failed receives" --> DLQ[(analysis-dlq)]
+```
 
-- **`cloudflare_r2_bucket.media`** — a NEW public-read bucket
-  (`infinite-worship-media`); it is never the stream-of-worship bucket.
-- **`cloudflare_r2_bucket_domain.media_custom_domain`** — public access via a
-  custom domain on a Cloudflare-managed zone (`media_domain` +
-  `cloudflare_zone_id` vars), NOT the rate-limited/non-production `r2.dev`
-  (ADR-0002). The custom domain is what lets Cloudflare cache in front of R2.
-- **CORS rules** — `GET`/`HEAD` (Player fetches blobs into the Web Audio API)
-  and `PUT` (browser presigned uploads) for the origins in
-  `cors_allowed_origins` (default `http://localhost:3000`; add the production
-  Vercel origin(s) via tfvars).
-- **Lifecycle rule** — none is active. Uploads PUT directly to their final
-  `media/<song_id>` key (ADR-0002: no copy step), so an R2 prefix rule can't
-  separate orphans from live Songs, and a whole-bucket age rule would delete
-  ready Songs' objects (a retention policy, not orphan cleanup). Instead a
-  weekly EventBridge-scheduled **reaper** Lambda (`worker/reaper.py`, same
-  container image) deletes objects only for Songs stuck `pending` past a 24 h
-  grace window and marks them `failed` with a reason. Ready Songs are never
-  touched — playable indefinitely (no time-based retention).
-- **AWS provider** — Lambda + SQS resources for the analysis worker are
-  declared (see the next section); nothing touches the stream-of-worship
-  account.
+## Resources Terraform manages
 
-### Analysis worker + queue (issue #21)
+| Resource | Name | Key config |
+| --- | --- | --- |
+| `cloudflare_r2_bucket.media` | `infinite-worship-media` | public-read, NEW (never stream-of-worship) |
+| `cloudflare_r2_bucket_domain.media_custom_domain` | `var.media_domain` | custom domain on a Cloudflare zone — not rate-limited `r2.dev`; enables edge caching (ADR-0002) |
+| `cloudflare_r2_bucket_cors.media_cors` | — | `GET`/`HEAD` (Player blob fetches) + `PUT` (presigned uploads) for `cors_allowed_origins` |
+| `cloudflare_r2_bucket_lifecycle.media_lifecycle` | — | **disabled stub** (`count = 0`) — orphan cleanup is the reaper Lambda, not an R2 rule (R2 can't join against `songs`) |
+| `aws_sqs_queue.analysis` | `infinite-worship-analysis` | visibility timeout = Lambda timeout + 60 s; redrive → DLQ after 3 receives |
+| `aws_sqs_queue.analysis_dlq` | `infinite-worship-analysis-dlq` | 14-day retention |
+| `aws_cloudwatch_metric_alarm.analysis_dlq_not_empty` | `infinite-worship-analysis-dlq-not-empty` | fires when the DLQ holds anything |
+| `aws_ecr_repository.worker` | `infinite-worship-worker` | image scan on push |
+| `aws_lambda_function.worker` | `infinite-worship-worker` | container image, x86_64, 3008 MB, 840 s timeout, reserved concurrency 2, SQS batch size 1, max concurrency 2 |
+| `aws_lambda_function.reaper` | `infinite-worship-reaper` | same image, `reaper.lambda_handler` entrypoint, 512 MB / 120 s, `rate(7 days)`, `REAP_GRACE_HOURS=24` |
+| `aws_cloudwatch_log_group.*` | `/aws/lambda/infinite-worship-worker` + `…-reaper` | 14-day retention, JSON format |
 
-- **`aws_sqs_queue.analysis`** — the BFF finalize step
-  (`POST /api/songs/{id}/finalize`) enqueues `{song_id, audio_key}` here;
-  the worker Lambda consumes (batch size 1, max concurrency 2). Visibility
-  timeout is Lambda timeout + 60s so a slow analysis is never double-run.
-- **`aws_sqs_queue.analysis_dlq`** — messages that fail 3 receives redrive
-  here (14-day retention); **`aws_cloudwatch_metric_alarm.analysis_dlq_not_empty`**
-  fires when the DLQ holds anything (ADR-0004).
-- **`aws_lambda_function.worker`** — container image from `worker/Dockerfile`
-  (madmom + librosa + static ffmpeg), 3 GB / 14 min, **reserved concurrency 2**.
-  CI (ADR-0004) builds/pushes the image to `aws_ecr_repository.worker` and
-  applies with `-var worker_image_uri=...`.
+Database: Neon `songs` table — `infra/sql/song_schema.sql` (base) +
+`infra/sql/migrations/0001_add_failure_reason.sql` (applied after, in
+filename order).
 
-#### Human steps for the worker (in addition to the Cloudflare/Neon steps above)
+Terraform state is remote (S3 `infinite-worship-tfstate` + DynamoDB lock
+`infinite-worship-tflock`, `backend.tf`) — required, because each CI run is
+a fresh runner.
 
-1. Create a **NEW** R2 API token for this app (Account → R2 → Edit only —
-   never the stream-of-worship token) and record its access key/secret.
-2. Supply via `TF_VAR_worker_database_url`,
-   `TF_VAR_worker_r2_access_key_id`, `TF_VAR_worker_r2_secret_access_key`
-   (or a git-ignored tfvars), plus `worker_image_uri` after the first CI
-   image push.
-3. Apply the migration after the base schema:
+## Phase 0 — Prerequisites
+
+Accounts: AWS (new resources only), a Cloudflare-managed DNS zone, Neon,
+GitHub admin on `mhuang74/infinite-worship`, Vercel.
+
+Local tooling:
+
+- `terraform` ≥ 1.6 (CI pins 1.9.8)
+- `aws` CLI (configured with the deployer credentials from Phase 1)
+- `docker`
+- `psql`
+- `gh` (GitHub CLI)
+
+**Every credential in this guide must be NEW for this app.** Never reuse the
+stream-of-worship (`SOW_*`) bucket, Neon project, or Cloudflare zone.
+
+## Phase 1 — Credentials
+
+Create each credential, then record it where its consumer reads it
+(`TF_VAR_*` for local Terraform, GitHub secrets for CI, Vercel env vars for
+the BFF).
+
+| Credential | Where created | Consumed by |
+| --- | --- | --- |
+| Cloudflare API token (Account → R2 → **Edit**; Zone → Zone → **Read**; Zone → DNS → **Edit** on the target zone) | Cloudflare dashboard → My Profile → API Tokens | `TF_VAR_cloudflare_api_token` / GH secret `CLOUDFLARE_API_TOKEN` |
+| `cloudflare_account_id` | Cloudflare dashboard (account overview) | `TF_VAR_cloudflare_account_id` / GH secret `CLOUDFLARE_ACCOUNT_ID` |
+| `cloudflare_zone_id` | Cloudflare dashboard (zone overview) | `TF_VAR_cloudflare_zone_id` / GH secret `CLOUDFLARE_ZONE_ID` |
+| R2 API token (Account → R2 → Manage API tokens; Object Read & Write on the bucket) | Cloudflare dashboard | BFF env vars in Vercel + `TF_VAR_worker_r2_access_key_id` / `TF_VAR_worker_r2_secret_access_key` / GH secrets `WORKER_R2_ACCESS_KEY_ID` / `WORKER_R2_SECRET_ACCESS_KEY` |
+| Neon connection string (`postgresql://…neon.tech/infinite-worship?sslmode=require`) | Phase 2 | `TF_VAR_worker_database_url` / GH secret `WORKER_DATABASE_URL` / Vercel `DATABASE_URL` |
+| IAM **deployer** user (ECR push, `lambda:UpdateFunctionCode`, Terraform apply, S3/DynamoDB state access) | AWS IAM console | GH secrets `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` |
+| IAM **BFF finalize** user (policy: `sqs:SendMessage` on the analysis queue ARN **only**) | AWS IAM console | Vercel `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` |
+
+The finalize queue ARN is deterministic before any apply:
+`arn:aws:sqs:us-east-1:<account-id>:infinite-worship-analysis`
+(`resource_prefix` default `infinite-worship`, region default `us-east-1`).
+
+## Phase 2 — Neon bootstrap
+
+Create the NEW Neon project (console is the reliable path; the API also
+works when reachable):
+
+```sh
+# API path (fallback: Neon console → New project, name it `infinite-worship`)
+curl -s -X POST https://api.neon.tech/v2/projects \
+  -H "Authorization: Bearer $NEON_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"project": {"name": "infinite-worship"}}'
+```
+
+Grab `connection_uris[0]` from the response (the `main` branch's default
+endpoint). Apply the schema, then the migration:
+
+```sh
+export NEON_CONNECTION_URI='postgresql://…'
+psql "$NEON_CONNECTION_URI" -f sql/song_schema.sql
+psql "$NEON_CONNECTION_URI" -f sql/migrations/0001_add_failure_reason.sql
+```
+
+Verify:
+
+```sh
+psql "$NEON_CONNECTION_URI" -c '\d songs'
+```
+
+Expect: `song_id text` PK, `title`, `duration`, `status` with a check
+constraint on `pending|processing|ready|failed`, `audio_url`,
+`analysis_url`, `created_at timestamptz`, plus `failure_reason` from the
+migration. Record the connection string — it becomes `DATABASE_URL` (BFF)
+and `WORKER_DATABASE_URL` (worker/CI). Never commit it.
+
+## Phase 3 — Terraform bootstrap (first apply from a laptop)
+
+CI can't do the first apply: the Lambda needs a `worker_image_uri` and an
+empty remote state has no prior value to resolve.
+
+1. Create the remote state bucket + lock table (once):
+
    ```sh
-   psql "$NEON_CONNECTION_URI" -f sql/migrations/0001_add_failure_reason.sql
+   aws s3 mb s3://infinite-worship-tfstate --region us-east-1
+   aws dynamodb create-table --table-name infinite-worship-tflock \
+     --attribute-definitions AttributeName=LockID,AttributeType=S \
+     --key-schema AttributeName=LockID,KeyType=HASH \
+     --billing-mode PAY_PER_REQUEST --region us-east-1
    ```
 
-#### BFF env vars (set in Vercel; the BFF routes read them)
+2. Fill tfvars:
 
-- `DATABASE_URL` — Neon connection string (`src/lib/db.ts`)
-- `R2_ENDPOINT` (or `R2_ACCOUNT_ID`, from which `src/lib/r2.ts` derives
-  `https://<account>.r2.cloudflarestorage.com`) — **note**: the Worker's
-  Lambda uses `R2_S3_ENDPOINT` (wired by Terraform); the BFF uses
-  `R2_ENDPOINT`. Different components, different names — set both where
-  relevant.
-- `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` — NEW R2 token
-  (uploads + finalize HeadObject)
-- `SQS_QUEUE_URL` (from `terraform output analysis_queue_url`), optional
-  `SQS_ENDPOINT` (localstack dev) / `AWS_REGION`
-- **AWS credentials for the SQS client** — the finalize route's `SQSClient`
-  uses the default provider chain; on Vercel there is no instance role, so
-  set `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` for an IAM user whose
-  policy allows only `sqs:SendMessage` on the analysis queue's ARN. Without
-  them every finalize 502s ("Could not load credentials").
+   ```sh
+   cd infra
+   cp terraform.tfvars.example terraform.tfvars   # git-ignored
+   # Fill in: cloudflare_api_token, cloudflare_account_id, cloudflare_zone_id,
+   # media_domain, cors_allowed_origins, worker_database_url, worker_r2_*
+   # (or export them as TF_VAR_* instead of putting them in the file).
+   ```
 
-## Human steps: Cloudflare credentials (required before `apply`)
+3. Init, validate, build + push a bootstrap image, apply:
 
-No Cloudflare API token exists in the automation environment, so the
-Cloudflare-provider resources are written but **not applied**. A human must:
-
-1. Create a **NEW** Cloudflare API token for this app (never reuse the
-   stream-of-worship token) with permissions:
-   - Account → R2 → Edit
-   - Zone → Zone → Read (target zone)
-   - Zone → DNS → Edit (target zone; custom-domain validation records)
-2. Copy `terraform.tfvars.example` → `terraform.tfvars` (git-ignored) and fill in:
-   - `cloudflare_api_token`
-   - `cloudflare_account_id`
-   - `cloudflare_zone_id` (zone serving the bucket's custom domain)
-   - `media_domain` (e.g. `media.yourdomain.com`, within that zone)
-   - `cors_allowed_origins` (add the production Vercel origin(s))
-3. Then:
    ```sh
    terraform init
-   terraform apply
+   terraform validate
+   docker build -t "$(aws sts get-caller-identity --query Account --output text).dkr.ecr.us-east-1.amazonaws.com/infinite-worship-worker:bootstrap" ../worker/
+   aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin "$(aws sts get-caller-identity --query Account --output text).dkr.ecr.us-east-1.amazonaws.com"
+   docker push "$(aws sts get-caller-identity --query Account --output text).dkr.ecr.us-east-1.amazonaws.com/infinite-worship-worker:bootstrap"
+   terraform apply -var-file=terraform.ci.tfvars \
+     -var "worker_image_uri=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.us-east-1.amazonaws.com/infinite-worship-worker:bootstrap"
    ```
 
-   Note: without the token, `terraform plan` stops at provider configuration
-   ("API tokens must only contain characters a-z, A-Z, 0-9, hyphens and
-   underscores" — the provider validates `api_token` before any API call), so
-   nothing Cloudflare-side can be planned or applied until step 1 is done.
-   `terraform validate` does NOT need the token and passes.
+   Note: `terraform plan` stops at provider configuration without the
+   Cloudflare token ("API tokens must only contain characters a-z, A-Z,
+   0-9, hyphens and underscores" — the provider validates `api_token`
+   before any API call). `terraform validate` does NOT need the token and
+   always passes.
 
-## Human/automation steps blocked here: Neon project creation
+4. Record the outputs for later phases:
 
-The Neon API (`api.neon.tech`) was unreachable from this host during the run
-(DNS for `api.neon.tech` returned no answer; direct-IP TLS returned Cloudflare
-error 1016 — network-level, retried repeatedly). `$NEON_API_KEY` is set, but
-the project could not be created. `sql/song_schema.sql` is ready to apply.
-
-Once `api.neon.tech` is reachable (retry `curl -s https://api.neon.tech/v2/users/me -H "Authorization: Bearer $NEON_API_KEY"`, expect HTTP 200):
-
-1. Create the NEW project (never the stream-of-worship project):
    ```sh
-   curl -s -X POST https://api.neon.tech/v2/projects \
-     -H "Authorization: Bearer $NEON_API_KEY" \
-     -H "Content-Type: application/json" \
-     -d '{"project": {"name": "infinite-worship"}}'
+   terraform output analysis_queue_url     # → Vercel SQS_QUEUE_URL
+   terraform output analysis_queue_arn     # → finalize IAM user policy
+   terraform output media_base_url         # → Vercel R2_PUBLIC_BASE
    ```
-2. Grab `connection_uris[0]` (or `connection_info`) from the response — the
-   `postgresql://...neon.tech/infinite-worship?sslmode=require` URI for the
-   `main` branch's default endpoint.
-3. Apply the schema (this also creates the `songs` table):
-   ```sh
-   psql "$NEON_CONNECTION_URI" -f sql/song_schema.sql
-   ```
-4. Verify:
-   ```sh
-   psql "$NEON_CONNECTION_URI" -c '\d songs'
-   ```
-   Expect columns `song_id text PK`, `title`, `duration`, `status` with a
-   check constraint on `pending|processing|ready|failed`, `audio_url`,
-   `analysis_url`, `created_at timestamptz`.
-5. Record the connection string wherever the BFF/worker read their
-   `DATABASE_URL` (never commit it; never use SOW_* credentials).
 
-## CI/CD (ADR-0004, issue #24)
+## Phase 4 — GitHub secrets
 
-State is remote (S3 bucket `infinite-worship-tfstate` + DynamoDB lock
-`infinite-worship-tflock`, see `infra/backend.tf`) — **required**, because
-each GH Actions run is a fresh runner. Bootstrap them once from a laptop:
+`gh secret set` each of the 8 secrets (names match the header comment in
+`.github/workflows/deploy.yml`; a human with admin must create them — the
+workflow fails loudly if one is missing):
 
 ```sh
-aws s3 mb s3://infinite-worship-tfstate --region us-east-1
-aws dynamodb create-table --table-name infinite-worship-tflock \
-  --attribute-definitions AttributeName=LockID,AttributeType=S \
-  --key-schema AttributeName=LockID,KeyType=HASH \
-  --billing-mode PAY_PER_REQUEST --region us-east-1
+gh secret set AWS_ACCESS_KEY_ID            # deployer IAM access key
+gh secret set AWS_SECRET_ACCESS_KEY        # deployer IAM secret key
+gh secret set CLOUDFLARE_API_TOKEN         # R2:Edit, Zone:Read, DNS:Edit
+gh secret set CLOUDFLARE_ACCOUNT_ID
+gh secret set CLOUDFLARE_ZONE_ID
+gh secret set WORKER_DATABASE_URL          # Neon URI from Phase 2
+gh secret set WORKER_R2_ACCESS_KEY_ID      # R2 API token (worker/BFF token)
+gh secret set WORKER_R2_SECRET_ACCESS_KEY
 ```
 
-`.github/workflows/deploy.yml` then runs on push to `main`:
-
-1. `terraform apply` (bootstrap) — creates the ECR repo, Lambda, SQS, IAM,
-   CloudWatch, and Cloudflare/R2 resources BEFORE anything is pushed, with
-   the `worker_image_uri` recorded by the previous run (remote state). The
-   very first run ever needs a laptop bootstrap instead (below).
-2. Build `worker/Dockerfile` → tag
-   `${ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/infinite-worship-worker:<git-sha>`
-   and `docker push` it (the repo exists after step 1).
-3. `aws lambda update-function-code --image-uri` on `infinite-worship-worker`,
-   then `aws lambda wait function-updated` so the next Lambda invocation
-   (and any Terraform in-flight drift read) sees the new image.
-4. `terraform apply` again with `-var worker_image_uri=<pushed URI>` (pins the
-   Lambda's image and records the new tag in state; the required
-   `worker_image_uri` variable is satisfied here and in step 1).
-
-**First run ever (empty remote state)**: step 1 has no prior
-`worker_image_uri` to resolve, and the Lambda can't be created without one.
-Bootstrap once from a laptop with the AWS profile + Cloudflare token:
-
-```sh
-cd infra
-terraform init
-docker build -t "$(aws sts get-caller-identity --query Account --output text).dkr.ecr.us-east-1.amazonaws.com/infinite-worship-worker:bootstrap" ../worker/
-aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin "$(aws sts get-caller-identity --query Account --output text).dkr.ecr.us-east-1.amazonaws.com"
-docker push "$(aws sts get-caller-identity --query Account --output text).dkr.ecr.us-east-1.amazonaws.com/infinite-worship-worker:bootstrap"
-terraform apply -var-file=terraform.ci.tfvars \
-  -var "worker_image_uri=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.us-east-1.amazonaws.com/infinite-worship-worker:bootstrap"
-```
-
-Every subsequent push to `main` deploys via the workflow with no manual step.
-
-One deploy at a time (`concurrency: deploy-main`, in-progress runs are
-cancelled — a queued sequential apply of a stale SHA is pure waste). Every
-step fails loudly; there is no `continue-on-error` anywhere.
-
-### Required GitHub secrets (Settings → Secrets and variables → Actions)
-
-NEW credentials for this app only — **never** the stream-of-worship values.
-
-| Secret | Feeds | Notes |
-| --- | --- | --- |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | ECR push, Lambda update, Terraform apply | IAM key for the deployer; region pinned to `us-east-1` in the workflow (matches the `aws_region` Terraform default) |
-| `CLOUDFLARE_API_TOKEN` | `TF_VAR_cloudflare_api_token` | NEW token (R2:Edit, Zone:Read, DNS:Edit) |
-| `CLOUDFLARE_ACCOUNT_ID` | `TF_VAR_cloudflare_account_id` | account owning the NEW R2 bucket |
-| `CLOUDFLARE_ZONE_ID` | `TF_VAR_cloudflare_zone_id` | zone serving the bucket's custom domain |
-| `WORKER_DATABASE_URL` | `TF_VAR_worker_database_url` | Neon URI for the NEW project |
-| `WORKER_R2_ACCESS_KEY_ID` / `WORKER_R2_SECRET_ACCESS_KEY` | `TF_VAR_worker_r2_*` | NEW R2 API token for the worker |
-
-`gh secret list` from the automation token is denied (HTTP 403) — a human
-with admin must create these; the workflow fails loudly if one is missing.
-
-### Non-secret Terraform inputs
-
-The workflow applies with `-var-file=terraform.ci.tfvars` (committed,
-non-secret). Copy the relevant lines from `terraform.tfvars.example` into
-`terraform.ci.tfvars` and keep only the non-secret keys:
+Fill the committed, non-secret `terraform.ci.tfvars` with the real values
+(secret keys come from `TF_VAR_*` env sourced from GH secrets — no secret
+ever touches the repo):
 
 ```hcl
-media_domain           = "media.yourdomain.com"
-cors_allowed_origins   = ["http://localhost:3000", "https://infinite-worship.vercel.app"]
+media_domain         = "media.yourdomain.com"
+cors_allowed_origins = ["http://localhost:3000", "https://infinite-worship.vercel.app"]
 ```
 
-Secret keys (`cloudflare_api_token`, `worker_database_url`,
-`worker_r2_*`) come from `TF_VAR_*` env sourced from GH secrets (mapped in
-the workflow's `env:` block) — the simplest robust pattern: no secret ever
-touches the repo or appears in a plan file.
+Include **every** Vercel origin (Production + Preview domains) plus
+localhost — a missing origin fails browser blob fetches and uploads with
+CORS errors.
 
-### Vercel git integration (frontend; dashboard setup, no code)
+## Phase 5 — CI
 
-The frontend deploys on push to `main` via Vercel's git integration —
-nothing about it lives in CI. One-time dashboard steps:
+`.github/workflows/deploy.yml` runs on **push to `main`** only
+(`concurrency: deploy-main`, cancel-in-progress — no stale queued applies).
+Three phases per run:
 
-1. [vercel.com/dashboard](https://vercel.com/dashboard) → **Add New… → Project**
-2. Import the `mhuang74/infinite-worship` Git repository (grant the Vercel
-   GitHub App access if asked)
-3. **Configure Project**:
-   - **Framework Preset**: `Next.js` (auto-detected)
-   - **Root Directory**: `application/frontend` — expand and **enable**
-     "Root Directory override"; `next.config.ts` is clean (issue #19 removed
-     `output: 'export'`; no `out/` remnants, nothing to ignore, so no
-     `.vercelignore` was needed)
-   - **Build / Install / Development commands**: leave default (`npm`, the
-     lockfile is `package-lock.json`)
-4. **Environment Variables** (Production + Preview; NEW values only):
+1. **`terraform apply` (bootstrap infra)** — creates/refreshes ECR, SQS,
+   IAM, CloudWatch, and the Cloudflare/R2 resources, with the
+   `worker_image_uri` recorded by the previous run (remote state).
+2. **Build + push worker image** — `worker/Dockerfile` →
+   `<account>.dkr.ecr.us-east-1.amazonaws.com/infinite-worship-worker:<git-sha>`.
+3. **Update Lambda code** — `aws lambda update-function-code --image-uri`,
+   `aws lambda wait function-updated`, then a final `terraform apply` with
+   `-var worker_image_uri=<pushed URI>` so state pins the new tag.
 
-   | Name | Value |
-   | --- | --- |
-   | `DATABASE_URL` | Neon URI for the NEW project (same value as `WORKER_DATABASE_URL`) |
-   | `R2_ENDPOINT` **or** `R2_ACCOUNT_ID` | `https://<account_id>.r2.cloudflarestorage.com`, or just the account id — `src/lib/r2.ts` builds the endpoint from `R2_ACCOUNT_ID` unless `R2_ENDPOINT` is set |
-   | `R2_BUCKET` | `infinite-worship-media` (or the applied `r2_bucket_name`) |
-   | `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | NEW R2 API token credentials |
-   | `R2_PUBLIC_BASE` | `https://media.yourdomain.com` (the custom domain from `media_domain`) |
-   | `SQS_QUEUE_URL` | `terraform output analysis_queue_url` |
-   | `AWS_REGION` | `us-east-1` (SQS client region; matches the Terraform `aws_region` default) |
+The frontend is **not** deployed here — Vercel's git integration owns it.
 
-5. **Deploy** — every subsequent push to `main` deploys Production
-   automatically; PRs get Preview deployments.
+## Phase 6 — Vercel (frontend + BFF)
 
-### First run
+One-time dashboard setup:
 
-The workflow assumes Terraform has been applied once manually (issue #17
-created the ECR repo, Lambda, queue). If a run fails because the Lambda or
-ECR repo doesn't exist yet, do the bootstrap apply locally first
-(see "Human steps" above), then re-run the workflow.
+1. [vercel.com/dashboard](https://vercel.com/dashboard) → **Add New… → Project**.
+2. Import `mhuang74/infinite-worship` (grant the Vercel GitHub App access if asked).
+3. **Configure Project**: Framework Preset `Next.js` (auto-detected);
+   **Root Directory** `application/frontend` (expand and enable the
+   override); leave build/install commands default (npm; lockfile is
+   `package-lock.json`).
 
-## Local commands
+Environment variables (Production + Preview):
 
-```sh
-terraform init
-terraform validate
-terraform plan                                  # AWS-only views; Cloudflare needs the token
-```
+| Name | Value |
+| --- | --- |
+| `DATABASE_URL` | Neon URI from Phase 2 |
+| `R2_ENDPOINT` **or** `R2_ACCOUNT_ID` | `https://<account_id>.r2.cloudflarestorage.com`, or just the account id — `src/lib/r2.ts` builds the endpoint from `R2_ACCOUNT_ID` unless `R2_ENDPOINT` is set |
+| `R2_BUCKET` | `infinite-worship-media` |
+| `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | R2 API token from Phase 1 |
+| `R2_PUBLIC_BASE` | `https://media.yourdomain.com` (the `media_domain` custom domain) |
+| `SQS_QUEUE_URL` | `terraform output analysis_queue_url` |
+| `AWS_REGION` | `us-east-1` |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | finalize IAM user credentials (Phase 1) — the finalize route's `SQSClient` uses the default provider chain and Vercel has no instance role |
+
+**Naming trap:** the BFF reads `R2_ENDPOINT`; the worker Lambda gets
+`R2_S3_ENDPOINT` (wired by Terraform from the Cloudflare account id). Set
+`R2_ENDPOINT` only in Vercel — do not rename anything.
+
+## Phase 7 — End-to-end smoke test
+
+Against the deployed stack:
+
+1. **Upload a real MP3** through the deployed UI. Never "verify" with
+   generated sine waves — they hit a KMeans degenerate-input bug in the
+   clustering (degenerate covariance on synthetic tones).
+2. **Status lifecycle** — the library re-polls every 3 s until the Song
+   reaches a terminal status: `pending → processing → ready`. Play it and
+   confirm beat jumps happen.
+3. **Analysis JSON is public:**
+
+   ```sh
+   curl -I https://media.yourdomain.com/analysis/<song_id>.json   # expect 200
+   ```
+
+4. **Failure path** — upload audio longer than 10 minutes: the Song goes
+   `failed` and the UI shows the stored `failure_reason` (also visible in
+   the `songs` row).
+5. **DLQ is empty:**
+
+   ```sh
+   aws sqs get-queue-attributes \
+     --queue-url "$(cd infra && terraform output -raw analysis_dlq_url)" \
+     --attribute-names ApproximateNumberOfMessagesVisible   # expect "0"
+   ```
+
+## Operations
+
+### Environment variables (defaults read from code)
+
+**Worker Lambda** (`worker/handler.py`, set by Terraform unless noted):
+
+| Var | Value / default |
+| --- | --- |
+| `DATABASE_URL` | Neon URI (Terraform-wired) |
+| `R2_S3_ENDPOINT` | `https://<account_id>.r2.cloudflarestorage.com` (Terraform-wired) |
+| `R2_BUCKET` | `infinite-worship-media` |
+| `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | R2 API token (Terraform-wired) |
+| `MEDIA_BASE_URL` | `https://<media_domain>` (Terraform-wired) |
+| `MAX_SONG_SECONDS` | `600` (10-minute ceiling) |
+| `ALLOWED_CONTENT_TYPES` | optional override; default `audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/ogg,audio/flac` |
+| `SQS_ENDPOINT` | optional override (LocalStack dev only) |
+
+**Reaper Lambda** (`worker/reaper.py`): same `DATABASE_URL`/`R2_*` set by
+Terraform, plus `REAP_GRACE_HOURS=24`.
+
+**BFF (Vercel)**: see the Phase 6 table.
+
+### Observability & recovery
+
+- **Logs**: CloudWatch log groups `/aws/lambda/infinite-worship-worker` and
+  `/aws/lambda/infinite-worship-reaper` (14-day retention, JSON format).
+- **DLQ alarm** `infinite-worship-analysis-dlq-not-empty`: a message landed
+  in the DLQ — the Song failed inside the Worker beyond 3 SQS redrives
+  **without** the Worker recording a `failed` status, i.e. the pipeline
+  broke mid-flight (crash, timeout, OOM). Inspect worker logs and the DLQ
+  message, fix, then redrive:
+
+  ```sh
+  aws sqs start-message-move-task \
+    --source-arn "$(cd infra && terraform output -raw analysis_dlq_arn)" \
+    --destination-arn "$(cd infra && terraform output -raw analysis_queue_arn)"
+  ```
+
+  (The message's Song row stays `processing`; a successful redrive marks it
+  `ready`.)
+
+### Status debugging
+
+- **Stuck `pending` > 24 h** (crashed tab, dead message): the next weekly
+  reaper run deletes the orphaned audio object and marks the Song `failed`.
+  To reap immediately instead of waiting:
+  `aws lambda invoke --function-name infinite-worship-reaper out.json`.
+- **`failed` Song**: query the row —
+  `psql "$NEON_CONNECTION_URI" -c "SELECT song_id, failure_reason FROM songs WHERE status='failed'"`.
+  Deterministic validation failures (bad content-type, oversize,
+  over-duration) are permanent for those bytes; the key is content-addressed,
+  so re-uploading identical bytes yields the same Song ID.
+- **Shipping worker changes**: merge to `main`. CI rebuilds and repoints the
+  Lambda; no manual steps.
+
+## Cutover checklist (remaining irreversible cloud teardown)
+
+In-repo cutover is done (issue #25); these legacy-cloud items remain:
+
+- [ ] Delete the legacy public ECR images (`public.ecr.aws/u4p9h6o7/mhuang74/infinite-worship` — 16 images, irreversible):
+      `aws ecr-public batch-delete-image --repository-name mhuang74/infinite-worship --image-ids …`
+- [ ] Verify the Graviton host (`t4g.medium` docker-compose deployment) is
+      decommissioned — no such instance exists in the current AWS account
+      inventory; if it still exists it is in another account/region. Do NOT
+      touch `sow-render-worker` (different app).
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| Finalize route 502s, logs say "Could not load credentials" | Vercel has no `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` for the finalize IAM user | Set both in Vercel (Phase 6); the SQS default provider chain has nothing else to fall back to |
+| Browser upload/blob fetch fails with CORS errors | Origin not in `cors_allowed_origins` | Add the origin (every Vercel domain, incl. previews, + localhost) to `terraform.ci.tfvars` / `terraform.tfvars`, re-apply |
+| `terraform plan` stops at "API tokens must only contain…" | No `TF_VAR_cloudflare_api_token` yet — expected before Phase 1 | Provide the token; `terraform validate` works without it |
+| Song `failed` with "audio exceeds 10 minute limit" | Expected validation (`MAX_SONG_SECONDS=600`) | Not a bug — trim the audio or raise the ceiling deliberately |
+| DLQ alarm fires | Worker crash loop: messages exhausted 3 receives without a recorded failure | Read worker logs + DLQ message, fix, redrive with `start-message-move-task` |
+| Player loads but stays silent; console shows blob fetch/CORS error | Custom domain not applied, or the page's origin is missing from CORS | Verify `media_base_url` output + `curl -I` the analysis JSON; fix `cors_allowed_origins` |

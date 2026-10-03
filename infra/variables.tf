@@ -47,7 +47,14 @@ variable "cors_allowed_origins" {
 }
 
 variable "pending_upload_expiry_days" {
-  description = "Whole-bucket object age expiry in days. Doubles as orphaned-upload cleanup (R2 can't distinguish finalized from orphaned) and effective Song retention. See infra/README.md."
+  description = <<-EOT
+    Whole-bucket object age expiry in days. Currently UNUSED: the lifecycle
+    rule in r2.tf is a disabled stub (count = 0) — orphaned-upload cleanup is
+    done by the weekly scheduled reaper Lambda (worker/reaper.py), which
+    deletes objects only for Songs stuck 'pending' past its grace window. If
+    ever enabled, this becomes a user-facing retention policy for ready
+    Songs, not orphan cleanup. See infra/README.md.
+  EOT
   type        = number
   default     = 90
 }
