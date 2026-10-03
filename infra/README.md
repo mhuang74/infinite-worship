@@ -193,7 +193,13 @@ Consumed by: `TF_VAR_cloudflare_api_token` / GH secret `CLOUDFLARE_API_TOKEN`.
 the account id; the target zone's Overview page (right sidebar, "Zone ID")
 for the zone id.
 
-**CLI:** `npx wrangler whoami` prints the account id after `wrangler login`.
+**CLI:**
+
+```sh
+npx wrangler login    # one-time
+npx wrangler whoami   # prints the account id
+```
+
 There is no wrangler printout for the zone id — copy it from the dashboard.
 
 Consumed by: `TF_VAR_cloudflare_account_id` / `TF_VAR_cloudflare_zone_id` /
@@ -457,18 +463,28 @@ permissions" under Lambda container images). Without them the first
 execution role already has full pull grants. After the first function
 exists, the repo policy persists and same-account creates succeed without
 those actions — which makes the failure easy to misdiagnose as IAM lag.
-Verify with `aws ecr get-repository-policy --repository-name
-infinite-worship-worker`: its presence (with a `lambda.amazonaws.com`
-principal) is the fingerprint of a previous Lambda create.
+Verify with:
+
+```sh
+aws ecr get-repository-policy --repository-name infinite-worship-worker
+```
+
+Its presence (with a `lambda.amazonaws.com` principal) is the fingerprint of
+a previous Lambda create.
 
 IAM policy changes propagate for **1–2 minutes** before the new actions are
 honored by service calls. If a fresh apply still reports
 `not authorized to perform: <service>:<Action>` right after a
 `create-policy-version`, wait two minutes and retry instead of editing the
-policy again. Verify intent with
-`aws iam simulate-principal-policy --policy-source-arn <deployer-arn>
---action-names <Action>` (simulation honors pending versions immediately;
-service calls lag).
+policy again. Verify intent with:
+
+```sh
+aws iam simulate-principal-policy \
+  --policy-source-arn <deployer-arn> \
+  --action-names <Action>
+```
+
+Simulation honors pending versions immediately; service calls lag.
 
 The Terraform apply also needs **Lambda account headroom**: this account's
 `ConcurrentExecutions` limit is 10 (new-account default), and AWS rejects any
@@ -527,9 +543,13 @@ Create the NEW Neon project `infinite-worship`.
 it `infinite-worship` → the Dashboard → **Connection Details** pane shows the
 `main` branch's connection string (copy it).
 
-**CLI:** with `npm i -g neonctl && neonctl auth` done once:
+**CLI:**
 
 ```sh
+# One-time: install neonctl and authenticate
+npm i -g neonctl
+neonctl auth
+
 neonctl projects create --name infinite-worship
 neonctl connection-string main    # add --project-id <id> if you have several projects
 ```
@@ -755,9 +775,13 @@ The frontend is **not** deployed here — Vercel's git integration owns it.
    `package-lock.json`).
 4. Add the environment variables from the table below (Production + Preview).
 
-**CLI:** with `npm i -g vercel && vercel login` done once:
+**CLI:**
 
 ```sh
+# One-time: install the Vercel CLI and log in
+npm i -g vercel
+vercel login
+
 npx vercel                      # links the repo; follow the prompts to import
                                 # mhuang74/infinite-worship and set Root
                                 # Directory to application/frontend when asked
@@ -874,11 +898,19 @@ Terraform, plus `REAP_GRACE_HOURS=24`.
 - **Stuck `pending` > 24 h** (crashed tab, dead message): the next weekly
   reaper run deletes the orphaned audio object and marks the Song `failed`.
   To reap immediately instead of waiting:
-  `aws lambda invoke --function-name infinite-worship-reaper out.json`.
+
+  ```sh
+  aws lambda invoke --function-name infinite-worship-reaper out.json
+  ```
+
   Console equivalent: Lambda console → function `infinite-worship-reaper`
   → **Test** tab → invoke with an empty `{}` payload.
-- **`failed` Song**: query the row —
-  `psql "$NEON_CONNECTION_URI" -c "SELECT song_id, failure_reason FROM songs WHERE status='failed'"`.
+- **`failed` Song**: query the row:
+
+  ```sh
+  psql "$NEON_CONNECTION_URI" -c "SELECT song_id, failure_reason FROM songs WHERE status='failed'"
+  ```
+
   Deterministic validation failures (bad content-type, oversize,
   over-duration) are permanent for those bytes; the key is content-addressed,
   so re-uploading identical bytes yields the same Song ID.
@@ -890,7 +922,10 @@ Terraform, plus `REAP_GRACE_HOURS=24`.
 In-repo cutover is done (issue #25); these legacy-cloud items remain:
 
 - [ ] Delete the legacy public ECR images (`public.ecr.aws/u4p9h6o7/mhuang74/infinite-worship` — 16 images, irreversible):
-      `aws ecr-public batch-delete-image --repository-name mhuang74/infinite-worship --image-ids …`
+
+  ```sh
+  aws ecr-public batch-delete-image --repository-name mhuang74/infinite-worship --image-ids …
+  ```
 - [ ] Verify the Graviton host (`t4g.medium` docker-compose deployment) is
       decommissioned — no such instance exists in the current AWS account
       inventory; if it still exists it is in another account/region. Do NOT
@@ -915,3 +950,54 @@ In-repo cutover is done (issue #25); these legacy-cloud items remain:
 | Song `failed` with "audio exceeds 10 minute limit" | Expected validation (`MAX_SONG_SECONDS=600`) | Not a bug — trim the audio or raise the ceiling deliberately |
 | DLQ alarm fires | Worker crash loop: messages exhausted 3 receives without a recorded failure | Read worker logs + DLQ message, fix, redrive with `start-message-move-task` |
 | Player loads but stays silent; console shows blob fetch/CORS error | Custom domain not applied, or the page's origin is missing from CORS | Verify `media_base_url` output + `curl -I` the analysis JSON; fix `cors_allowed_origins` |
+
+### Fix commands
+
+Copy-paste versions of the commands from the table above.
+
+**`AccessDeniedException` after a policy update** — re-apply the current
+Phase 1 managed policy with an admin identity, wait 2 min, then rerun:
+
+```sh
+aws iam create-policy-version \
+  --policy-arn "arn:aws:iam::<account-id>:policy/infinite-worship-deployer" \
+  --policy-document file:///tmp/deployer-policy.json \
+  --set-as-default
+# attach if not attached:
+aws iam attach-user-policy --user-name infinite-worship-deployer \
+  --policy-arn "arn:aws:iam::<account-id>:policy/infinite-worship-deployer"
+# confirm intent (simulation honors pending versions immediately):
+aws iam simulate-principal-policy \
+  --policy-source-arn <deployer-arn> \
+  --action-names <Action>
+```
+
+**Inline-policy `LimitExceeded`** — delete leftover inline policies (the
+Phase 1 customer-managed policy replaces them):
+
+```sh
+aws iam delete-user-policy --user-name <user> --policy-name <policy>
+```
+
+**Stale S3 state lock** (`Error acquiring the state lock`, 412
+PreconditionFailed):
+
+```sh
+aws s3 rm s3://infinite-worship-tfstate/infra/terraform.tfstate.tflock
+terraform force-unlock <LOCK_ID>   # alternative to the s3 rm
+pkill -f terraform-provider        # only if a provider process survived
+```
+
+**Cloudflare token rejected** (`failed to make http request`):
+
+```sh
+curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  https://api.cloudflare.com/client/v4/user/tokens/verify
+TF_LOG=DEBUG terraform apply       # see the provider's HTTP exchange if in doubt
+```
+
+**R2 bucket import `invalid ID`**:
+
+```sh
+terraform import 'cloudflare_r2_bucket.media' '<account_id>/<bucket_name>/default'
+```
