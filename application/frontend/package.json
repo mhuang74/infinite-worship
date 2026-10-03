@@ -13,7 +13,7 @@
     "@types/lodash": "^4.17.20",
     "axios": "^1.11.0",
     "lodash": "^4.17.21",
-    "next": "^15.5.2",
+    "next": "15.5.9",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "wavesurfer.js": "^7.10.1"
