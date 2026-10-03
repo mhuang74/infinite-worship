@@ -8,13 +8,16 @@
 FROM public.ecr.aws/lambda/python:3.11
 
 # ffmpeg (static build, no distro bloat) for librosa/madmom audio decoding.
+# libsndfile: librosa.load goes through soundfile, which ctypes-dlopens
+# libsndfile.so — without it every analysis dies at import time with
+# "cannot load library 'libsndfile.so'" (ffmpeg does NOT cover this).
 # The Lambda base image is Amazon Linux 2 — yum, not dnf (dnf: command not found).
 # Tarball layout: ffmpeg-<ver>-amd64-static/{ffmpeg,ffprobe} — both globs
 # must match `ffmpeg-*-static` (the old `ffmpeg-*--static` never matched ffprobe).
 # git: pip needs it to clone madmom from GitHub (requirements.txt + Dockerfile
 # both install madmom @ git+...). gcc: madmom's Cython extensions compile at
 # install time.
-RUN yum install -y tar xz git gcc && \
+RUN yum install -y tar xz git gcc libsndfile && \
     curl -fsSL https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz \
     | tar -xJ -C /tmp && \
     mv /tmp/ffmpeg-*-static/ffmpeg /usr/local/bin/ffmpeg && \
