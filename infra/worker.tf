@@ -57,6 +57,19 @@ data "aws_iam_policy_document" "worker" {
     ]
   }
   statement {
+    # Lambda resolves/pulls the container image from ECR on cold start;
+    # without these CreateFunction fails with "Lambda does not have
+    # permission to access the ECR image".
+    sid = "EcrPull"
+    actions = [
+      "ecr:GetAuthorizationToken",
+      "ecr:BatchCheckLayerAvailability",
+      "ecr:GetDownloadUrlForLayer",
+      "ecr:BatchGetImage",
+    ]
+    resources = ["*"]
+  }
+  statement {
     sid     = "CreateLogGroup"
     actions = ["logs:CreateLogGroup"]
     # CreateLogGroup does not support resource-level permissions.
@@ -97,10 +110,13 @@ resource "aws_lambda_function" "worker" {
   # x86_64: the static ffmpeg build pinned in worker/Dockerfile is amd64-only.
   architectures = ["x86_64"]
 
-  memory_size = 3008 # librosa CQT + madmom RNN are memory-hungry; 3 GB leaves headroom
-  timeout     = 840  # 14 min: under the 15-min Lambda cap, above worst-case analysis
-
-  reserved_concurrent_executions = 2
+  memory_size = 3008                         # librosa CQT + madmom RNN are memory-hungry; 3 GB leaves headroom
+  timeout     = local.worker_timeout_seconds # 14 min: under the 15-min Lambda cap, above worst-case analysis
+  # NOTE: no reserved_concurrent_executions — this account's Lambda
+  # ConcurrentExecutions limit is 10 and AWS requires ≥ 10 unreserved
+  # concurrent executions account-wide, so ANY reservation fails
+  # CreateFunction/PutFunctionConcurrency. Real throttling is enforced by the
+  # SQS event source mapping's scaling_config.maximum_concurrency = 2 below.
 
   environment {
     # No SOW_* values here; DATABASE_URL is the NEW Neon project (issue #17).
@@ -112,7 +128,6 @@ resource "aws_lambda_function" "worker" {
       R2_SECRET_ACCESS_KEY = var.worker_r2_secret_access_key
       MEDIA_BASE_URL       = "https://${var.media_domain}"
       MAX_SONG_SECONDS     = "600"
-      AWS_REGION           = var.aws_region
     }
   }
 
@@ -120,7 +135,10 @@ resource "aws_lambda_function" "worker" {
     log_format = "JSON"
   }
 
-  depends_on = [aws_cloudwatch_log_group.worker]
+  # CreateFunction validates that the execution role can pull the ECR image,
+  # so the role policy must exist first or Lambda races it and fails with
+  # "Lambda does not have permission to access the ECR image".
+  depends_on = [aws_cloudwatch_log_group.worker, aws_iam_role_policy.worker]
 
   tags = local.tags
 }
@@ -209,7 +227,8 @@ resource "aws_lambda_function" "reaper" {
   memory_size = 512
   timeout     = 120
 
-  reserved_concurrent_executions = 1
+  # Same account-limit reason as the worker: no reservation possible when the
+  # account total is 10; weekly schedule makes unbounded concurrency harmless.
 
   environment {
     variables = {
@@ -219,11 +238,10 @@ resource "aws_lambda_function" "reaper" {
       R2_ACCESS_KEY_ID     = var.worker_r2_access_key_id
       R2_SECRET_ACCESS_KEY = var.worker_r2_secret_access_key
       REAP_GRACE_HOURS     = "24"
-      AWS_REGION           = var.aws_region
     }
   }
 
-  depends_on = [aws_cloudwatch_log_group.worker]
+  depends_on = [aws_cloudwatch_log_group.worker, aws_iam_role_policy.worker]
 
   tags = local.tags
 }

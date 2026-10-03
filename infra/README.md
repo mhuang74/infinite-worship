@@ -42,13 +42,13 @@ marked; the rest are created once by hand in the named phase.
 | Resource | Name | Provisioned by / when |
 | --- | --- | --- |
 | S3 bucket | `infinite-worship-tfstate` | by hand, Phase 3 (Terraform remote state + lock — plumbing only, not app data) |
-| IAM user | deployer (ECR push + repo create/delete, `lambda:UpdateFunctionCode`, Terraform apply, S3 state access — Terraform remote state only, not app data) | by hand, Phase 1 |
+| IAM user | deployer — one customer-managed policy `infinite-worship-deployer` (ECR push/repo lifecycle, Lambda lifecycle incl. `lambda:UpdateFunctionCode`, SQS/IAM/Logs/EventBridge/alarms, S3 state access — Terraform remote state only, not app data) | by hand, Phase 1 |
 | IAM user | BFF finalize (`sqs:SendMessage` on the analysis queue ARN only) | by hand, Phase 1 |
 | ECR repository | `infinite-worship-worker` | Terraform |
 | SQS queue | `infinite-worship-analysis` | Terraform |
 | SQS DLQ | `infinite-worship-analysis-dlq` | Terraform |
 | CloudWatch alarm | `infinite-worship-analysis-dlq-not-empty` | Terraform |
-| IAM role + policy | `infinite-worship-worker` (Lambda logs + SQS receive) | Terraform |
+| IAM role + policy | `infinite-worship-worker` (Lambda logs + SQS receive + ECR image pull) | Terraform |
 | Lambda event source mapping | SQS `infinite-worship-analysis` → `infinite-worship-worker`, batch size 1 | Terraform |
 | Lambda function | `infinite-worship-worker` (container image, 3008 MB, 840 s) | Terraform (image pushed by CI, Phase 5) |
 | Lambda function | `infinite-worship-reaper` (same image, `reaper.lambda_handler`, 512 MB, 120 s) | Terraform |
@@ -59,7 +59,7 @@ marked; the rest are created once by hand in the named phase.
 
 | Resource | Name | Provisioned by / when |
 | --- | --- | --- |
-| R2 bucket | `infinite-worship-media` | Terraform |
+| R2 bucket | `infinite-worship-media` | Terraform — or created by hand beforehand and imported (see Phase 3, "If the R2 bucket already exists") |
 | R2 custom domain | `var.media_domain` on the existing zone | Terraform |
 | R2 CORS rule | GET/HEAD/PUT for the allowed origins | Terraform |
 | API tokens | Cloudflare API token (R2 Edit, Zone Read, DNS Edit) + R2 object token | by hand, Phase 1 |
@@ -93,21 +93,59 @@ Cloudflare zones, no other Neon projects.
 
 | Resource | Name | Key config |
 | --- | --- | --- |
-| `cloudflare_r2_bucket.media` | `infinite-worship-media` | public-read, NEW (never stream-of-worship) |
-| `cloudflare_r2_bucket_domain.media_custom_domain` | `var.media_domain` | custom domain on a Cloudflare zone — not rate-limited `r2.dev`; enables edge caching (ADR-0002) |
+| `cloudflare_r2_bucket.media` | `infinite-worship-media` | public-read, NEW (never stream-of-worship). If the bucket already exists by hand (e.g. to scope the R2 API token to it), `terraform import 'cloudflare_r2_bucket.media' '<account_id>/<bucket_name>/<jurisdiction>'` before the first apply — never let Terraform create it or the name collides |
+| `cloudflare_r2_custom_domain.media_custom_domain` | `var.media_domain` | custom domain on a Cloudflare zone — not rate-limited `r2.dev`; enables edge caching (ADR-0002) |
 | `cloudflare_r2_bucket_cors.media_cors` | — | `GET`/`HEAD` (Player blob fetches) + `PUT` (presigned uploads) for `cors_allowed_origins` |
 | `cloudflare_r2_bucket_lifecycle.media_lifecycle` | — | **disabled stub** (`count = 0`) — orphan cleanup is the reaper Lambda, not an R2 rule (R2 can't join against `songs`) |
-| `aws_sqs_queue.analysis` | `infinite-worship-analysis` | visibility timeout = Lambda timeout + 60 s; redrive → DLQ after 3 receives |
+| `aws_sqs_queue.analysis` | `infinite-worship-analysis` | visibility timeout = `local.worker_timeout_seconds` + 60 s (the Lambda timeout lives in `locals.tf`, not on the resource — see the cycle note below); redrive → DLQ after 3 receives |
 | `aws_sqs_queue.analysis_dlq` | `infinite-worship-analysis-dlq` | 14-day retention |
 | `aws_cloudwatch_metric_alarm.analysis_dlq_not_empty` | `infinite-worship-analysis-dlq-not-empty` | fires when the DLQ holds anything |
 | `aws_ecr_repository.worker` | `infinite-worship-worker` | image scan on push |
-| `aws_lambda_function.worker` | `infinite-worship-worker` | container image, x86_64, 3008 MB, 840 s timeout, reserved concurrency 2, SQS batch size 1, max concurrency 2 |
-| `aws_lambda_function.reaper` | `infinite-worship-reaper` | same image, `reaper.lambda_handler` entrypoint, 512 MB / 120 s, `rate(7 days)`, `REAP_GRACE_HOURS=24` |
+| `aws_lambda_function.worker` | `infinite-worship-worker` | container image, x86_64, 3008 MB, 840 s timeout, no reserved concurrency (account limit — see Phase 1), SQS batch size 1, max concurrency 2 |
+| `aws_lambda_function.reaper` | `infinite-worship-reaper` | same image, `reaper.lambda_handler` entrypoint, 512 MB / 120 s, no reserved concurrency, `rate(7 days)`, `REAP_GRACE_HOURS=24` |
 | `aws_cloudwatch_log_group.*` | `/aws/lambda/infinite-worship-worker` + `…-reaper` | 14-day retention, JSON format |
 
 Database: Neon `songs` table — `infra/sql/song_schema.sql` (base) +
 `infra/sql/migrations/0001_add_failure_reason.sql` (applied after, in
 filename order).
+
+### Non-obvious Terraform constraints (learned the hard way — do not undo)
+
+These constraints are load-bearing; changing them back reintroduces the
+failures listed in Troubleshooting:
+
+1. **`AWS_REGION` must not appear in `environment.variables`** of either
+   Lambda (`worker.tf`). It is a Lambda-reserved key — `CreateFunction`
+   rejects the whole request with `InvalidParameterValueException: Reserved
+   keys used in this request: AWS_REGION`. Lambda injects `AWS_REGION`
+   itself at runtime; `handler.py`/`reaper.py` already default to
+   `us-west-2` for local runs via `os.environ.get("AWS_REGION", …)`.
+2. **The worker execution role needs ECR pull grants** (`EcrPull` statement
+   in `data.aws_iam_policy_document.worker`: `ecr:GetAuthorizationToken`,
+   `ecr:BatchCheckLayerAvailability`, `ecr:GetDownloadUrlForLayer`,
+   `ecr:BatchGetImage`). Lambda resolves and pulls the container image with
+   the execution role; without these, `CreateFunction` fails with
+   `Lambda does not have permission to access the ECR image`.
+3. **Both Lambdas carry `depends_on = [aws_iam_role_policy.worker]`** (in
+   addition to the log-group dependency). `CreateFunction` validates the
+   execution role's ECR pull permission at create time, so the role policy
+   must exist first — otherwise the parallel create races it and the same
+   ECR error surfaces intermittently.
+4. **The Lambda timeout lives in `locals.worker_timeout_seconds`** and
+   `sqs.tf` reads the local, NOT `aws_lambda_function.worker.timeout`. The
+   worker role policy references `aws_sqs_queue.analysis.arn`, so the queue
+   must exist before the role policy; if the queue also referenced the
+   function's `timeout` attribute, SQS → function → role policy → SQS forms
+   a plan cycle (`Error: Cycle: aws_sqs_queue.analysis …`). Keep every
+   timeout change in `locals.tf` (it updates both the Lambda and the queue's
+   60-second-grace visibility timeout in one place).
+5. **No `reserved_concurrent_executions` on either function** while the
+   account's Lambda `ConcurrentExecutions` quota is 10: AWS requires ≥ 10
+   unreserved concurrent executions account-wide, so *any* reservation ≥ 1
+   fails `CreateFunction`/`PutFunctionConcurrency` with
+   `decreases account's UnreservedConcurrentExecution below its minimum
+   value of [10]`. The SQS event source mapping's
+   `scaling_config.maximum_concurrency = 2` enforces the intended cap.
 
 Terraform state is remote (S3 backend `infinite-worship-tfstate` with
 S3-native lockfile locking, `backend.tf`; requires Terraform ≥ 1.10) —
@@ -167,6 +205,11 @@ GH secrets `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_ZONE_ID`.
 Cloudflare dashboard → R2 → **Manage API tokens** → create with Object Read
 & Write on the bucket.
 
+A token can only be scoped to a bucket that already exists — create the
+`infinite-worship-media` bucket by hand first (Terraform imports it in
+Phase 3, see "If the R2 bucket already exists" there), or create the token
+without a bucket scope.
+
 Consumed by: BFF env vars in Vercel + `TF_VAR_worker_r2_access_key_id` /
 `TF_VAR_worker_r2_secret_access_key` / GH secrets
 `WORKER_R2_ACCESS_KEY_ID` / `WORKER_R2_SECRET_ACCESS_KEY`.
@@ -187,9 +230,9 @@ access for Terraform remote state + lockfile only — not app data). Terraform's
 Cloudflare-resource permissions ride the **Cloudflare API token** above, not
 this AWS user.
 
-**Console:** AWS IAM console → Users → **Create user** → name it (e.g.
-`infinite-worship-deployer`) → attach the inline policy below → **Create
-access key** → CLI use case → record both values. (Do not rely on
+**Console:** AWS IAM console → Users → **Create user** (e.g.
+`infinite-worship-deployer`) → skip the policy step for now → **Create access
+key** → CLI use case → record both values. (Do not rely on
 `AmazonEC2ContainerRegistryPowerUser` — it grants push/pull only, not
 `ecr:CreateRepository`, which the Terraform-managed ECR repo needs.)
 
@@ -198,186 +241,244 @@ access key** → CLI use case → record both values. (Do not rely on
 ```sh
 aws iam create-user --user-name infinite-worship-deployer
 
-# Minimal inline policies: ECR push + repo lifecycle, Lambda lifecycle +
-# configuration, SQS/IAM/CloudWatch Logs/EventBridge/CloudWatch alarms
-# management (Terraform provisions all of these), Terraform remote state.
-# Two documents because a single inline policy caps at 2048 chars; every
-# action stays enumerated (no service wildcards - iam:* on * would let the
-# deployer key grant itself anything). Split: 1 = ECR/Lambda-code/S3 state +
-# SQS + PassRole, 2 = IAM/Logs/Events/CloudWatch/Lambda-config.
-cat > /tmp/deployer-policy-1.json <<'EOF'
+# ONE customer-managed policy carries the whole deployer grant. Do NOT try to
+# split it across inline user policies: IAM's 2048-byte limit is the AGGREGATE
+# of all inline policies on a user (the LimitExceeded error names the user,
+# not the policy), and IAM measures URL-encoded JSON (spaces become %20, so
+# pretty-printed JSON inflates ~45%). Two ~1.5 KB inline policies can never
+# coexist — this was tried and failed live (see Troubleshooting).
+# Managed-policy JSON caps at 6144 bytes; the document below measures ~4.6 KB
+# URL-encoded, so it fits with headroom.
+# Every action stays enumerated (no service wildcards — iam:* on * would let
+# the deployer key grant itself anything).
+cat > /tmp/deployer-policy.json <<'EOF'
 {
- "Version": "2012-10-17",
- "Statement": [
-  {
-   "Effect": "Allow",
-   "Action": [
-    "ecr:GetAuthorizationToken",
-    "ecr:BatchCheckLayerAvailability",
-    "ecr:InitiateLayerUpload",
-    "ecr:UploadLayerPart",
-    "ecr:CompleteLayerUpload",
-    "ecr:PutImage",
-    "ecr:CreateRepository",
-    "ecr:DescribeRepositories",
-    "ecr:DeleteRepository",
-    "ecr:ListTagsForResource",
-    "ecr:TagResource",
-    "ecr:UntagResource"
-   ],
-   "Resource": "*"
-  },
-  {
-   "Effect": "Allow",
-   "Action": [
-    "lambda:UpdateFunctionCode",
-    "lambda:GetFunctionConfiguration",
-    "lambda:GetFunction",
-    "lambda:ListTags",
-    "lambda:TagResource",
-    "lambda:UntagResource",
-    "lambda:CreateFunction",
-    "lambda:DeleteFunction",
-    "lambda:GetFunctionCodeSigningConfig"
-   ],
-   "Resource": [
-    "arn:aws:lambda:us-west-2:<account-id>:function:infinite-worship-worker",
-    "arn:aws:lambda:us-west-2:<account-id>:function:infinite-worship-reaper"
-   ]
-  },
-  {
-   "Effect": "Allow",
-   "Action": [
-    "s3:GetObject",
-    "s3:PutObject",
-    "s3:DeleteObject",
-    "s3:ListBucket",
-    "s3:GetBucketLocation",
-    "s3:ListBucketVersions",
-    "s3:GetBucketVersioning"
-   ],
-   "Resource": [
-    "arn:aws:s3:::infinite-worship-tfstate",
-    "arn:aws:s3:::infinite-worship-tfstate/*"
-   ]
-  },
-  {
-   "Effect": "Allow",
-   "Action": [
-    "sqs:CreateQueue",
-    "sqs:DeleteQueue",
-    "sqs:GetQueueAttributes",
-    "sqs:GetQueueUrl",
-    "sqs:ListQueues",
-    "sqs:ListQueueTags",
-    "sqs:TagQueue",
-    "sqs:UntagQueue",
-    "sqs:SetQueueAttributes"
-   ],
-   "Resource": "*"
-  },
-  {
-   "Effect": "Allow",
-   "Action": "iam:PassRole",
-   "Resource": [
-    "arn:aws:iam::<account-id>:role/infinite-worship-worker"
-   ]
-  }
- ]
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:CompleteLayerUpload",
+        "ecr:CreateRepository",
+        "ecr:DeleteRepository",
+        "ecr:DescribeImages",
+        "ecr:DescribeRepositories",
+        "ecr:GetAuthorizationToken",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:GetRepositoryPolicy",
+        "ecr:InitiateLayerUpload",
+        "ecr:ListImages",
+        "ecr:ListTagsForResource",
+        "ecr:PutImage",
+        "ecr:SetRepositoryPolicy",
+        "ecr:TagResource",
+        "ecr:UntagResource",
+        "ecr:UploadLayerPart"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "lambda:CreateFunction",
+        "lambda:DeleteFunction",
+        "lambda:GetCodeSigningConfig",
+        "lambda:GetFunction",
+        "lambda:GetFunctionCodeSigningConfig",
+        "lambda:GetFunctionConfiguration",
+        "lambda:GetFunctionUrlConfig",
+        "lambda:GetLayerVersion",
+        "lambda:GetRuntimeManagementConfig",
+        "lambda:ListTags",
+        "lambda:ListVersionsByFunction",
+        "lambda:TagResource",
+        "lambda:UntagResource",
+        "lambda:UpdateFunctionCode"
+      ],
+      "Resource": [
+        "arn:aws:lambda:us-west-2:<account-id>:function:infinite-worship-worker",
+        "arn:aws:lambda:us-west-2:<account-id>:function:infinite-worship-reaper"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject",
+        "s3:ListBucket",
+        "s3:GetBucketLocation",
+        "s3:ListBucketVersions",
+        "s3:GetBucketVersioning"
+      ],
+      "Resource": [
+        "arn:aws:s3:::infinite-worship-tfstate",
+        "arn:aws:s3:::infinite-worship-tfstate/*"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "sqs:CreateQueue",
+        "sqs:DeleteQueue",
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl",
+        "sqs:ListQueues",
+        "sqs:ListQueueTags",
+        "sqs:TagQueue",
+        "sqs:UntagQueue",
+        "sqs:SetQueueAttributes"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": [
+        "arn:aws:iam::<account-id>:role/infinite-worship-worker"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateRole",
+        "iam:DeleteRole",
+        "iam:DeleteRolePolicy",
+        "iam:GetPolicy",
+        "iam:GetRole",
+        "iam:GetRolePolicy",
+        "iam:ListAttachedRolePolicies",
+        "iam:ListRolePolicies",
+        "iam:ListRoleTags",
+        "iam:PutRolePolicy",
+        "iam:TagRole",
+        "iam:UntagRole"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:DeleteLogGroup",
+        "logs:DescribeLogGroups",
+        "logs:ListTagsForResource",
+        "logs:PutLogEvents",
+        "logs:PutRetentionPolicy",
+        "logs:TagResource",
+        "logs:UntagResource"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "events:DeleteRule",
+        "events:DescribeRule",
+        "events:ListTagsForResource",
+        "events:ListTargetsByRule",
+        "events:PutPermission",
+        "events:PutRule",
+        "events:PutTargets",
+        "events:RemovePermission",
+        "events:RemoveTargets",
+        "events:TagResource",
+        "events:UntagResource"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:DeleteAlarms",
+        "cloudwatch:DescribeAlarms",
+        "cloudwatch:ListTagsForResource",
+        "cloudwatch:PutMetricAlarm",
+        "cloudwatch:TagResource",
+        "cloudwatch:UntagResource"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "lambda:AddPermission",
+        "lambda:CreateEventSourceMapping",
+        "lambda:DeleteEventSourceMapping",
+        "lambda:DeleteFunctionConcurrency",
+        "lambda:GetAccountSettings",
+        "lambda:GetCodeSigningConfig",
+        "lambda:GetEventSourceMapping",
+        "lambda:GetFunctionUrlConfig",
+        "lambda:GetLayerVersion",
+        "lambda:GetPolicy",
+        "lambda:GetRuntimeManagementConfig",
+        "lambda:ListEventSourceMappings",
+        "lambda:ListFunctions",
+        "lambda:ListTags",
+        "lambda:ListVersionsByFunction",
+        "lambda:PutFunctionConcurrency",
+        "lambda:RemovePermission",
+        "lambda:UpdateFunctionConfiguration"
+      ],
+      "Resource": "*"
+    }
+  ]
 }
 EOF
-cat > /tmp/deployer-policy-2.json <<'EOF'
-{
- "Version": "2012-10-17",
- "Statement": [
-  {
-   "Effect": "Allow",
-   "Action": [
-    "iam:CreateRole",
-    "iam:DeleteRole",
-    "iam:GetRole",
-    "iam:PutRolePolicy",
-    "iam:DeleteRolePolicy",
-    "iam:GetPolicy",
-    "iam:GetRolePolicy",
-    "iam:ListRolePolicies",
-    "iam:UpdateAssumeRolePolicy",
-    "iam:TagRole",
-    "iam:UntagRole",
-    "iam:ListRoleTags"
-   ],
-   "Resource": "*"
-  },
-  {
-   "Effect": "Allow",
-   "Action": [
-    "logs:CreateLogGroup",
-    "logs:DeleteLogGroup",
-    "logs:DescribeLogGroups",
-    "logs:CreateLogStream",
-    "logs:PutLogEvents",
-    "logs:PutRetentionPolicy",
-    "logs:ListTagsForResource",
-    "logs:TagResource",
-    "logs:UntagResource",
-    "logs:AssociateKmsKey"
-   ],
-   "Resource": "*"
-  },
-  {
-   "Effect": "Allow",
-   "Action": [
-    "events:PutRule",
-    "events:DeleteRule",
-    "events:DescribeRule",
-    "events:ListTargetsByRule",
-    "events:PutTargets",
-    "events:RemoveTargets",
-    "events:PutPermission",
-    "events:RemovePermission",
-    "events:ListTagsForResource",
-    "events:TagResource",
-    "events:UntagResource"
-   ],
-   "Resource": "*"
-  },
-  {
-   "Effect": "Allow",
-   "Action": [
-    "cloudwatch:PutMetricAlarm",
-    "cloudwatch:DeleteAlarms",
-    "cloudwatch:DescribeAlarms",
-    "cloudwatch:ListTagsForResource",
-    "cloudwatch:TagResource",
-    "cloudwatch:UntagResource"
-   ],
-   "Resource": "*"
-  },
-  {
-   "Effect": "Allow",
-   "Action": [
-    "lambda:AddPermission",
-    "lambda:RemovePermission",
-    "lambda:GetPolicy",
-    "lambda:GetEventSourceMapping",
-    "lambda:CreateEventSourceMapping",
-    "lambda:DeleteEventSourceMapping",
-    "lambda:UpdateFunctionConfiguration",
-    "lambda:PutFunctionConcurrency",
-    "lambda:DeleteFunctionConcurrency",
-    "lambda:ListEventSourceMappings"
-   ],
-   "Resource": "*"
-  }
- ]
-}
-EOF
-aws iam put-user-policy --user-name infinite-worship-deployer \
-  --policy-name deployer-infra --policy-document file:///tmp/deployer-policy-1.json
-aws iam put-user-policy --user-name infinite-worship-deployer \
-  --policy-name deployer-app --policy-document file:///tmp/deployer-policy-2.json
+aws iam create-policy \
+  --policy-name infinite-worship-deployer \
+  --policy-document file:///tmp/deployer-policy.json
+aws iam attach-user-policy --user-name infinite-worship-deployer \
+  --policy-arn "arn:aws:iam::<account-id>:policy/infinite-worship-deployer"
 aws iam create-access-key --user-name infinite-worship-deployer
 ```
+
+Why the two scope groups in the Lambda statements: function-scoped actions
+(`CreateFunction`, `UpdateFunctionCode`, …) target the two function ARNs;
+mapping/permission/account actions (`CreateEventSourceMapping`,
+`AddPermission`, `GetAccountSettings`, `ListTags` on event-source mappings)
+have no function-level ARN form, so they ride `*`. `lambda:ListTags` appears
+in both groups deliberately — Terraform reads tags on both functions and on
+the event source mapping.
+
+The ECR statement's `GetRepositoryPolicy`/`SetRepositoryPolicy` (plus
+`DescribeImages`) are **caller-side** requirements, not just debugging
+conveniences: on every `CreateFunction` for a container image, Lambda
+auto-attaches a `LambdaECRImageRetrievalPolicy` resource policy to the repo
+so it can pull — and that auto-attach requires the *calling* identity to hold
+`ecr:GetRepositoryPolicy` + `ecr:SetRepositoryPolicy` (AWS docs, "Amazon ECR
+permissions" under Lambda container images). Without them the first
+`CreateFunction` on a fresh repo fails with
+`Lambda does not have permission to access the ECR image` even though the
+execution role already has full pull grants. After the first function
+exists, the repo policy persists and same-account creates succeed without
+those actions — which makes the failure easy to misdiagnose as IAM lag.
+Verify with `aws ecr get-repository-policy --repository-name
+infinite-worship-worker`: its presence (with a `lambda.amazonaws.com`
+principal) is the fingerprint of a previous Lambda create.
+
+IAM policy changes propagate for **1–2 minutes** before the new actions are
+honored by service calls. If a fresh apply still reports
+`not authorized to perform: <service>:<Action>` right after a
+`create-policy-version`, wait two minutes and retry instead of editing the
+policy again. Verify intent with
+`aws iam simulate-principal-policy --policy-source-arn <deployer-arn>
+--action-names <Action>` (simulation honors pending versions immediately;
+service calls lag).
+
+The Terraform apply also needs **Lambda account headroom**: this account's
+`ConcurrentExecutions` limit is 10 (new-account default), and AWS rejects any
+`reserved_concurrent_executions` ≥ 1 because reservations would push the
+account-wide unreserved pool below 10. The functions therefore carry **no
+reserved concurrency** — throttling is enforced by the SQS event source
+mapping's `maximum_concurrency = 2` (`infra/worker.tf`). If you raise the
+account quota (Service Quotas → Lambda → Concurrent executions), you may
+re-add reservations; the Terraform comments in `worker.tf` explain the
+constraint either way.
 
 Consumed by: GH secrets `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`.
 
@@ -496,7 +597,28 @@ empty remote state has no prior value to resolve.
 
    Run this from `infra/`. The AWS deployer keys (`AWS_ACCESS_KEY_ID` /
    `AWS_SECRET_ACCESS_KEY`) are not Terraform inputs — the provider reads
-   them from the sourced environment directly.
+   them from the sourced environment directly (or via a dedicated
+   `AWS_PROFILE`; every `aws` CLI call in this runbook should use the same
+   identity as Terraform to avoid confusing mixed-identity state).
+
+   **If the R2 bucket already exists** (e.g. you created it by hand first so
+   the R2 API token could be scoped to it — the Phase 1 token flow makes this
+   the common case), import it before the first apply or Terraform's
+   `cloudflare_r2_bucket.media` create collides with the existing name:
+
+   ```sh
+   # Verify the token first: an invalid token fails the import read with
+   # a bare "failed to make http request", not a helpful 403.
+   curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+     https://api.cloudflare.com/client/v4/user/tokens/verify
+   # → expect {"success":true,...}. If it says "Invalid API Token", re-mint
+   # (Phase 1) — a permission gap returns a structured 403, not this.
+
+   terraform import 'cloudflare_r2_bucket.media' \
+     '<account_id>/infinite-worship-media/default'
+   # Import ID format is <account_id>/<bucket_name>/<jurisdiction> (provider
+   # v5); a bare bucket name errors with "invalid ID".
+   ```
 
 3. Init, validate, build + push a bootstrap image, apply:
 
@@ -510,7 +632,11 @@ empty remote state has no prior value to resolve.
      -var-file=terraform.ci.tfvars \
      -var "worker_image_uri=pending"
    terraform validate
-   docker build -t "$(aws sts get-caller-identity --query Account --output text).dkr.ecr.us-west-2.amazonaws.com/infinite-worship-worker:bootstrap" ../worker/
+   # Build for linux/amd64 explicitly: worker.tf pins architectures =
+   # ["x86_64"] (the static ffmpeg build is amd64-only), and a native arm64
+   # host would otherwise push an arm64 image Lambda can't use.
+   docker build --platform linux/amd64 \
+     -t "$(aws sts get-caller-identity --query Account --output text).dkr.ecr.us-west-2.amazonaws.com/infinite-worship-worker:bootstrap" ../worker/
    aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin "$(aws sts get-caller-identity --query Account --output text).dkr.ecr.us-west-2.amazonaws.com"
    docker push "$(aws sts get-caller-identity --query Account --output text).dkr.ecr.us-west-2.amazonaws.com/infinite-worship-worker:bootstrap"
    terraform apply -var-file=terraform.ci.tfvars \
@@ -774,7 +900,15 @@ In-repo cutover is done (issue #25); these legacy-cloud items remain:
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| `terraform apply` fails with `AccessDeniedException: User …infinite-worship-deployer is not authorized to perform: <service>:<Action>` | The attached inline policies predate the README's current Phase 1 policies (e.g. missing `ecr:CreateRepository`, `ecr:TagResource`, `s3:DeleteObject`) — seen live when Phase 3's targeted apply could not tag the ECR repo. A single inline policy caps at 2048 chars, so Phase 1 splits the grant across two inline policies (`deployer-infra` + `deployer-app`) with every action enumerated | Re-apply both current Phase 1 policies with an admin identity (`aws iam put-user-policy …deployer-policy-1.json` + `…-2.json`), re-source the new access keys if rotated, then rerun the apply |
+| `terraform apply` fails with `AccessDeniedException: User …infinite-worship-deployer is not authorized to perform: <service>:<Action>` | The attach policy predates the current Phase 1 document (missing actions: `ecr:ListImages`/`ecr:BatchGetImage`/`ecr:GetDownloadUrlForLayer`, `iam:ListAttachedRolePolicies`, `lambda:ListVersionsByFunction`/`lambda:ListTags`, `cloudwatch:DescribeAlarms`, `logs:DescribeLogGroups`, `events:DescribeRule` were all hit live) — OR the policy version was updated seconds ago and IAM hasn't propagated it (1–2 min) | Re-apply the current Phase 1 managed policy with an admin identity (`aws iam create-policy-version … --set-as-default` + attach if not attached), wait 2 min, then rerun; confirm intent with `aws iam simulate-principal-policy` |
+| `aws iam put-user-policy` fails `LimitExceeded: Maximum policy size of 2048 bytes exceeded for user <name>` even though the JSON is well under 2048 bytes | IAM's 2048-byte inline-policy limit is the AGGREGATE across all inline policies on the user, measured on URL-encoded JSON (spaces→`%20` inflates ~45%) — this is why the old "split into two inline policies" Phase 1 could never work | Use the Phase 1 customer-managed policy (`create-policy` + `attach-user-policy`, 6144-byte cap); delete leftover inline policies with `aws iam delete-user-policy` |
+| `CreateFunction` fails `InvalidParameterValueException: Reserved keys used in this request: AWS_REGION` | `AWS_REGION` in `environment.variables` — a Lambda-reserved key | Remove it from `infra/worker.tf` (both functions); Lambda injects it itself (constraint #1) |
+| `CreateFunction`/`PutFunctionConcurrency` fails `Specified ReservedConcurrentExecutions … decreases account's UnreservedConcurrentExecution below its minimum value of [10]` | Account Lambda concurrency quota is 10; any reservation ≥ 1 violates the ≥10-unreserved minimum | Keep `reserved_concurrent_executions` unset on both functions; throttling is enforced by the SQS mapping's `maximum_concurrency = 2` (constraint #5). Raising the quota via Service Quotas re-enables reservations |
+| `CreateFunction` fails `Lambda does not have permission to access the ECR image` | Caller-side: the deploying identity lacks `ecr:GetRepositoryPolicy`+`ecr:SetRepositoryPolicy`, so Lambda can't auto-attach the repo policy (first-ever create on a fresh repo; see Phase 1 note) — or execution role lacks ECR pull grants (constraint #2) or the Lambda races the role policy (constraint #3) | Add the three ECR actions to the managed policy (already in Phase 1 doc); both in-repo causes are fixed in `infra/worker.tf` |
+| `terraform plan` fails `Error: Cycle: aws_sqs_queue.analysis …` | The queue's visibility timeout references `aws_lambda_function.worker.timeout` while the worker role policy references the queue ARN | Keep the timeout in `locals.worker_timeout_seconds` and read the local from `sqs.tf` (constraint #4) |
+| `Error: Error acquiring the state lock` — `S3 PutObject 412 PreconditionFailed` after a crashed/interrupted apply | A stale S3 lockfile object (`infra/terraform.tfstate.tflock`) from a killed run (e.g. an orphaned `terraform-provider-*` process) | `aws s3 rm s3://infinite-worship-tfstate/infra/terraform.tfstate.tflock` (or `terraform force-unlock <LOCK_ID>`); also `pkill -f terraform-provider` if a provider process survived |
+| `failed to make http request` on any `cloudflare_r2_*` resource | The `CLOUDFLARE_API_TOKEN` value is rejected by Cloudflare itself — a scope problem returns a structured 403, a bad/revoked/rolled token returns `1000 Invalid API Token` (verify with `curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" https://api.cloudflare.com/client/v4/user/tokens/verify`) | Re-mint the token (Phase 1) and update `secrets.env` AND the GitHub secret `CLOUDFLARE_API_TOKEN`; run `TF_LOG=DEBUG terraform apply` to see the provider's HTTP exchange if in doubt |
+| `terraform import cloudflare_r2_bucket.media …` fails `invalid ID` | Provider v5 import ID is `<account_id>/<bucket_name>/<jurisdiction>` — a bare bucket name or API path is rejected | `terraform import 'cloudflare_r2_bucket.media' '<account_id>/<bucket_name>/default'` (done live for the hand-created bucket) |
 | Finalize route 502s, logs say "Could not load credentials" | Vercel has no `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` for the finalize IAM user | Set both in Vercel (Phase 6); the SQS default provider chain has nothing else to fall back to |
 | Browser upload/blob fetch fails with CORS errors | Origin not in `cors_allowed_origins` | Add the origin (every Vercel domain, incl. previews, + localhost) to `terraform.ci.tfvars` / `terraform.tfvars`, re-apply |
 | `terraform plan` stops at "API tokens must only contain…" | A placeholder token is winning precedence: auto-loaded `terraform.tfvars` (or the `-var-file`) overrides `TF_VAR_cloudflare_api_token` env vars — placeholders must not stay in any tfvars file | Remove credential placeholders from `terraform.tfvars` and export `TF_VAR_cloudflare_api_token` (source `secrets.env`); `terraform validate` works without the token |

@@ -20,9 +20,9 @@ resource "aws_sqs_queue" "analysis" {
   name = "${var.resource_prefix}-analysis"
 
   # Analysis takes minutes (ADR-0001); the visibility timeout must exceed the
-  # worker Lambda timeout (worker.tf) so a slow invocation is never handed to
-  # another consumer while still running.
-  visibility_timeout_seconds = aws_lambda_function.worker.timeout + 60
+  # worker Lambda timeout (local.worker_timeout_seconds in locals.tf) so a slow
+  # invocation is never handed to another consumer while still running.
+  visibility_timeout_seconds = local.worker_timeout_seconds + 60
 
   redrive_policy = jsonencode({
     deadLetterTargetArn = aws_sqs_queue.analysis_dlq.arn
