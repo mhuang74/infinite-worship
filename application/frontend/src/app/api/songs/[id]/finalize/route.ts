@@ -13,7 +13,7 @@
  *   R2_BUCKET                — bucket name (default: infinite-worship-media)
  *   R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY — R2 API token (S3-compatible credentials)
  *   SQS_QUEUE_URL            — analysis queue URL from `terraform output analysis_queue_url`
- *   AWS_REGION               — queue region (default us-east-1)
+ *   AWS_REGION               — queue region (default us-west-2)
  *   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY — IAM creds for the SQS client
  *                     (default provider chain; on Vercel set these for a user
  *                     allowed only sqs:SendMessage on the queue — without
@@ -100,7 +100,7 @@ export async function POST(
   const message: FinalizeMessage = { song_id: id, audio_key: audioKey };
   try {
     const sqs = new SQSClient({
-      region: process.env.AWS_REGION ?? 'us-east-1',
+      region: process.env.AWS_REGION ?? 'us-west-2',
       // SQS_ENDPOINT is an optional override for localstack-based dev; the
       // queue itself is AWS-side (R2 cannot reach it, hence the explicit
       // finalize call — ADR-0002).
