@@ -9,4 +9,4 @@ r2_bucket_name         = "infinite-worship-media"
 media_domain           = "media.example.com" # hostname within the zone above
 
 # Add the production Vercel origin(s) once known (keep localhost for dev):
-# cors_allowed_origins = ["http://localhost:3000", "https://infinite-worship.vercel.app"]
+# cors_allowed_origins = ["http://localhost:3000", "https://infinite-worship.vercel.app", "https://<your-production-domain>"] # include the production custom domain the app is served from

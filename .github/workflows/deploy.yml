@@ -70,27 +70,49 @@ jobs:
         with:
           terraform_version: ${{ env.TF_VERSION }}
 
+      - name: Resolve AWS account ID
+        run: echo "ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)" >> "$GITHUB_ENV"
+
       - name: Terraform init
         working-directory: infra
         run: terraform init -input=false
 
+      # Resolve the image URI the Lambda currently runs so Phase 1 can pin
+      # to it. Terraform does NOT persist root-variable values in state —
+      # the previous assumption ("the apply resolves worker_image_uri from
+      # the value the previous run recorded") is false and fails with "No
+      # value for required variable" on any run where Phase 3's -var isn't
+      # given. Instead, query the live value: Code.ResolvedImageUri returns
+      # the fully-qualified digest URI of the running image (:bootstrap
+      # today, :<git-sha> after each deploy; digests are valid for
+      # image_uri). Phase 3's final apply records the newly pushed
+      # :${{ github.sha }} tag, so no drift between state and runtime.
+      - name: Resolve current worker image URI
+        run: |
+          if IMAGE_URI=$(aws lambda get-function-configuration \
+                --function-name infinite-worship-worker \
+                --query 'Code.ResolvedImageUri' --output text 2>/dev/null) \
+             && [ -n "$IMAGE_URI" ] && [ "$IMAGE_URI" != "None" ]; then
+            # Lambda exists: pin Phase 1 to the image it currently runs, so the
+            # apply never reverts the function to an older image.
+            echo "IMAGE_URI=$IMAGE_URI" >> "$GITHUB_ENV"
+          else
+            # Fresh account: no Lambda yet — Phase 1 will create it pointing at
+            # :bootstrap, which only exists after the laptop bootstrap pushes it
+            # (infra/README.md Phase 3). Until then the Lambda-create step fails
+            # loudly and the rest of infra is still applied.
+            echo "IMAGE_URI=${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/infinite-worship-worker:bootstrap" >> "$GITHUB_ENV"
+          fi
+
       # Phase 1 — bootstrap/refresh infra: creates the ECR repo, SQS, IAM,
       # CloudWatch, and the Cloudflare/R2 resources, and re-asserts the
       # Lambda's non-image config. State is REMOTE (infra/backend.tf: S3
-      # backend with S3-native lockfile locking), so the required
-      # worker_image_uri resolves to the
-      # value the previous run recorded — this run's push is applied in
-      # phase 3. On a truly EMPTY state (first ever run) there is no prior
-      # value: bootstrap once from a laptop (see infra/README.md "First run").
+      # backend with S3-native lockfile locking). worker_image_uri is a
+      # required variable and is passed explicitly below from the live
+      # Lambda config (see the resolve step above).
       - name: Terraform apply (bootstrap infra)
         working-directory: infra
-        # No -var here: passing a placeholder would overwrite the recorded
-        # image URI with garbage and fail the Lambda update. Phase 3 passes
-        # the real one.
-        run: terraform apply -auto-approve -input=false -var-file=terraform.ci.tfvars
-
-      - name: Resolve AWS account ID
-        run: echo "ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)" >> "$GITHUB_ENV"
+        run: terraform apply -auto-approve -input=false -var-file=terraform.ci.tfvars -var "worker_image_uri=$IMAGE_URI"
 
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2

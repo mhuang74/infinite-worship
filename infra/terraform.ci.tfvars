@@ -7,8 +7,10 @@
 media_domain   = "media.michaelhuang.xyz" # hostname within the TF_VAR_cloudflare_zone_id zone
 r2_bucket_name = "infinite-worship-media"
 
-# Every Vercel origin (prod + previews) plus local dev:
+# Every Vercel origin (prod + previews), local dev, and the production
+# custom domain the app is served from:
 cors_allowed_origins = [
   "http://localhost:3000",
   "https://infinite-worship.vercel.app",
+  "https://infinite-worship.michaelhuang.xyz",
 ]
