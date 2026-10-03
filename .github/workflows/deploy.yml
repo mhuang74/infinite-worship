@@ -36,9 +36,9 @@ permissions:
   id-token: write # reserved for future OIDC auth; access keys come from secrets
 
 env:
-  # Single source of truth: infra/variables.tf aws_region default (us-east-1).
+  # Single source of truth: infra/variables.tf aws_region default (us-west-2).
   # Every AWS step and the terraform var use this; change it in one place.
-  AWS_REGION: us-east-1
+  AWS_REGION: us-west-2
   TF_VERSION: 1.9.8
   # Terraform secret inputs; non-secret vars come from terraform.ci.tfvars.
   # These are NEW infinite-worship credentials only.

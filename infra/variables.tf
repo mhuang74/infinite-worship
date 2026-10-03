@@ -1,7 +1,7 @@
 variable "aws_region" {
   description = "AWS region for the analysis worker resources (ADR-0001)."
   type        = string
-  default     = "us-east-1"
+  default     = "us-west-2"
 }
 
 variable "cloudflare_api_token" {

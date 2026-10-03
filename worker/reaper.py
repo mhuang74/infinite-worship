@@ -51,7 +51,7 @@ def _r2_client():
         endpoint_url=os.environ.get("R2_S3_ENDPOINT"),
         aws_access_key_id=os.environ.get("R2_ACCESS_KEY_ID"),
         aws_secret_access_key=os.environ.get("R2_SECRET_ACCESS_KEY"),
-        region_name=os.environ.get("AWS_REGION", "us-east-1"),
+        region_name=os.environ.get("AWS_REGION", "us-west-2"),
         config=_BOTO_CONFIG,
     )
 

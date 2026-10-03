@@ -31,6 +31,66 @@ flowchart LR
     Q -- "3 failed receives" --> DLQ[(analysis-dlq)]
 ```
 
+## What gets provisioned, per provider
+
+Everything below is NEW for this app — never reuse any `stream-of-worship`
+(`SOW_*`) account, project, bucket, or zone. Terraform-provisioned resources are
+marked; the rest are created once by hand in the named phase.
+
+### AWS (region `us-west-2`, new resources in an existing account)
+
+| Resource | Name | Provisioned by / when |
+| --- | --- | --- |
+| S3 bucket | `infinite-worship-tfstate` | by hand, Phase 3 (Terraform remote state — plumbing only, not app data) |
+| DynamoDB table | `infinite-worship-tflock` | by hand, Phase 3 (Terraform state lock — plumbing only, not app data) |
+| IAM user | deployer (ECR push, `lambda:UpdateFunctionCode`, Terraform apply, S3/DynamoDB state access — Terraform remote state only, not app data) | by hand, Phase 1 |
+| IAM user | BFF finalize (`sqs:SendMessage` on the analysis queue ARN only) | by hand, Phase 1 |
+| ECR repository | `infinite-worship-worker` | Terraform |
+| SQS queue | `infinite-worship-analysis` | Terraform |
+| SQS DLQ | `infinite-worship-analysis-dlq` | Terraform |
+| CloudWatch alarm | `infinite-worship-analysis-dlq-not-empty` | Terraform |
+| IAM role + policy | `infinite-worship-worker` (Lambda logs + SQS receive) | Terraform |
+| Lambda event source mapping | SQS `infinite-worship-analysis` → `infinite-worship-worker`, batch size 1 | Terraform |
+| Lambda function | `infinite-worship-worker` (container image, 3008 MB, 840 s) | Terraform (image pushed by CI, Phase 5) |
+| Lambda function | `infinite-worship-reaper` (same image, `reaper.lambda_handler`, 512 MB, 120 s) | Terraform |
+| EventBridge rule | `infinite-worship-reaper` (`rate(7 days)`) + target + permission | Terraform |
+| CloudWatch log groups | `/aws/lambda/infinite-worship-worker`, `/aws/lambda/infinite-worship-reaper` | Terraform |
+
+### Cloudflare (existing account + zone; new R2 resources only)
+
+| Resource | Name | Provisioned by / when |
+| --- | --- | --- |
+| R2 bucket | `infinite-worship-media` | Terraform |
+| R2 custom domain | `var.media_domain` on the existing zone | Terraform |
+| R2 CORS rule | GET/HEAD/PUT for the allowed origins | Terraform |
+| API tokens | Cloudflare API token (R2 Edit, Zone Read, DNS Edit) + R2 object token | by hand, Phase 1 |
+
+Note: the Cloudflare DNS zone itself already exists — this stack only attaches
+an R2 custom domain inside it; no zone is created.
+
+### Neon (new project)
+
+| Resource | Name | Provisioned by / when |
+| --- | --- | --- |
+| Project + `main` branch + connection string | `infinite-worship` | by hand, Phase 2 |
+| `songs` table (+ `failure_reason` migration) | — | by hand, Phase 2 (`psql` — not Terraform) |
+
+### GitHub
+
+Nothing new to provision in the account: the repo `mhuang74/infinite-worship`
+already exists. Per-run setup only: 8 Actions secrets (Phase 4).
+
+### Vercel (new project)
+
+| Resource | Name | Provisioned by / when |
+| --- | --- | --- |
+| Project | import of `mhuang74/infinite-worship`, Root Directory `application/frontend` | by hand, Phase 6 |
+| Environment variables | `DATABASE_URL`, `R2_*`, `SQS_QUEUE_URL`, `AWS_*` (see Phase 6 table) | by hand, Phase 6 |
+
+No other AWS services (no EC2/Graviton, no RDS/DynamoDB app tables — DynamoDB
+above is Terraform state plumbing), no new Cloudflare zones, no other Neon
+projects.
+
 ## Resources Terraform manages
 
 | Resource | Name | Key config |
@@ -53,7 +113,8 @@ filename order).
 
 Terraform state is remote (S3 `infinite-worship-tfstate` + DynamoDB lock
 `infinite-worship-tflock`, `backend.tf`) — required, because each CI run is
-a fresh runner.
+a fresh runner. This is state plumbing only: no application data lives here
+(the app's only database is Neon Postgres).
 
 ## Phase 0 — Prerequisites
 
@@ -75,37 +136,166 @@ stream-of-worship (`SOW_*`) bucket, Neon project, or Cloudflare zone.
 
 Create each credential, then record it where its consumer reads it
 (`TF_VAR_*` for local Terraform, GitHub secrets for CI, Vercel env vars for
-the BFF).
+the BFF). Each credential below shows a **Console** and, where one exists, a
+**CLI** path. Where a path genuinely doesn't exist, the doc says so instead
+of inventing one.
 
-| Credential | Where created | Consumed by |
-| --- | --- | --- |
-| Cloudflare API token (Account → R2 → **Edit**; Zone → Zone → **Read**; Zone → DNS → **Edit** on the target zone) | Cloudflare dashboard → My Profile → API Tokens | `TF_VAR_cloudflare_api_token` / GH secret `CLOUDFLARE_API_TOKEN` |
-| `cloudflare_account_id` | Cloudflare dashboard (account overview) | `TF_VAR_cloudflare_account_id` / GH secret `CLOUDFLARE_ACCOUNT_ID` |
-| `cloudflare_zone_id` | Cloudflare dashboard (zone overview) | `TF_VAR_cloudflare_zone_id` / GH secret `CLOUDFLARE_ZONE_ID` |
-| R2 API token (Account → R2 → Manage API tokens; Object Read & Write on the bucket) | Cloudflare dashboard | BFF env vars in Vercel + `TF_VAR_worker_r2_access_key_id` / `TF_VAR_worker_r2_secret_access_key` / GH secrets `WORKER_R2_ACCESS_KEY_ID` / `WORKER_R2_SECRET_ACCESS_KEY` |
-| Neon connection string (`postgresql://…neon.tech/infinite-worship?sslmode=require`) | Phase 2 | `TF_VAR_worker_database_url` / GH secret `WORKER_DATABASE_URL` / Vercel `DATABASE_URL` |
-| IAM **deployer** user (ECR push, `lambda:UpdateFunctionCode`, Terraform apply, S3/DynamoDB state access) | AWS IAM console | GH secrets `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` |
-| IAM **BFF finalize** user (policy: `sqs:SendMessage` on the analysis queue ARN **only**) | AWS IAM console | Vercel `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` |
+### Cloudflare API token (Terraform/CI)
+
+**Console (the only path — Cloudflare API tokens cannot be minted via CLI or
+API):** Cloudflare dashboard → My Profile → API Tokens → **Create Token** →
+Custom token with: Account → R2 → **Edit**; Zone → Zone → **Read**; Zone →
+DNS → **Edit** on the target zone.
+
+Consumed by: `TF_VAR_cloudflare_api_token` / GH secret `CLOUDFLARE_API_TOKEN`.
+
+### `cloudflare_account_id` / `cloudflare_zone_id`
+
+**Console:** dashboard → account overview (right sidebar, "Account ID") for
+the account id; the target zone's Overview page (right sidebar, "Zone ID")
+for the zone id.
+
+**CLI:** `npx wrangler whoami` prints the account id after `wrangler login`.
+There is no wrangler printout for the zone id — copy it from the dashboard.
+
+Consumed by: `TF_VAR_cloudflare_account_id` / `TF_VAR_cloudflare_zone_id` /
+GH secrets `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_ZONE_ID`.
+
+### R2 API token (worker + BFF)
+
+**Console (the only path — `wrangler` has no R2 token-minting command):**
+Cloudflare dashboard → R2 → **Manage API tokens** → create with Object Read
+& Write on the bucket.
+
+Consumed by: BFF env vars in Vercel + `TF_VAR_worker_r2_access_key_id` /
+`TF_VAR_worker_r2_secret_access_key` / GH secrets
+`WORKER_R2_ACCESS_KEY_ID` / `WORKER_R2_SECRET_ACCESS_KEY`.
+
+### Neon connection string
+
+Created in Phase 2 (project first, then the URI); see Phase 2 for both
+console and `neonctl` paths.
+
+Consumed by: `TF_VAR_worker_database_url` / GH secret `WORKER_DATABASE_URL` /
+Vercel `DATABASE_URL`.
+
+### IAM deployer user
+
+Powers CI: ECR push, `lambda:UpdateFunctionCode`, and Terraform apply
+(including S3/DynamoDB access for Terraform remote state only — not app
+data). Terraform's Cloudflare-resource permissions ride the **Cloudflare API
+token** above, not this AWS user.
+
+**Console:** AWS IAM console → Users → **Create user** → name it (e.g.
+`infinite-worship-deployer`) → attach policies: the inline policy below,
+plus `AmazonEC2ContainerRegistryPowerUser` (or an equivalent ECR
+push policy) → **Create access key** → CLI use case → record both values.
+
+**CLI:**
+
+```sh
+aws iam create-user --user-name infinite-worship-deployer
+
+# Minimal inline policy: ECR push, Lambda update, Terraform remote state.
+# Terraform apply also needs broad create/update/delete across the AWS
+# resources it manages (SQS, IAM role, Lambda, CloudWatch) — scope to taste;
+# the state bucket/table lines are the "not app data" part.
+cat > /tmp/deployer-policy.json <<'EOF'
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["ecr:GetAuthorizationToken", "ecr:BatchCheckLayerAvailability",
+                 "ecr:InitiateLayerUpload", "ecr:UploadLayerPart",
+                 "ecr:CompleteLayerUpload", "ecr:PutImage"],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["lambda:UpdateFunctionCode", "lambda:GetFunctionConfiguration",
+                 "lambda:WaitForFunctionUpdate"],
+      "Resource": ["arn:aws:lambda:us-west-2:<account-id>:infinite-worship-worker",
+                   "arn:aws:lambda:us-west-2:<account-id>:infinite-worship-reaper"]
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:ListBucket",
+                 "s3:GetBucketLocation", "s3:ListBucketVersions",
+                 "s3:GetBucketVersioning"],
+      "Resource": ["arn:aws:s3:::infinite-worship-tfstate",
+                   "arn:aws:s3:::infinite-worship-tfstate/*"]
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:DeleteItem",
+                 "dynamodb:DescribeTable"],
+      "Resource": "arn:aws:dynamodb:us-west-2:<account-id>:table/infinite-worship-tflock"
+    }
+  ]
+}
+EOF
+aws iam put-user-policy --user-name infinite-worship-deployer \
+  --policy-name deployer-inline --policy-document file:///tmp/deployer-policy.json
+
+aws iam create-access-key --user-name infinite-worship-deployer
+```
+
+Consumed by: GH secrets `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`.
+
+### IAM BFF finalize user
+
+Policy: `sqs:SendMessage` on the analysis queue ARN **only**.
+
+**Console:** AWS IAM console → Users → **Create user** (e.g.
+`infinite-worship-finalize`) → attach the inline policy below → **Create
+access key** → CLI use case → record both values.
+
+**CLI:**
+
+```sh
+aws iam create-user --user-name infinite-worship-finalize
+
+cat > /tmp/finalize-policy.json <<'EOF'
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "sqs:SendMessage",
+      "Resource": "arn:aws:sqs:us-west-2:<account-id>:infinite-worship-analysis"
+    }
+  ]
+}
+EOF
+aws iam put-user-policy --user-name infinite-worship-finalize \
+  --policy-name finalize-send --policy-document file:///tmp/finalize-policy.json
+
+aws iam create-access-key --user-name infinite-worship-finalize
+```
 
 The finalize queue ARN is deterministic before any apply:
-`arn:aws:sqs:us-east-1:<account-id>:infinite-worship-analysis`
-(`resource_prefix` default `infinite-worship`, region default `us-east-1`).
+`arn:aws:sqs:us-west-2:<account-id>:infinite-worship-analysis`
+(`resource_prefix` default `infinite-worship`, region default `us-west-2`).
+
+Consumed by: Vercel `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`.
 
 ## Phase 2 — Neon bootstrap
 
-Create the NEW Neon project (console is the reliable path; the API also
-works when reachable):
+Create the NEW Neon project `infinite-worship`.
+
+**Console:** [neon.tech](https://neon.tech) console → **New project** → name
+it `infinite-worship` → the Dashboard → **Connection Details** pane shows the
+`main` branch's connection string (copy it).
+
+**CLI:** with `npm i -g neonctl && neonctl auth` done once:
 
 ```sh
-# API path (fallback: Neon console → New project, name it `infinite-worship`)
-curl -s -X POST https://api.neon.tech/v2/projects \
-  -H "Authorization: Bearer $NEON_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"project": {"name": "infinite-worship"}}'
+neonctl projects create --name infinite-worship
+neonctl connection-string main    # add --project-id <id> if you have several projects
 ```
 
-Grab `connection_uris[0]` from the response (the `main` branch's default
-endpoint). Apply the schema, then the migration:
+Apply the schema, then the migration:
 
 ```sh
 export NEON_CONNECTION_URI='postgresql://…'
@@ -130,15 +320,21 @@ and `WORKER_DATABASE_URL` (worker/CI). Never commit it.
 CI can't do the first apply: the Lambda needs a `worker_image_uri` and an
 empty remote state has no prior value to resolve.
 
-1. Create the remote state bucket + lock table (once):
+1. Create the remote state bucket + lock table (once) — Terraform backend
+   plumbing, not app storage; the app's database is Neon (Phase 2):
 
    ```sh
-   aws s3 mb s3://infinite-worship-tfstate --region us-east-1
+   aws s3 mb s3://infinite-worship-tfstate --region us-west-2
    aws dynamodb create-table --table-name infinite-worship-tflock \
      --attribute-definitions AttributeName=LockID,AttributeType=S \
      --key-schema AttributeName=LockID,KeyType=HASH \
-     --billing-mode PAY_PER_REQUEST --region us-east-1
+     --billing-mode PAY_PER_REQUEST --region us-west-2
    ```
+
+   Console equivalent: S3 console → **Create bucket** (name
+   `infinite-worship-tfstate`, region `us-west-2`); DynamoDB console →
+   **Create table** (name `infinite-worship-tflock`, partition key `LockID`
+   (string), Default settings = on-demand billing).
 
 2. Fill tfvars:
 
@@ -154,19 +350,39 @@ empty remote state has no prior value to resolve.
 
    ```sh
    terraform init
+   # `worker_image_uri` is a required root var (infra/worker.tf) with no
+   # default and is absent from terraform.ci.tfvars; Terraform validates all
+   # root variables before graph/target pruning, so pass a placeholder — the
+   # Lambda is outside the -target scope, so the value is unused.
+   terraform apply -target=aws_ecr_repository.worker \
+     -var-file=terraform.ci.tfvars \
+     -var "worker_image_uri=pending"
    terraform validate
-   docker build -t "$(aws sts get-caller-identity --query Account --output text).dkr.ecr.us-east-1.amazonaws.com/infinite-worship-worker:bootstrap" ../worker/
-   aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin "$(aws sts get-caller-identity --query Account --output text).dkr.ecr.us-east-1.amazonaws.com"
-   docker push "$(aws sts get-caller-identity --query Account --output text).dkr.ecr.us-east-1.amazonaws.com/infinite-worship-worker:bootstrap"
+   docker build -t "$(aws sts get-caller-identity --query Account --output text).dkr.ecr.us-west-2.amazonaws.com/infinite-worship-worker:bootstrap" ../worker/
+   aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin "$(aws sts get-caller-identity --query Account --output text).dkr.ecr.us-west-2.amazonaws.com"
+   docker push "$(aws sts get-caller-identity --query Account --output text).dkr.ecr.us-west-2.amazonaws.com/infinite-worship-worker:bootstrap"
    terraform apply -var-file=terraform.ci.tfvars \
-     -var "worker_image_uri=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.us-east-1.amazonaws.com/infinite-worship-worker:bootstrap"
+     -var "worker_image_uri=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.us-west-2.amazonaws.com/infinite-worship-worker:bootstrap"
    ```
 
-   Note: `terraform plan` stops at provider configuration without the
-   Cloudflare token ("API tokens must only contain characters a-z, A-Z,
-   0-9, hyphens and underscores" — the provider validates `api_token`
-   before any API call). `terraform validate` does NOT need the token and
-   always passes.
+   The ECR repository is Terraform-managed
+   (`aws_ecr_repository.worker`), so a targeted apply must create it
+   before the bootstrap `docker push`; the full apply then adopts the
+   already-pushed image.
+
+   Note: `terraform plan` and the targeted apply both stop at provider
+   configuration without the Cloudflare token ("API tokens must only
+   contain characters a-z, A-Z, 0-9, hyphens and underscores" — the
+   provider validates `api_token` before any API call; Terraform
+   initializes every provider in the config even under `-target`), so
+   export `TF_VAR_cloudflare_api_token` first. `terraform validate` does
+   NOT need the token and always passes — which is why validate moved
+   after the targeted apply.
+
+   ECR login/build/push is CLI-only — the AWS console cannot push container
+   images. The targeted apply creates the repository before the push;
+   creating it in the console instead would diverge state and cause an
+   "already exists" conflict on the full apply — do not.
 
 4. Record the outputs for later phases:
 
@@ -178,9 +394,12 @@ empty remote state has no prior value to resolve.
 
 ## Phase 4 — GitHub secrets
 
-`gh secret set` each of the 8 secrets (names match the header comment in
-`.github/workflows/deploy.yml`; a human with admin must create them — the
-workflow fails loudly if one is missing):
+**Console:** repo → Settings → Secrets and variables → Actions →
+**New repository secret** — one per name below.
+
+**CLI:** `gh secret set` each of the 8 secrets (names match the header
+comment in `.github/workflows/deploy.yml`; a human with admin must create
+them — the workflow fails loudly if one is missing):
 
 ```sh
 gh secret set AWS_ACCESS_KEY_ID            # deployer IAM access key
@@ -216,7 +435,7 @@ Three phases per run:
    IAM, CloudWatch, and the Cloudflare/R2 resources, with the
    `worker_image_uri` recorded by the previous run (remote state).
 2. **Build + push worker image** — `worker/Dockerfile` →
-   `<account>.dkr.ecr.us-east-1.amazonaws.com/infinite-worship-worker:<git-sha>`.
+   `<account>.dkr.ecr.us-west-2.amazonaws.com/infinite-worship-worker:<git-sha>`.
 3. **Update Lambda code** — `aws lambda update-function-code --image-uri`,
    `aws lambda wait function-updated`, then a final `terraform apply` with
    `-var worker_image_uri=<pushed URI>` so state pins the new tag.
@@ -225,7 +444,7 @@ The frontend is **not** deployed here — Vercel's git integration owns it.
 
 ## Phase 6 — Vercel (frontend + BFF)
 
-One-time dashboard setup:
+**Console (dashboard import):**
 
 1. [vercel.com/dashboard](https://vercel.com/dashboard) → **Add New… → Project**.
 2. Import `mhuang74/infinite-worship` (grant the Vercel GitHub App access if asked).
@@ -233,6 +452,31 @@ One-time dashboard setup:
    **Root Directory** `application/frontend` (expand and enable the
    override); leave build/install commands default (npm; lockfile is
    `package-lock.json`).
+4. Add the environment variables from the table below (Production + Preview).
+
+**CLI:** with `npm i -g vercel && vercel login` done once:
+
+```sh
+npx vercel                      # links the repo; follow the prompts to import
+                                # mhuang74/infinite-worship and set Root
+                                # Directory to application/frontend when asked
+
+# One command per variable; --value for non-interactive use, otherwise the
+# prompt reads it from stdin. Repeat with "preview" and "production".
+vercel env add DATABASE_URL production --value 'postgresql://…'
+vercel env add R2_ACCOUNT_ID production --value '<account_id>'
+vercel env add R2_BUCKET production --value 'infinite-worship-media'
+vercel env add R2_ACCESS_KEY_ID production --value '<r2 token access key>'
+vercel env add R2_SECRET_ACCESS_KEY production --value '<r2 token secret>'
+vercel env add R2_PUBLIC_BASE production --value 'https://media.yourdomain.com'
+vercel env add SQS_QUEUE_URL production --value "$(terraform -chdir=infra output -raw analysis_queue_url)"
+vercel env add AWS_REGION production --value 'us-west-2'
+vercel env add AWS_ACCESS_KEY_ID production --value '<finalize user access key>'
+vercel env add AWS_SECRET_ACCESS_KEY production --value '<finalize user secret key>'
+```
+
+`R2_ENDPOINT` is the alternative to `R2_ACCOUNT_ID` — set **one**, not both
+(see the table below).
 
 Environment variables (Production + Preview):
 
@@ -244,7 +488,7 @@ Environment variables (Production + Preview):
 | `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | R2 API token from Phase 1 |
 | `R2_PUBLIC_BASE` | `https://media.yourdomain.com` (the `media_domain` custom domain) |
 | `SQS_QUEUE_URL` | `terraform output -raw analysis_queue_url` |
-| `AWS_REGION` | `us-east-1` |
+| `AWS_REGION` | `us-west-2` |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | finalize IAM user credentials (Phase 1) — the finalize route's `SQSClient` uses the default provider chain and Vercel has no instance role |
 
 **Naming trap:** the BFF reads `R2_ENDPOINT`; the worker Lambda gets
@@ -277,6 +521,9 @@ Against the deployed stack:
      --queue-url "$(terraform -chdir=infra output -raw analysis_dlq_url)" \
      --attribute-names ApproximateNumberOfMessagesVisible   # expect "0"
    ```
+
+   Console equivalent: SQS console → queue `infinite-worship-analysis-dlq`
+   → **Monitor** tab → "Messages available" should read 0.
 
 ## Operations
 
@@ -316,6 +563,8 @@ Terraform, plus `REAP_GRACE_HOURS=24`.
     --destination-arn "$(terraform -chdir=infra output -raw analysis_queue_arn)"
   ```
 
+  CLI-only: the SQS console has no one-click DLQ redrive to another queue.
+
   (The message's Song row stays `processing`; a successful redrive marks it
   `ready`.)
 
@@ -325,6 +574,8 @@ Terraform, plus `REAP_GRACE_HOURS=24`.
   reaper run deletes the orphaned audio object and marks the Song `failed`.
   To reap immediately instead of waiting:
   `aws lambda invoke --function-name infinite-worship-reaper out.json`.
+  Console equivalent: Lambda console → function `infinite-worship-reaper`
+  → **Test** tab → invoke with an empty `{}` payload.
 - **`failed` Song**: query the row —
   `psql "$NEON_CONNECTION_URI" -c "SELECT song_id, failure_reason FROM songs WHERE status='failed'"`.
   Deterministic validation failures (bad content-type, oversize,

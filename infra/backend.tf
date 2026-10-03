@@ -7,7 +7,7 @@ terraform {
   backend "s3" {
     bucket         = "infinite-worship-tfstate"
     key            = "infra/terraform.tfstate"
-    region         = "us-east-1"
+    region         = "us-west-2"
     dynamodb_table = "infinite-worship-tflock"
     encrypt        = true
   }
