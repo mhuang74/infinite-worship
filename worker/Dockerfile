@@ -27,6 +27,13 @@ RUN yum install -y tar xz git gcc libsndfile && \
 
 COPY requirements.txt ${LAMBDA_TASK_ROOT}/
 
+# numba (via librosa) writes JIT cache files NEXT to the cached .py in
+# site-packages __pycache__ — read-only under Lambda's /var/task + /var/lang.
+# Without this every analysis dies at librosa.load with
+# "cannot cache function '__o_fold': no locator available" (RuntimeError from
+# numba's cache locator). /tmp is the only writable dir in Lambda.
+ENV NUMBA_CACHE_DIR=/tmp/numba_cache
+
 RUN pip install --no-cache-dir \
       numpy==1.24.3 scipy==1.11.3 \
       boto3 "psycopg[binary]" && \
