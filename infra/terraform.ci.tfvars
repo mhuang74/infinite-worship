@@ -4,7 +4,7 @@
 # they arrive as TF_VAR_* env sourced from GitHub secrets.
 # NEVER put stream-of-worship values in this file.
 
-media_domain   = "media.yourdomain.com" # hostname within the TF_VAR_cloudflare_zone_id zone
+media_domain   = "media.michaelhuang.xyz" # hostname within the TF_VAR_cloudflare_zone_id zone
 r2_bucket_name = "infinite-worship-media"
 
 # Every Vercel origin (prod + previews) plus local dev:

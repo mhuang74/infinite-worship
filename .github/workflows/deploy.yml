@@ -39,7 +39,10 @@ env:
   # Single source of truth: infra/variables.tf aws_region default (us-west-2).
   # Every AWS step and the terraform var use this; change it in one place.
   AWS_REGION: us-west-2
-  TF_VERSION: 1.9.8
+  # Must be >= 1.10: infra/backend.tf uses `use_lockfile` (S3-native state
+  # locking), which older Terraform rejects as an unsupported argument.
+  # Pinned to match the laptop's local version.
+  TF_VERSION: 1.16.4
   # Terraform secret inputs; non-secret vars come from terraform.ci.tfvars.
   # These are NEW infinite-worship credentials only.
   TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -73,8 +76,9 @@ jobs:
 
       # Phase 1 — bootstrap/refresh infra: creates the ECR repo, SQS, IAM,
       # CloudWatch, and the Cloudflare/R2 resources, and re-asserts the
-      # Lambda's non-image config. State is REMOTE (infra/backend.tf: S3 +
-      # DynamoDB lock), so the required worker_image_uri resolves to the
+      # Lambda's non-image config. State is REMOTE (infra/backend.tf: S3
+      # backend with S3-native lockfile locking), so the required
+      # worker_image_uri resolves to the
       # value the previous run recorded — this run's push is applied in
       # phase 3. On a truly EMPTY state (first ever run) there is no prior
       # value: bootstrap once from a laptop (see infra/README.md "First run").
