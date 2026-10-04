@@ -1,29 +1,30 @@
 'use client';
 
 import React from 'react';
+import type { Beat } from '@/lib/types';
 
 interface SongMetadataProps {
   fileName?: string | null;
   durationSec?: number | null;
   beatsCount?: number | null;
   totalJumpPoints?: number | null;
-  currentBeat?: any | null;
+  currentBeat?: Beat | null;
   isPlaying?: boolean;
   totalPlayingTimeSec?: number | null;
   totalJumps?: number | null;
 }
 
 const formatTime = (seconds?: number | null) => {
-  if (seconds == null || !isFinite(seconds)) return '--:--';
+  if (seconds == null || !Number.isFinite(seconds)) return '--:--';
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
   return `${m}:${s.toString().padStart(2, '0')}`;
 };
 
 const MetaRow: React.FC<{ label: string; value: React.ReactNode }> = ({ label, value }) => (
-  <div className="flex items-center justify-between py-2 border-b border-white/10 last:border-b-0">
-    <span className="engraved-label">{label}</span>
-    <span className="text-white font-medium">{value}</span>
+  <div className="flex items-center justify-between gap-3 border-b border-outline-variant/45 py-2.5 last:border-b-0">
+    <span className="text-xs tracking-[0.02em] text-on-surface-variant">{label}</span>
+    <span className="flex items-center gap-1.5 text-right text-[13px] font-medium text-on-surface">{value}</span>
   </div>
 );
 
@@ -38,12 +39,12 @@ const SongMetadata: React.FC<SongMetadataProps> = ({
   totalJumps,
 }) => {
   return (
-    <section className="cdpanel-inner p-4 sm:p-6">
-      <header className="mb-4">
-        <h2 className="text-lg font-semibold text-gold-400">Track Info</h2>
-        <p className="text-xs text-white/70">Song Details and Playback Status</p>
+    <section className="rounded-[20px] border border-outline-variant/45 bg-surface-container p-5 sm:px-6">
+      <header className="mb-3">
+        <h2 className="type-card-title">Track Info</h2>
+        <p className="mt-0.5 text-xs text-on-surface-variant">Live from the remix engine</p>
       </header>
-      <div className="space-y-1">
+      <div>
         <MetaRow label="Title" value={fileName || 'Untitled'} />
         <MetaRow label="Duration" value={formatTime(durationSec)} />
         <MetaRow label="Beats" value={beatsCount ?? '--'} />
@@ -53,8 +54,8 @@ const SongMetadata: React.FC<SongMetadataProps> = ({
           value={
             currentBeat
               ? (
-                <span className="text-gold-400">
-                  #{currentBeat.id} • Cluster {currentBeat.cluster}
+                <span className="text-gold-foreground">
+                  #{currentBeat.id} &middot; Cluster {currentBeat.cluster}
                 </span>
               )
               : '--'
@@ -65,9 +66,12 @@ const SongMetadata: React.FC<SongMetadataProps> = ({
         <MetaRow
           label="Status"
           value={
-            <span className={isPlaying ? 'text-emerald-400' : 'text-white/70'}>
-              {isPlaying ? 'Playing' : 'Paused'}
-            </span>
+            <>
+              {isPlaying && <span className="live-dot" style={{ width: 7, height: 7 }} aria-hidden="true" />}
+              <span className={isPlaying ? '' : 'text-on-surface-variant'}>
+                {isPlaying ? 'Remixing' : 'Paused'}
+              </span>
+            </>
           }
         />
       </div>
