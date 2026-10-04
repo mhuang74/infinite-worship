@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
 import api from '@/lib/api';
 import FileUpload from '@/components/FileUpload';
+import Header from '@/components/Header';
 import PlaybackControls from '@/components/PlaybackControls';
 import Visualization from '@/components/Visualization';
 import SongMetadata from '@/components/SongMetadata';
@@ -29,8 +30,6 @@ const TABS = [
 type TabId = (typeof TABS)[number]['id'];
 
 export default function HomePage() {
-  const APP_DESCRIPTION = 'Infinite Worship uses song and audio characteristics to detect smooth transition points for endless remixing. Currently limited to within a song. The ultimate goal is to smoothly transition between songs!';
-
   const [songData, setSongData] = useState<{ segments: Beat[] } | null>(null);
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [error, setError] = useState('');
@@ -395,19 +394,7 @@ export default function HomePage() {
   return (
     <main className="min-h-screen w-full px-4 py-8 sm:py-12">
       <div className="mx-auto w-full max-w-[1080px] space-y-6 sm:space-y-8">
-        <header className="text-center">
-          <div className="flex items-center justify-center">
-            <h1 className="text-3xl sm:text-4xl font-bold text-white" title={APP_DESCRIPTION}>Infinite Worship</h1>
-            <button
-              className="ml-2 text-white/60 hover:text-white text-lg"
-              onClick={() => alert(APP_DESCRIPTION)}
-              title="More info"
-            >
-              ℹ️
-            </button>
-          </div>
-          <p className="mt-1 text-sm text-white/80">Smooth Remix of Your Favorite Worship Songs</p>
-        </header>
+        <Header />
 
         {/* Hero now-playing card (spec §5.2) */}
         <section className="rounded-[28px] border border-outline-variant/55 bg-surface-container-low p-5 shadow-[0_1px_2px_rgba(0,0,0,0.3),0_4px_16px_rgba(0,0,0,0.18)] sm:p-7">
