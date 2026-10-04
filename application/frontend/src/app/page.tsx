@@ -11,18 +11,25 @@ import SongSearch from '@/components/SongSearch';
 import { AudioEngine, createAudioBuffer } from '@/lib/audio';
 import { loadSongForPlayback } from '@/lib/player';
 import { isPlayable } from '@/lib/upload';
-import type { Song } from '@/lib/types';
+import type { Beat, Song } from '@/lib/types';
+
+const formatClock = (seconds: number | null): string => {
+  if (seconds == null || !Number.isFinite(seconds)) return '--:--';
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${s.toString().padStart(2, '0')}`;
+};
 
 export default function HomePage() {
   const APP_DESCRIPTION = 'Infinite Worship uses song and audio characteristics to detect smooth transition points for endless remixing. Currently limited to within a song. The ultimate goal is to smoothly transition between songs!';
 
-  const [songData, setSongData] = useState<any>(null);
+  const [songData, setSongData] = useState<{ segments: Beat[] } | null>(null);
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [error, setError] = useState('');
   const [isPlaying, setIsPlaying] = useState(false);
   const [isPlaybackPending, setIsPlaybackPending] = useState(false);
   const [jumpProbability, setJumpProbability] = useState(0.15);
-  const [currentBeat, setCurrentBeat] = useState<any | null>(null);
+  const [currentBeat, setCurrentBeat] = useState<Beat | null>(null);
   const [selectedSongId, setSelectedSongId] = useState<string | null>(null);
   const [selectedSongName, setSelectedSongName] = useState<string | null>(null);
   const [loadingLibrarySong, setLoadingLibrarySong] = useState(false);
@@ -98,7 +105,7 @@ export default function HomePage() {
 
   const totalJumpPoints = useMemo(() => {
     if (!songData?.segments) return null;
-    return songData.segments.reduce((count: number, b: any) => {
+    return songData.segments.reduce((count: number, b: Beat) => {
       const arr = Array.isArray(b.jump_candidates) ? b.jump_candidates : [];
       return count + (arr.length > 0 ? 1 : 0);
     }, 0);
@@ -125,7 +132,7 @@ export default function HomePage() {
           const audioBuffer = await createAudioBuffer(audioFile, audioContextRef.current);
           
           // Callback for the engine to update the UI
-          const onBeatChange = (beat: any) => {
+          const onBeatChange = (beat: Beat) => {
             setCurrentBeat(beat);
           };
 
@@ -342,12 +349,6 @@ export default function HomePage() {
     setTotalPlayingTimeSec(0);
   };
 
-  const handleStop = () => {
-    if (!audioEngineRef.current) return;
-    audioEngineRef.current.stop();
-    setIsPlaying(false);
-  };
-
   const handleJumpProbabilityChange = (value: number) => {
     setJumpProbability(value);
     if (audioEngineRef.current) {
@@ -389,35 +390,58 @@ export default function HomePage() {
           <p className="mt-1 text-sm text-white/80">Smooth Remix of Your Favorite Worship Songs</p>
         </header>
 
-        <section className="cdpanel p-3 sm:p-4">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
-            <div className="lg:col-span-2 space-y-4">
-              {isPlayerReady ? (
-                <Visualization
-                  audioFile={audioFile}
-                  beats={songData!.segments}
-                  currentBeat={currentBeat}
-                  onSeek={handleSeek}
-                />
-              ) : (
-                <div className="p-4 sm:p-6 device-screen">
-                  <div className="relative">
-                    <div className="h-[88px] w-full bg-white/10 rounded animate-pulse" />
-                  </div>
-                  <div className="relative mt-4 w-full h-8 sm:h-10 bg-white/10 rounded animate-pulse" />
-                </div>
-              )}
+        {/* Hero now-playing card (spec §5.2) */}
+        <section className="rounded-[28px] border border-outline-variant/55 bg-surface-container-low p-5 shadow-[0_1px_2px_rgba(0,0,0,0.3),0_4px_16px_rgba(0,0,0,0.18)] sm:p-7">
+          <div className="grid grid-cols-1 gap-7 lg:grid-cols-[1fr_300px]">
+            <div className="min-w-0">
+              <h2 className="type-display">{selectedSongName ?? 'No song selected'}</h2>
+              <p className="mb-5 mt-1.5 text-[13px] text-on-surface-variant">
+                {songData
+                  ? `${formatClock(audioEngineRef.current ? audioEngineRef.current.getDuration() : null)} · ${songData.segments.length} beats · ${totalJumpPoints ?? 0} jump points`
+                  : 'Pick a song from the library below'}
+              </p>
 
-              <div className="h-24 flex items-center justify-center text-white/70 text-sm">
-                {loadingLibrarySong ? (
-                  <div className="flex center">
-                    <div className="animate-spin h-4 w-4 border-2 border-white/30 border-t-white rounded-full mr-2"></div>
-                    Loading: {selectedSongName}...
-                  </div>
-                ) : selectedSongId && selectedSongName ? (
-                  `Selected: ${selectedSongName}`
+              {/* Screen inset: waveform + jewel beat-cluster bar */}
+              <div className="rounded-2xl border border-outline-variant/45 bg-surface-container-lowest p-4 sm:px-5">
+                {isPlayerReady ? (
+                  <Visualization
+                    audioFile={audioFile}
+                    beats={songData!.segments}
+                    currentBeat={currentBeat}
+                    onSeek={handleSeek}
+                  />
                 ) : (
-                  'No song selected'
+                  <div aria-hidden="true">
+                    <div className="flex h-[88px] items-center gap-[2px]">
+                      {Array.from({ length: 48 }, (_, i) => (
+                        <div
+                          key={i}
+                          className="min-w-[1px] flex-1 animate-pulse rounded-sm bg-surface-container-highest"
+                          style={{ height: `${20 + 55 * Math.abs(Math.sin(i * 1.7))}%` }}
+                        />
+                      ))}
+                    </div>
+                    <div className="mt-3.5 h-[22px] animate-pulse rounded bg-surface-container-highest/60" />
+                  </div>
+                )}
+              </div>
+
+              {/* Status strip */}
+              <div className="mt-4 flex h-5 items-center gap-2.5 text-[13px] text-on-surface-variant">
+                {loadingLibrarySong ? (
+                  <>
+                    <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-on-surface-variant/30 border-t-on-surface-variant" />
+                    Loading: {selectedSongName}&hellip;
+                  </>
+                ) : currentBeat && isPlayerReady ? (
+                  <>
+                    {isPlaying && <span className="live-dot" aria-hidden="true" />}
+                    {isPlaying
+                      ? `Remixing — beat ${currentBeat.id} · cluster ${currentBeat.cluster} · jump ${totalJumps} of ∞`
+                      : `Paused — beat ${currentBeat.id} · cluster ${currentBeat.cluster}`}
+                  </>
+                ) : (
+                  'Select a song from the library to begin'
                 )}
               </div>
 
@@ -425,14 +449,14 @@ export default function HomePage() {
                 isPlaying={isPlaying}
                 isPlaybackPending={!isPlayerReady || isPlaybackPending}
                 jumpProbability={jumpProbability}
+                currentBeatId={currentBeat?.id ?? null}
                 onPlayPause={handlePlayPause}
                 onRestart={handleRestart}
-                onStop={handleStop}
                 onJumpProbabilityChange={handleJumpProbabilityChange}
               />
             </div>
 
-            <aside className="cdpanel-inner p-4 sm:p-6">
+            <aside className="min-w-0 self-start">
               <SongMetadata
                 fileName={audioFile ? audioFile.name : null}
                 durationSec={audioEngineRef.current ? audioEngineRef.current.getDuration() : null}

@@ -2,13 +2,32 @@
 
 import React, { useEffect, useRef, useCallback, useState } from 'react';
 import WaveSurfer from 'wavesurfer.js';
+import type { Beat } from '@/lib/types';
 
 interface VisualizationProps {
   audioFile: File | null;
-  beats: any[];
-  currentBeat: any | null;
+  beats: Beat[];
+  currentBeat: Beat | null;
   onSeek?: (progress: number) => void;
 }
+
+// §6: canvas paint cannot use color-mix(), so the per-scheme waveform colors
+// are pre-resolved custom properties in globals.css, read once at create time.
+const readVizColor = (name: string, fallback: string): string => {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return value || fallback;
+};
+
+// §2.4 jewel palette, round-robin by cluster index. Literal class names so
+// Tailwind generates them; /70 keeps them legible against the screen inset.
+const JEWEL_SEGMENT_CLASSES = [
+  'bg-jewel-ruby/70',
+  'bg-jewel-gold/70',
+  'bg-jewel-emerald/70',
+  'bg-jewel-sapphire/70',
+  'bg-jewel-amethyst/70',
+  'bg-jewel-cyan/70',
+];
 
 const Visualization: React.FC<VisualizationProps> = ({ audioFile, beats, currentBeat, onSeek }) => {
   const waveformRef = useRef<HTMLDivElement>(null);
@@ -34,7 +53,7 @@ const Visualization: React.FC<VisualizationProps> = ({ audioFile, beats, current
     const ids: number[] = Array.isArray(currentBeat.jump_candidates) ? currentBeat.jump_candidates : [];
     const markers = ids
       .map((id: number) => {
-        const beat = (beats as any[]).find((b: any) => b.id === id);
+        const beat = beats.find((b) => b.id === id);
         if (!beat) return null;
         const progress = beat.start / duration;
         const left = Math.max(0, Math.min(width, progress * width));
@@ -55,20 +74,26 @@ const Visualization: React.FC<VisualizationProps> = ({ audioFile, beats, current
     return () => window.removeEventListener('resize', onResize);
   }, [recalcCandidateMarkers]);
 
+  // The init effect must not re-run per beat, so the ready handler reaches
+  // the latest marker calculation through a ref instead of a dep.
+  const recalcRef = useRef(recalcCandidateMarkers);
+  recalcRef.current = recalcCandidateMarkers;
+
   // Initialize WaveSurfer instance
   useEffect(() => {
     if (waveformRef.current && audioFile) {
       wavesurfer.current = WaveSurfer.create({
         container: waveformRef.current,
-        waveColor: '#FFD95A',      // gold-400
-        progressColor: '#F5C518',  // gold-500
-        cursorColor: '#FFFFFF',
+        waveColor: readVizColor('--wave-unplayed', 'rgba(166, 200, 255, 0.42)'),
+        progressColor: readVizColor('--wave-played', 'rgba(253, 181, 21, 0.88)'),
+        cursorColor: readVizColor('--wave-playhead', '#fdb515'),
+        cursorWidth: 2,
         height: 88,
         barWidth: 2,
         barGap: 1,
         barRadius: 2,
         normalize: true,
-        
+
       });
 
       wavesurfer.current.load(URL.createObjectURL(audioFile));
@@ -76,14 +101,14 @@ const Visualization: React.FC<VisualizationProps> = ({ audioFile, beats, current
       // Mark as ready when audio is loaded
       wavesurfer.current.on('ready', () => {
         isReady.current = true;
-        recalcCandidateMarkers();
+        recalcRef.current();
       });
 
       return () => {
         if (wavesurfer.current) {
           try {
             wavesurfer.current.destroy();
-          } catch (error) {
+          } catch {
             // Ignore cleanup errors
           }
           wavesurfer.current = null;
@@ -119,41 +144,27 @@ const Visualization: React.FC<VisualizationProps> = ({ audioFile, beats, current
       const duration = wavesurfer.current.getDuration();
       if (duration > 0) {
         const progress = currentBeat.start / duration;
-        if (isFinite(progress) && progress >= 0 && progress <= 1) {
+        if (Number.isFinite(progress) && progress >= 0 && progress <= 1) {
           wavesurfer.current.seekTo(progress);
         }
       }
     }
   }, [currentBeat]);
 
-
-
-  const getBeatColor = (cluster: number) => {
-    const colors = [
-      'bg-blue-100',
-      'bg-yellow-100',
-      'bg-gray-50',
-      'bg-cyan-100',
-      'bg-amber-100',
-      'bg-indigo-100'
-    ];
-    return colors[cluster % colors.length];
-  };
-
   // Total duration for positioning beat bar overlays
   const totalDuration = wavesurfer.current?.getDuration() || 0;
 
   return (
-    <div className="p-4 sm:p-6 device-screen">
+    <div>
       <div className="relative">
         <div ref={waveformRef}></div>
 
-        {/* Jump candidate markers overlay (dots at bottom, more transparent than the cursor) */}
+        {/* Jump candidate markers overlay (§6 cyan dots at bottom) */}
         <div className="pointer-events-none absolute inset-0 z-20">
           {candidateMarkers.map((m) => (
             <div
               key={`jump-${m.id}`}
-              className="absolute bg-yellow/40 border border-white/80"
+              className="absolute bg-jewel-cyan"
               style={{
                 left: `${m.left}px`,
                 width: 4,
@@ -167,8 +178,8 @@ const Visualization: React.FC<VisualizationProps> = ({ audioFile, beats, current
         </div>
       </div>
 
-      <div className="relative mt-4 w-full h-8 sm:h-10 bg-gray-100 rounded overflow-hidden">
-        {/* Beat segments (no borders) */}
+      <div className="relative mt-3.5 h-[22px] w-full overflow-hidden rounded">
+        {/* Beat segments: jewel-tone cluster bar (§2.4) */}
         {beats.map((beat) => {
           if (totalDuration <= 0) return null;
           const leftPercent = (beat.start / totalDuration) * 100;
@@ -177,7 +188,7 @@ const Visualization: React.FC<VisualizationProps> = ({ audioFile, beats, current
             <div
               key={beat.id}
               id={`beat-${beat.id}`}
-              className={`absolute top-0 h-full ${getBeatColor(beat.cluster)}`}
+              className={`absolute top-0 h-full ${JEWEL_SEGMENT_CLASSES[beat.cluster % JEWEL_SEGMENT_CLASSES.length]}`}
               style={{
                 left: `${leftPercent}%`,
                 width: `${widthPercent}%`,
@@ -189,10 +200,10 @@ const Visualization: React.FC<VisualizationProps> = ({ audioFile, beats, current
 
         {/* Overlay indicators: fixed-width vertical lines */}
         <div className="pointer-events-none absolute inset-0 z-10">
-          {/* Current position: 2px full-height line */}
+          {/* Current position: 2px gold full-height line with glow (§6) */}
           {totalDuration > 0 && currentBeat && Number.isFinite(currentBeat.start) && (
             <div
-              className="absolute bg-gray-900"
+              className="playhead-marker absolute"
               style={{
                 left: `${(currentBeat.start / totalDuration) * 100}%`,
                 width: 2,
@@ -203,16 +214,16 @@ const Visualization: React.FC<VisualizationProps> = ({ audioFile, beats, current
             />
           )}
 
-          {/* Jump candidate ticks: 1px vertical lines */}
+          {/* Jump candidate ticks: 1px cyan vertical lines (§6) */}
           {totalDuration > 0 &&
             Array.isArray(currentBeat?.jump_candidates) &&
-            currentBeat!.jump_candidates.map((id: number) => {
-              const beat = (beats as any[]).find((b: any) => b.id === id);
+            (currentBeat?.jump_candidates ?? []).map((id: number) => {
+              const beat = beats.find((b) => b.id === id);
               if (!beat) return null;
               return (
                 <div
                   key={`tick-${id}`}
-                  className="absolute bg-gray-500/80"
+                  className="absolute bg-jewel-cyan/80"
                   style={{
                     left: `${(beat.start / totalDuration) * 100}%`,
                     width: 1,
