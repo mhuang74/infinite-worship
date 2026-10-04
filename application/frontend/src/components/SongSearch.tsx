@@ -3,20 +3,21 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import api from '@/lib/api';
 import { debounce } from 'lodash';
+import StatusChip from '@/components/StatusChip';
 import type { Song } from '@/lib/types';
 
 interface SongSearchProps {
   onSongSelect: (songId: string, filename: string) => void;
+  selectedSongId?: string | null;
 }
 
-const SongSearch: React.FC<SongSearchProps> = ({ onSongSelect }) => {
-  const statusBadgeClasses: Record<string, string> = {
-    pending: 'border-yellow-300/40 bg-yellow-300/10 text-yellow-300',
-    processing: 'border-blue-300/40 bg-blue-300/10 text-blue-300',
-    ready: 'border-green-400/40 bg-green-400/10 text-green-400',
-    failed: 'border-red-400/40 bg-red-400/10 text-red-400',
-  };
+const formatDuration = (seconds: number): string => {
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = Math.floor(seconds % 60);
+  return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+};
 
+const SongSearch: React.FC<SongSearchProps> = ({ onSongSelect, selectedSongId = null }) => {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Song[]>([]);
   const [loading, setLoading] = useState(false);
@@ -32,7 +33,7 @@ const SongSearch: React.FC<SongSearchProps> = ({ onSongSelect }) => {
 
       try {
         setLoading(true);
-        const response = await api.get(`/songs/search?q=${encodeURIComponent(searchQuery)}`);
+        const response = await api.get(`/api/songs/search?q=${encodeURIComponent(searchQuery)}`);
         setResults(response.data.songs || []);
         setError(null);
       } catch (err) {
@@ -47,69 +48,68 @@ const SongSearch: React.FC<SongSearchProps> = ({ onSongSelect }) => {
 
   useEffect(() => {
     debouncedSearch(query);
-    
+
     // Cleanup function to cancel any pending debounced calls
     return () => {
       debouncedSearch.cancel();
     };
   }, [query, debouncedSearch]);
 
-  const formatDuration = (seconds: number): string => {
-    const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = Math.floor(seconds % 60);
-    return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
-  };
-
   return (
-    <div className="cdpanel-inner p-4 sm:p-6">
-      <div className="engraved-label mb-2">Search Songs</div>
-      
-      <div className="relative">
+    <div>
+      <div className="px-3 pb-2 pt-2 text-[13px] font-semibold uppercase tracking-[0.04em] text-on-surface-variant">Search Songs</div>
+
+      <div className="relative px-3">
         <input
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Type to search songs..."
-          className="w-full p-2 bg-black/30 border border-white/20 rounded-md text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="w-full rounded-xl border border-outline-variant bg-surface-container-lowest px-3.5 py-2.5 text-sm text-on-surface placeholder:text-on-surface-variant/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-gold-foreground"
         />
         {loading && (
-          <div className="absolute right-3 top-2.5">
-            <div className="animate-spin h-4 w-4 border-2 border-white/30 border-t-white rounded-full"></div>
+          <div className="absolute right-6 top-2.5">
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-on-surface-variant/30 border-t-on-surface-variant"></div>
           </div>
         )}
       </div>
-      
+
       {error && (
-        <div className="mt-3 rounded-md border border-red-400/40 bg-red-500/20 text-white px-3 py-2 text-sm">
+        <div className="banner-error mx-3 mt-3" role="alert">
           {error}
         </div>
       )}
-      
+
       {query.trim() !== '' && results.length === 0 && !loading && !error && (
-        <p className="mt-3 text-white/70 text-sm">No songs found matching &quot;{query}&quot;</p>
+        <p className="mt-3 px-3 text-sm text-on-surface-variant">No songs found matching &quot;{query}&quot;</p>
       )}
-      
+
       {results.length > 0 && (
-        <div className="mt-4 max-h-[300px] space-y-3 overflow-y-auto pr-2">
+        <div className="mt-3 max-h-[300px] space-y-1 overflow-y-auto p-1">
           {results.map((song) => {
+            const selected = song.song_id === selectedSongId;
             return (
-              <div
+              <button
+                type="button"
                 key={song.song_id}
                 onClick={() => onSongSelect(song.song_id, song.title)}
-                className="group flex items-center gap-3 rounded-md bg-white/5 px-3 py-2 transition-colors duration-150 hover:bg-white/10 cursor-pointer"
+                aria-current={selected ? 'true' : undefined}
+                className={`flex w-full items-center justify-between gap-4 rounded-[14px] px-3 py-3 text-left transition-colors duration-150 ${
+                  selected
+                    ? 'bg-primary/[0.14] hover:bg-primary/[0.18]'
+                    : 'hover:bg-on-surface/[0.06]'
+                }`}
               >
-                <span className="truncate text-sm font-semibold text-gold-400">
-                  {song.title}
-                </span>
-                <span className="ml-auto flex-shrink-0 whitespace-nowrap text-xs text-white/60">
-                  {song.duration !== null ? formatDuration(song.duration) : null}
-                </span>
-                <span
-                  className={`flex-shrink-0 rounded-full border px-2 py-0.5 text-xs font-medium ${statusBadgeClasses[song.status] ?? 'border-white/30 bg-white/10 text-white/60'}`}
-                >
-                  {song.status}
-                </span>
-              </div>
+                <div className="min-w-0">
+                  <div className={`truncate text-[14.5px] font-medium ${selected ? 'font-semibold text-primary' : 'text-on-surface'}`}>
+                    {song.title}
+                  </div>
+                  {song.duration !== null && (
+                    <div className="mt-0.5 text-xs text-on-surface-variant">{formatDuration(song.duration)}</div>
+                  )}
+                </div>
+                <StatusChip status={song.status} />
+              </button>
             );
           })}
         </div>

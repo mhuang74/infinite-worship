@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
 import api from '@/lib/api';
 import FileUpload from '@/components/FileUpload';
 import PlaybackControls from '@/components/PlaybackControls';
@@ -20,6 +20,14 @@ const formatClock = (seconds: number | null): string => {
   return `${m}:${s.toString().padStart(2, '0')}`;
 };
 
+const TABS = [
+  { id: 'library', label: 'Song Library' },
+  { id: 'search', label: 'Search Songs' },
+  { id: 'upload', label: 'Upload New Song' },
+] as const;
+
+type TabId = (typeof TABS)[number]['id'];
+
 export default function HomePage() {
   const APP_DESCRIPTION = 'Infinite Worship uses song and audio characteristics to detect smooth transition points for endless remixing. Currently limited to within a song. The ultimate goal is to smoothly transition between songs!';
 
@@ -33,7 +41,18 @@ export default function HomePage() {
   const [selectedSongId, setSelectedSongId] = useState<string | null>(null);
   const [selectedSongName, setSelectedSongName] = useState<string | null>(null);
   const [loadingLibrarySong, setLoadingLibrarySong] = useState(false);
-  const [activeTab, setActiveTab] = useState<'upload' | 'library' | 'search'>('library');
+  const [activeTab, setActiveTab] = useState<TabId>('library');
+  // Sliding tab indicator (§5.3): measured from the active tab button.
+  const tabRefs = useRef<Partial<Record<TabId, HTMLButtonElement | null>>>({});
+  const [indicator, setIndicator] = useState<{ left: number; width: number } | null>(null);
+  useLayoutEffect(() => {
+    const el = tabRefs.current[activeTab];
+    if (!el) return;
+    const update = () => setIndicator({ left: el.offsetLeft + 12, width: el.offsetWidth - 24 });
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, [activeTab]);
   const [songs, setSongs] = useState<Song[]>([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [libraryError, setLibraryError] = useState<string | null>(null);
@@ -375,7 +394,7 @@ export default function HomePage() {
 
   return (
     <main className="min-h-screen w-full px-4 py-8 sm:py-12">
-      <div className="mx-auto w-full max-w-6xl space-y-6 sm:space-y-8">
+      <div className="mx-auto w-full max-w-[1080px] space-y-6 sm:space-y-8">
         <header className="text-center">
           <div className="flex items-center justify-center">
             <h1 className="text-3xl sm:text-4xl font-bold text-white" title={APP_DESCRIPTION}>Infinite Worship</h1>
@@ -471,83 +490,71 @@ export default function HomePage() {
           </div>
         </section>
 
-        <section className="cdpanel p-3 sm:p-4">
-          <div className="mb-4">
-            <div className="flex border-b border-white/20">
-              <button
-                onClick={() => setActiveTab('library')}
-                className={`px-4 py-2 ${
-                  activeTab === 'library'
-                    ? 'text-white border-b-2 border-blue-500'
-                    : 'text-white/60 hover:text-white'
-                }`}
-              >
-                Song Library
-              </button>
-              <button
-                onClick={() => setActiveTab('search')}
-                className={`px-4 py-2 ${
-                  activeTab === 'search'
-                    ? 'text-white border-b-2 border-blue-500'
-                    : 'text-white/60 hover:text-white'
-                }`}
-              >
-                Search Songs
-              </button>
-              <button
-                onClick={() => setActiveTab('upload')}
-                className={`px-4 py-2 ${
-                  activeTab === 'upload'
-                    ? 'text-white border-b-2 border-blue-500'
-                    : 'text-white/60 hover:text-white'
-                }`}
-              >
-                Upload New Song
-              </button>
-            </div>
-          </div>
+        {/* MD3 primary tabs (§5.3) with sliding gold indicator */}
+        <nav aria-label="Sections" className="relative mx-1 flex border-b border-outline-variant/60" role="tablist">
+          {TABS.map((tab) => (
+            <button
+              key={tab.id}
+              ref={(el) => { tabRefs.current[tab.id] = el; }}
+              role="tab"
+              aria-selected={activeTab === tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`h-12 flex-1 px-3 text-sm font-semibold transition-colors duration-200 sm:flex-none sm:px-5 ${
+                activeTab === tab.id
+                  ? 'text-gold-foreground'
+                  : 'text-on-surface-variant hover:text-on-surface'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+          {indicator && (
+            <span
+              className="tab-indicator"
+              style={{ left: indicator.left, width: indicator.width }}
+              aria-hidden="true"
+            />
+          )}
+        </nav>
 
-         {activeTab === 'library' && (
-           <SongLibrary
-             onSongSelect={handleSongSelect}
-             songs={songs}
-             loading={libraryLoading}
-             error={libraryError}
-             onRefresh={() => {
-               void loadSongs();
-             }}
-             refreshing={libraryLoading}
-           />
-         )}
+        {/* Loading-song state: thin gold linear progress under the tab bar (§5.3) */}
+        {loadingLibrarySong && (
+          <div className="loading-bar mx-1" role="progressbar" aria-label={`Loading song: ${selectedSongName}`} />
+        )}
+
+        <section className="mt-4 rounded-[20px] border border-outline-variant/45 bg-surface-container-low p-2.5 sm:p-3">
+          {activeTab === 'library' && (
+            <SongLibrary
+              onSongSelect={handleSongSelect}
+              songs={songs}
+              loading={libraryLoading}
+              error={libraryError}
+              onRefresh={() => {
+                void loadSongs();
+              }}
+              refreshing={libraryLoading}
+              selectedSongId={selectedSongId}
+            />
+          )}
 
           {activeTab === 'search' && (
-            <SongSearch onSongSelect={handleSongSelect} />
+            <SongSearch onSongSelect={handleSongSelect} selectedSongId={selectedSongId} />
           )}
 
           {activeTab === 'upload' && (
-            <div className="cdpanel-inner p-4 sm:p-6">
-              <div className="engraved-label mb-2">Upload New Song</div>
-              <FileUpload onUploadSuccess={handleUploadSuccess} onUploadError={handleUploadError} />
+            <div>
+              <div className="px-3 pb-2 pt-2 text-[13px] font-semibold uppercase tracking-[0.04em] text-on-surface-variant">Upload New Song</div>
+              <div className="px-3 pb-3">
+                <FileUpload onUploadSuccess={handleUploadSuccess} onUploadError={handleUploadError} />
+              </div>
             </div>
           )}
 
           {error && (
-            <div
-              role="alert"
-              className="mt-3 rounded-md border border-red-400/40 bg-red-500/20 text-white px-3 py-2 text-sm"
-            >
+            <div role="alert" className="banner-error mx-3 my-3">
               {error}
             </div>
           )}
-
-          {loadingLibrarySong && (
-            <div className="mt-3 rounded-md border border-blue-400/40 bg-blue-500/20 text-white px-3 py-2 text-sm flex items-center">
-              <div className="animate-spin h-4 w-4 border-2 border-white/30 border-t-white rounded-full mr-2"></div>
-              Loading song: {selectedSongName}...
-            </div>
-          )}
-
-
         </section>
       </div>
     </main>

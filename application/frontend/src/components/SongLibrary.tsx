@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import StatusChip from '@/components/StatusChip';
 import type { Song } from '@/lib/types';
 
 interface SongLibraryProps {
@@ -10,7 +11,14 @@ interface SongLibraryProps {
   error: string | null;
   onRefresh: () => void;
   refreshing: boolean;
+  selectedSongId?: string | null;
 }
+
+const formatDuration = (seconds: number): string => {
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = Math.floor(seconds % 60);
+  return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+};
 
 const SongLibrary: React.FC<SongLibraryProps> = ({
   onSongSelect,
@@ -19,111 +27,88 @@ const SongLibrary: React.FC<SongLibraryProps> = ({
   error,
   onRefresh,
   refreshing,
+  selectedSongId = null,
 }) => {
-  const formatDuration = (seconds: number): string => {
-    const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = Math.floor(seconds % 60);
-    return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
-  };
-
-  const statusColors: Record<string, string> = {
-    pending: 'text-yellow-300',
-    processing: 'text-blue-300',
-    ready: 'text-green-400',
-    failed: 'text-red-400',
-  };
-
-  const refreshIconClasses = refreshing
-    ? 'h-4 w-4 text-gold-400 animate-spin'
-    : 'h-4 w-4 text-white/80 group-hover:text-gold-400';
-
   const showInitialLoading = loading && songs.length === 0;
   const showRefreshing = refreshing && songs.length > 0;
 
   return (
-    <div className="cdpanel-inner p-4 sm:p-6">
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <div className="engraved-label">Song Library</div>
+    <div>
+      <div className="flex items-center justify-between gap-2 px-3 pb-2 pt-2">
+        <div className="text-[13px] font-semibold uppercase tracking-[0.04em] text-on-surface-variant">Song Library</div>
         <button
           type="button"
           onClick={onRefresh}
           disabled={refreshing}
           title="Refresh song list"
-          className="group inline-flex h-8 w-8 items-center justify-center rounded-full text-white/80 transition-colors duration-200 hover:text-gold-400 focus:outline-none focus:ring-2 focus:ring-gold-500/50 disabled:cursor-not-allowed disabled:text-white/40"
+          className="grid h-9 w-9 place-items-center rounded-full text-on-surface-variant transition-colors duration-200 hover:bg-gold-foreground/10 hover:text-gold-foreground disabled:cursor-not-allowed disabled:opacity-40"
         >
           <span className="sr-only">Refresh song library</span>
           <svg
-            className={refreshIconClasses}
+            aria-hidden="true"
+            className={`h-[18px] w-[18px] ${refreshing ? 'animate-spin' : ''}`}
             viewBox="0 0 24 24"
-            fill="none"
+            fill="currentColor"
             xmlns="http://www.w3.org/2000/svg"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
           >
-            <path
-              d="M4.06189 13C4.02104 12.6724 4 12.3387 4 12C4 7.58172 7.58172 4 12 4C14.5006 4 16.7332 5.14727 18.2002 6.94416M19.9381 11C19.979 11.3276 20 11.6613 20 12C20 16.4183 16.4183 20 12 20C9.61061 20 7.46589 18.9525 6 17.2916M9 17H6V17.2916M18.2002 4V6.94416M18.2002 6.94416V6.99993L15.2002 7M6 20V17.2916"
-            />
+            <path d="M17.65 6.35A8 8 0 1 0 19.73 14h-2.08a6 6 0 1 1-1.41-6.24L13 11h7V4l-2.35 2.35z" />
           </svg>
         </button>
       </div>
 
       {showInitialLoading && (
-        <p className="text-white/70 text-sm">Loading song library...</p>
+        <p className="px-3 py-2 text-sm text-on-surface-variant">Loading song library...</p>
       )}
 
       {!showInitialLoading && showRefreshing && (
-        <p className="text-white/60 text-xs">Refreshing song library...</p>
+        <p className="px-3 py-1 text-xs text-on-surface-variant">Refreshing song library...</p>
       )}
 
       {error && (
-        <div className="mt-3 rounded-md border border-red-400/40 bg-red-500/20 text-white px-3 py-2 text-sm">
+        <div className="banner-error mx-3 mt-2" role="alert">
           {error}
         </div>
       )}
 
       {!showInitialLoading && songs.length === 0 && !error && (
-        <p className="text-white/70 text-sm">No songs in library. Upload a song first.</p>
+        <p className="px-3 py-2 text-sm text-on-surface-variant">No songs in library. Upload a song first.</p>
       )}
 
       {songs.length > 0 && (
-        <div className="mt-4 max-h-[300px] space-y-3 overflow-y-auto pr-2">
+        <div className="mt-1 max-h-[300px] space-y-1 overflow-y-auto p-1">
           {songs.map((song) => {
-            const metadata = [
-              song.duration !== null ? formatDuration(song.duration) : null,
-              song.status,
-            ]
-              .filter(Boolean)
-              .join(' • ');
             const failed = song.status === 'failed';
+            const selected = song.song_id === selectedSongId;
+            const hasMeta = song.duration !== null || (failed && song.failure_reason);
 
             return (
-              <div
+              <button
+                type="button"
                 key={song.song_id}
                 onClick={() => onSongSelect(song.song_id, song.title)}
                 title={failed && song.failure_reason ? `Analysis failed: ${song.failure_reason}` : undefined}
-                className="group flex items-center gap-3 rounded-md bg-white/5 px-3 py-2 transition-colors duration-150 hover:bg-white/10 cursor-pointer"
+                aria-current={selected ? 'true' : undefined}
+                className={`flex w-full items-center justify-between gap-4 rounded-[14px] px-3 py-3 text-left transition-colors duration-150 ${
+                  selected
+                    ? 'bg-primary/[0.14] hover:bg-primary/[0.18]'
+                    : 'hover:bg-on-surface/[0.06]'
+                }`}
               >
-                <div className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-semibold text-gold-400">
+                <div className="min-w-0">
+                  <div className={`truncate text-[14.5px] font-medium ${selected ? 'font-semibold text-primary' : 'text-on-surface'}`}>
                     {song.title}
-                  </span>
-                  {failed && song.failure_reason && (
-                    <span className="block truncate text-xs text-red-300/80">
-                      {song.failure_reason}
-                    </span>
+                  </div>
+                  {hasMeta && (
+                    <div className="mt-0.5 truncate text-xs text-on-surface-variant">
+                      {song.duration !== null && formatDuration(song.duration)}
+                      {failed && song.failure_reason && (
+                        <span className="text-error"> · {song.failure_reason}</span>
+                      )}
+                    </div>
                   )}
                 </div>
-                <span className="ml-auto flex-shrink-0 whitespace-nowrap text-xs text-white/60">
-                  {metadata}
-                </span>
-                <span
-                  className={`flex-shrink-0 text-xs font-medium ${statusColors[song.status] ?? 'text-white/60'}`}
-                >
-                  {song.status}
-                </span>
-              </div>
+                <StatusChip status={song.status} />
+              </button>
             );
           })}
         </div>
