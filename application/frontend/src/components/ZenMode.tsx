@@ -35,6 +35,8 @@ interface ZenModeProps {
   currentBeat: Beat | null;
   /** Jump events per the Player's widened jump callback (issue #39). */
   jumps: JumpEvent[];
+  /** Bumped by the page whenever the engine resets its jump count (Restart, audio reload): stamps key on (epoch, count). */
+  jumpEpoch: number;
   /** True while audio is actually running. */
   isPlaying: boolean;
   /** Main-page error state mirrored inside the overlay (spec failure handling). */
@@ -99,7 +101,7 @@ const paintZenCanvas = (
   );
 };
 
-const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, isPlaying, error, onResume, onExit }) => {
+const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch, isPlaying, error, onResume, onExit }) => {
   const overlayRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [showExit, setShowExit] = useState(true);
@@ -113,15 +115,26 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, isPlaying,
   const glowTSecRef = useRef<number | null>(null);
   const jumpsRef = useRef<JumpEvent[]>(jumps);
   const currentBeatRef = useRef<Beat | null>(currentBeat);
+  const epochRef = useRef(jumpEpoch);
+
+  const clearJumpStamps = () => {
+    jumpTimestamps.current.clear();
+    jumpsRef.current = [];
+    glowTSecRef.current = null;
+  };
 
   // Song switch: jump counts restart from 1 — drop the previous song's
   // stamps or new jumps would inherit stale arrival times (instant decay).
   const beatsKeyRef = useRef(beats);
   if (beatsKeyRef.current !== beats) {
     beatsKeyRef.current = beats;
-    jumpTimestamps.current.clear();
-    jumpsRef.current = [];
-    glowTSecRef.current = null;
+    clearJumpStamps();
+  }
+  // Engine Restart / in-place audio reload: the count re-uses old values, so
+  // re-key stamps by (epoch, count) — the page bumps jumpEpoch on reset (review).
+  if (epochRef.current !== jumpEpoch) {
+    epochRef.current = jumpEpoch;
+    clearJumpStamps();
   }
 
   const [reducedMotion, setReducedMotion] = useState(false);
@@ -131,11 +144,14 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, isPlaying,
     (nowSec: number): ZenJump[] => {
       const indexById = new Map<number, number>();
       beats.forEach((beat, i) => indexById.set(beat.id, i));
+      // The page keeps a small bounded tail (arcs live ≤ FADE_SECONDS), so
+      // this stays O(tail); stamps are (epoch, count)-keyed (review).
       return jumpsRef.current.flatMap((jump) => {
-        let stamp = jumpTimestamps.current.get(jump.count);
+        const stampKey = epochRef.current * 1_000_000 + jump.count;
+        let stamp = jumpTimestamps.current.get(stampKey);
         if (stamp === undefined) {
           stamp = nowSec;
-          jumpTimestamps.current.set(jump.count, stamp);
+          jumpTimestamps.current.set(stampKey, stamp);
         }
         const fromIndex = indexById.get(jump.from.id);
         const toIndex = indexById.get(jump.to.id);
@@ -237,11 +253,13 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, isPlaying,
     if (!canvas) return;
 
     const palette = readZenPalette(window);
-    const dpr = window.devicePixelRatio || 1;
 
     const relayout = () => {
       const vw = window.innerWidth;
       const vh = window.innerHeight;
+      // Re-read per resize: browser zoom / monitor moves change the ratio
+      // without remounting (review finding).
+      const dpr = window.devicePixelRatio || 1;
       canvas.width = Math.round(vw * dpr);
       canvas.height = Math.round(vh * dpr);
       canvas.style.width = `${vw}px`;
@@ -253,9 +271,12 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, isPlaying,
     relayout();
     window.addEventListener('resize', relayout);
 
-    // Bounded fade pass: repaint until glow/arcs settle, then stop.
+    // Bounded fade pass: repaint until glow/arcs settle, then stop. Under
+    // reduced motion nothing decays (static highlight, no arcs), so the pass
+    // is skipped entirely — no 20fps busy-loop for an effect that can't change.
     const stopAtRef = { current: 0 };
     const ensureFadePass = () => {
+      if (reducedMotion) return;
       stopAtRef.current = performance.now() + FADE_SECONDS * 1000;
       if (fadeTimer.current !== undefined) return;
       fadeTimer.current = window.setInterval(() => {
@@ -274,7 +295,7 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, isPlaying,
       if (fadeTimer.current !== undefined) window.clearInterval(fadeTimer.current);
       fadeTimer.current = undefined;
     };
-  }, [beats, repaint]);
+  }, [beats, repaint, reducedMotion]);
 
   const fadePassRef = useRef<(() => void) | null>(null);
 
@@ -303,8 +324,9 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, isPlaying,
 
   // Tap-to-begin gate: ENTRY-TIME ONLY (spec: "if playback is not actually
   // running when the mode is entered"; once playing it never returns that
-  // session). A mid-session pause is not a gate condition — the ✕ (and
-  // spacebar) remain the way back to the player.
+  // session). A mid-session pause is not a gate condition — the ✕ remains
+  // the way back to the player; the page's global spacebar still toggles
+  // play/pause underneath (review note).
   useEffect(() => {
     if (gateSeenRef.current) return;
     gateSeenRef.current = true;
@@ -337,20 +359,27 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, isPlaying,
   const onExitRef = useRef(onExit);
   onExitRef.current = onExit;
 
+  // Esc shares the ✕'s exit path: both must consume the pushed {zen:true}
+  // entry so a later browser Back isn't silently eaten (review finding).
+  const handleExitRef = useRef<() => void>(() => {});
+
   // Esc exits (keyboard user story); history back closes the overlay. Both
-  // set up exactly once per mount.
+  // set up exactly once per mount. Dev StrictMode double-runs this effect
+  // (Next 15 app router: reactStrictMode null → StrictMode in dev); the guard
+  // keeps one push + one listener regardless.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
-        onExitRef.current();
+        handleExitRef.current();
       }
     };
     const onPop = () => onExitRef.current();
     window.addEventListener('keydown', onKey);
     window.addEventListener('popstate', onPop);
     // One history entry per zen session: browser Back pops out of the mode.
-    window.history.pushState({ zen: true }, '');
+    // Guarded: an unfinished sibling strict-run's entry is reused, not doubled.
+    if (!window.history.state?.zen) window.history.pushState({ zen: true }, '');
     return () => {
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('popstate', onPop);
@@ -363,6 +392,7 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, isPlaying,
     if (window.history.state?.zen) window.history.back();
     else onExitRef.current();
   }, []);
+  handleExitRef.current = handleExit;
 
   // Failure surface (spec): the overlay covers the main page's banner, so an
   // audio load/decode failure during zen must be mirrored here — same message
