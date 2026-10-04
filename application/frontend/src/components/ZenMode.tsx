@@ -172,9 +172,12 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch,
     jumpTimestamps.current.clear();
     jumpsRef.current = [];
     glowTSecRef.current = null;
-    // A new jump-list generation means a fresh playback session: growth ribs
-    // and cap pulses restart from an empty slate with it.
-    prevPlayCountsRef.current = new Map();
+    // A new jump-list generation means a fresh playback session: jump stamps
+    // and cap pulses restart from an empty slate with it. prevPlayCountsRef
+    // is deliberately KEPT: beatPlayCounts is kept across Restart (that was
+    // the point — growth history persists), so wiping it here would make the
+    // next tally read prev = 0 and spuriously re-stamp every capped band.
+    // It's a brand-new Map only on song switch (page resets counts there).
     capPulseTSecRef.current.clear();
   };
 
@@ -252,20 +255,22 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch,
   );
 
   // Cap pulse: on each beatPlayCounts change, stamp ring indexes whose beat
-  // crossed past PLAY_MAX_REPS since the last observation (7th+ play); stamps
-  // expire naturally (paint reads the decay, ≤1s each) and are deleted when
-  // spent so the map stays bounded. Reduced motion ⇒ no stamp (suppressed
-  // like the glow).
+  // increased past PLAY_MAX_REPS (7th play and EVERY further repeat — spec
+  // 4c: each repeat re-pulses); stamps expire naturally (paint reads the
+  // decay, ≤1s each) and are deleted when spent so the map stays bounded.
+  // Reduced motion ⇒ no stamp (suppressed like the glow).
   useEffect(() => {
     if (!beatPlayCounts) return;
     // Always advance prevPlayCountsRef, even under reduced motion — otherwise
     // a reduced-motion stretch freezes it and turning reduced motion off
     // bulk-stamps pulses for every beat that capped in the meantime.
     beatPlayCounts.forEach((count, id) => {
+      const prev = prevPlayCountsRef.current.get(id);
       if (
         !reducedMotion &&
         count > PLAY_MAX_REPS &&
-        (prevPlayCountsRef.current.get(id) ?? 0) <= PLAY_MAX_REPS
+        prev !== undefined &&
+        count > prev
       ) {
         const ringIndex = indexById.get(id);
         if (ringIndex !== undefined) capPulseTSecRef.current.set(ringIndex, performance.now() / 1000);

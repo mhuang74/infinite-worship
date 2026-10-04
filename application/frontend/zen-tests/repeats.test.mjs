@@ -22,7 +22,7 @@ function makeBeat(id, cluster = id % 6) {
   return { id, start: id * 0.5, duration: 0.5, cluster, segment: 0, jump_candidates: [] };
 }
 
-function paint(beats, layout, { currentBeat = null, currentIndex = -1, counts = null, pulses = null, reducedMotion = false, nowSec = 0 } = {}) {
+function paint(beats, layout, { currentBeat = null, currentIndex = -1, counts = null, pulses = null, reducedMotion = false, nowSec = 0, glowAt = null } = {}) {
   const ctx = new FakeCtx({ width: 800, height: 800 });
   PAINT_FRAME(
     {
@@ -34,7 +34,7 @@ function paint(beats, layout, { currentBeat = null, currentIndex = -1, counts = 
       jumps: [],
       reducedMotion,
       nowSec,
-      currentBeatGlowTSec: currentBeat ? nowSec : null,
+      currentBeatGlowTSec: currentBeat ? (glowAt ?? nowSec) : null,
       beatPlayCounts: counts ?? undefined,
       capPulseTSecByIndex: pulses ?? undefined,
     },
@@ -178,6 +178,37 @@ const BAND_12 = TILE_DIAMETER_FOR(12, LAYOUT_12.radius);
   assert.equal(base.globalAlpha, 0.9, 'reduced motion ⇒ pulse suppressed');
   const ribs = ribArcs(ctx);
   assert.equal(ribs.length, 6, 'reduced motion ⇒ static ribs still paint');
+}
+
+{ // Missing stamp ⇒ NO pulse for that tile: a pulse map holding only index 3
+  // must re-brighten exactly one band; every other non-current tile stays at
+  // alpha 0.9 (a sentinel default would decay(−∞) = 1 and brighten the ring).
+  const pulses = new Map([[3, 9.5]]);
+  const ctx = paint(BEATS_12, LAYOUT_12, { counts: null, pulses, nowSec: 10 });
+  // Base-band arcs (lineWidth band): collect alpha by ring index order —
+  // tile arc k is the k-th base stroke (one per tile, no glow: no currentBeat).
+  const baseAlphas = baseArcs(ctx, BAND_12).map((a) => a.globalAlpha);
+  assert.equal(baseAlphas.length, 12, 'one base arc per tile');
+  baseAlphas.forEach((alpha, idx) => {
+    const expected = idx === 3 ? 0.55 + 0.45 * decayHalf() : 0.9;
+    assert.ok(
+      Math.abs(alpha - expected) < 1e-9,
+      `tile ${idx} alpha == ${expected} with a stamp only on tile 3 (${alpha})`,
+    );
+  });
+  // And a stamp on a non-current tile doesn't pin the current tile's glow.
+  const pulses2 = new Map([[1, 9.5]]);
+  // Backdate the beat-tick glow 0.5s: glow alone ⇒ alpha 0.775.
+  const ctx2 = paint(BEATS_12, LAYOUT_12, { currentBeat: BEATS_12[0], currentIndex: 0, counts: null, pulses: pulses2, nowSec: 10, glowAt: 9.5 });
+  const currentAlpha = baseArcs(ctx2, BAND_12)[0];
+  // 0.55 + 0.45 × glowDecay(0.5) = 0.775 — the decaying glow ramp, NOT pinned
+  // at 1.0 by a missing-stamp sentinel (would be 1.0 forever with the bug).
+  assert.ok(Math.abs(currentAlpha.globalAlpha - 0.775) < 1e-9, `current tile glow decays unpinned (${currentAlpha.globalAlpha})`);
+}
+
+/** Half-life 0.5s decay of the cap pulse (mirrors paint's 0.55 + 0.45 × decay). */
+function decayHalf() {
+  return 1 - 0.5; // stamp 9.5, nowSec 10 ⇒ elapsed 0.5 ⇒ decay 0.5
 }
 
 { // Dot-position coupling: current beat with count 4 ⇒ dot center at
