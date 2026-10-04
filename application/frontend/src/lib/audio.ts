@@ -1,5 +1,5 @@
 
-import { Beat } from './types';
+import { Beat, JumpEvent } from './types';
 
 export const createAudioBuffer = async (file: File, audioContext: AudioContext): Promise<AudioBuffer> => {
   const arrayBuffer = await file.arrayBuffer();
@@ -11,7 +11,7 @@ export class AudioEngine {
   private audioBuffer: AudioBuffer;
   private beats: Beat[] = [];
   private onBeatChange: (beat: Beat) => void;
-  private onJump: (jumps: number) => void;
+  private onJump: (jump: JumpEvent) => void;
   private onPlaybackStarted: (() => void) | null = null;
   private jumpProbability = 0.15;
   private nextBeatTime = 0;
@@ -23,7 +23,7 @@ export class AudioEngine {
   private mainGain: GainNode;
   private hasPlaybackStarted = false;
 
-  constructor(audioContext: AudioContext, audioBuffer: AudioBuffer, beats: Beat[], onBeatChange: (beat: Beat) => void, onJump: (jumps: number) => void, onPlaybackStarted?: () => void) {
+  constructor(audioContext: AudioContext, audioBuffer: AudioBuffer, beats: Beat[], onBeatChange: (beat: Beat) => void, onJump: (jump: JumpEvent) => void, onPlaybackStarted?: () => void) {
     this.audioContext = audioContext;
     this.audioBuffer = audioBuffer;
     this.beats = beats;
@@ -61,7 +61,9 @@ export class AudioEngine {
   public restart() {
     this.stop();
     this.totalJumps = 0;
-    this.onJump(this.totalJumps);
+    // Zeroed event: the counter reset, not a jump — no beats were left or
+    // landed on. Consumers that keep a jump LIST must filter count > 0.
+    this.onJump({ count: 0, from: this.beats[0], to: this.beats[0] });
     this.play();
   }
 
@@ -134,7 +136,7 @@ export class AudioEngine {
           nextBeat = jumpCandidate;
           this.beatsSinceLastJump = 0;
           this.totalJumps++;
-          this.onJump(this.totalJumps);
+          this.onJump({ count: this.totalJumps, from: currentBeat, to: jumpCandidate });
         } else {
           nextBeat = this.beats[this.currentBeatIndex + 1];
         }

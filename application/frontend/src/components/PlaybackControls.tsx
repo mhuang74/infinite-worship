@@ -11,6 +11,10 @@ interface PlaybackControlsProps {
   onPlayPause: () => void;
   onRestart: () => void;
   onJumpProbabilityChange: (value: number) => void;
+  /** Enter zen mode (disabled unless a Song is loaded and playing, #40). */
+  onEnterZen?: () => void;
+  /** True only when playback is actually running. */
+  zenAvailable?: boolean;
 }
 
 const IconPlay = () => (
@@ -31,6 +35,12 @@ const IconRestart = () => (
   </svg>
 );
 
+const IconExpand = () => (
+  <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <path fill="currentColor" d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" />
+  </svg>
+);
+
 const PlaybackControls: React.FC<PlaybackControlsProps> = ({
   isPlaying,
   isPlaybackPending = false,
@@ -39,6 +49,8 @@ const PlaybackControls: React.FC<PlaybackControlsProps> = ({
   onPlayPause,
   onRestart,
   onJumpProbabilityChange,
+  onEnterZen,
+  zenAvailable = false,
 }) => {
   const allowedValues = React.useMemo(() => Array.from({ length: 8 }, (_, i) => 0.15 + i * 0.10), []);
   const snapToAllowed = React.useCallback((v: number) => {
@@ -114,6 +126,20 @@ const PlaybackControls: React.FC<PlaybackControlsProps> = ({
         ) : (
           <IconPlay />
         )}
+      </button>
+
+      {/* Zen mode entry (spec #38 beside play/pause; enabled only while a
+          Song is loaded AND actually playing). */}
+      <button
+        type="button"
+        onClick={() => onEnterZen?.()}
+        disabled={!zenAvailable}
+        className="grid h-11 w-11 flex-none place-items-center rounded-full border border-outline text-on-surface-variant transition-colors duration-200 hover:bg-on-surface/10 disabled:cursor-not-allowed disabled:opacity-40"
+        aria-label={zenAvailable ? 'Enter zen mode — fullscreen visualization' : 'Play a song to enter zen mode'}
+        title={zenAvailable ? 'Zen mode (fullscreen visualization)' : 'Play a song first'}
+      >
+        <span className="sr-only">Enter zen mode</span>
+        <IconExpand />
       </button>
 
       {/* Unified remix-probability slider on all viewports (spec §5.2); the
