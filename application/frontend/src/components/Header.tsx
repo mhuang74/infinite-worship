@@ -4,14 +4,12 @@ import React, { useRef } from 'react';
 
 const APP_DESCRIPTION = 'Infinite Worship uses song and audio characteristics to detect smooth transition points for endless remixing. Currently limited to within a song. The ultimate goal is to smoothly transition between songs!';
 
-// §7 brand mark: gold-gradient squircle + geometric cross, glowing. The
-// gradient/glow live here (CSS); src/app/icon.svg carries the same art for
-// the favicon.
+// §7 brand mark: single art source is src/app/icon.svg (also the favicon);
+// the glow lives on the wrapper.
 const Logo: React.FC = () => (
   <div className="logo-squircle" aria-hidden="true">
-    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
-      <path d="M13.2 3.2h-2.4v6.4H4.4v2.4h6.4v8.8h2.4V12h6.4V9.6h-6.4V3.2z" fill="#3A2800" />
-    </svg>
+    {/* eslint-disable-next-line @next/next/no-img-element -- static local icon, no optimization needed */}
+    <img src="/icon.svg" width={48} height={48} alt="" />
   </div>
 );
 
@@ -19,7 +17,7 @@ const Header: React.FC = () => {
   const dialogRef = useRef<HTMLDialogElement>(null);
 
   return (
-    <header className="flex items-center justify-center gap-3 sm:justify-start sm:gap-4">
+    <header className="flex items-center justify-center gap-3 hero:justify-start hero:gap-4">
       <Logo />
       <div className="text-left">
         <h1 className="type-headline">Infinite Worship</h1>

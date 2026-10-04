@@ -4,18 +4,13 @@ import React, { useState, useEffect, useCallback } from 'react';
 import api from '@/lib/api';
 import { debounce } from 'lodash';
 import StatusChip from '@/components/StatusChip';
+import { formatClock } from '@/lib/format';
 import type { Song } from '@/lib/types';
 
 interface SongSearchProps {
   onSongSelect: (songId: string, filename: string) => void;
   selectedSongId?: string | null;
 }
-
-const formatDuration = (seconds: number): string => {
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = Math.floor(seconds % 60);
-  return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
-};
 
 const SongSearch: React.FC<SongSearchProps> = ({ onSongSelect, selectedSongId = null }) => {
   const [query, setQuery] = useState('');
@@ -105,7 +100,7 @@ const SongSearch: React.FC<SongSearchProps> = ({ onSongSelect, selectedSongId = 
                     {song.title}
                   </div>
                   {song.duration !== null && (
-                    <div className="mt-0.5 text-xs text-on-surface-variant">{formatDuration(song.duration)}</div>
+                    <div className="mt-0.5 text-xs text-on-surface-variant">{formatClock(song.duration)}</div>
                   )}
                 </div>
                 <StatusChip status={song.status} />

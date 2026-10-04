@@ -66,7 +66,11 @@ const PlaybackControls: React.FC<PlaybackControlsProps> = ({
   const [pulse, setPulse] = useState(false);
   const pulseTimeout = useRef<number | undefined>(undefined);
   useEffect(() => {
-    if (!isPlaying || currentBeatId === null) return;
+    if (!isPlaying || currentBeatId === null) {
+      // Pause mid-pulse must not leave the FAB stuck in the beating state.
+      setPulse(false);
+      return;
+    }
     setPulse(true);
     clearTimeout(pulseTimeout.current);
     pulseTimeout.current = window.setTimeout(() => setPulse(false), 140);
@@ -78,7 +82,7 @@ const PlaybackControls: React.FC<PlaybackControlsProps> = ({
 
   return (
     <div
-      className="mt-6 flex flex-wrap items-center justify-center gap-x-5 gap-y-4 sm:justify-start"
+      className="mt-6 flex flex-wrap items-center justify-center gap-x-5 gap-y-4 hero:justify-start"
       role="group"
       aria-label="Playback controls"
     >
@@ -114,7 +118,7 @@ const PlaybackControls: React.FC<PlaybackControlsProps> = ({
 
       {/* Unified remix-probability slider on all viewports (spec §5.2); the
           mobile <select> is gone. */}
-      <div className="order-3 flex w-full items-center gap-3.5 sm:order-none sm:w-auto sm:min-w-0 sm:flex-1">
+      <div className="order-3 flex w-full items-center gap-3.5 hero:order-none hero:w-auto hero:min-w-0 hero:flex-1">
         <label htmlFor="jump-prob-range" className="whitespace-nowrap text-[13px] text-on-surface-variant">
           Remix probability
         </label>

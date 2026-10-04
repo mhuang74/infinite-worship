@@ -139,10 +139,8 @@
   --color-inverse-surface: var(--inverse-surface);
   --color-inverse-on-surface: var(--inverse-on-surface);
   --color-inverse-primary: var(--inverse-primary);
-  --color-brand-blue: var(--brand-blue);
   --color-brand-gold: var(--brand-gold);
   --color-on-gold: var(--on-gold);
-  --color-gold-ink: var(--gold-ink);
   --color-gold-foreground: var(--gold-foreground);
   --color-jewel-ruby: var(--jewel-ruby);
   --color-jewel-gold: var(--jewel-gold);
@@ -151,27 +149,31 @@
   --color-jewel-amethyst: var(--jewel-amethyst);
   --color-jewel-cyan: var(--jewel-cyan);
 
-  /* §3 typography: Fraunces display/serif, Inter UI/body (wired via
-     next/font variables in layout.tsx). */
+  /* §3 typography: Inter UI/body, wired via next/font in layout.tsx.
+     Tailwind v4 preflight uses --font-sans as the document default font. */
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
-  --font-display: var(--font-fraunces), ui-serif, Georgia, serif;
+
+  /* §5.4: single mobile/desktop boundary at 820px (`hero:` variants). */
+  --breakpoint-hero: 820px;
 }
 
 /* §3 type roles as utilities (mobile sizes per §5.4 breakpoint). */
-.type-display {
+.type-display,
+.type-headline,
+.type-card-title {
   font-family: var(--font-fraunces), ui-serif, Georgia, serif;
+}
+.type-display {
   font-size: 2.125rem;
   font-weight: 560;
   line-height: 1.12;
 }
 .type-headline {
-  font-family: var(--font-fraunces), ui-serif, Georgia, serif;
   font-size: 1.6875rem;
   font-weight: 600;
   line-height: 1.2;
 }
 .type-card-title {
-  font-family: var(--font-fraunces), ui-serif, Georgia, serif;
   font-size: 1.25rem;
   font-weight: 560;
   line-height: 1.3;
@@ -373,18 +375,19 @@
   .loading-bar::after { animation: none; width: 100%; }
 }
 
-/* §7 brand mark: gold-gradient squircle with outer glow. */
+/* §7 brand mark: squircle glow wrapper; the art is icon.svg. */
 .logo-squircle {
   width: 48px;
   height: 48px;
   border-radius: 15px;
   flex: none;
-  display: grid;
-  place-items: center;
-  background: linear-gradient(135deg, #ffd95a, var(--brand-gold) 55%, #d9930a);
   box-shadow:
     0 0 18px 2px color-mix(in srgb, var(--brand-gold) 40%, transparent),
     0 2px 8px rgba(0, 0, 0, 0.35);
+}
+.logo-squircle img {
+  display: block;
+  border-radius: 15px;
 }
 
 /* §5.1 info dialog (native <dialog>). */
@@ -422,7 +425,7 @@ html, body, #__next {
 body {
   background: var(--surface);
   color: var(--on-surface);
-  font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  /* font-family comes from --font-sans via Tailwind preflight (Inter). */
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }

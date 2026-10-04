@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import api from '@/lib/api';
 import FileUpload from '@/components/FileUpload';
 import Header from '@/components/Header';
@@ -12,14 +12,8 @@ import SongSearch from '@/components/SongSearch';
 import { AudioEngine, createAudioBuffer } from '@/lib/audio';
 import { loadSongForPlayback } from '@/lib/player';
 import { isPlayable } from '@/lib/upload';
+import { formatClock } from '@/lib/format';
 import type { Beat, Song } from '@/lib/types';
-
-const formatClock = (seconds: number | null): string => {
-  if (seconds == null || !Number.isFinite(seconds)) return '--:--';
-  const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60);
-  return `${m}:${s.toString().padStart(2, '0')}`;
-};
 
 const TABS = [
   { id: 'library', label: 'Song Library' },
@@ -44,7 +38,7 @@ export default function HomePage() {
   // Sliding tab indicator (§5.3): measured from the active tab button.
   const tabRefs = useRef<Partial<Record<TabId, HTMLButtonElement | null>>>({});
   const [indicator, setIndicator] = useState<{ left: number; width: number } | null>(null);
-  useLayoutEffect(() => {
+  useEffect(() => {
     const el = tabRefs.current[activeTab];
     if (!el) return;
     const update = () => setIndicator({ left: el.offsetLeft + 12, width: el.offsetWidth - 24 });
@@ -137,7 +131,15 @@ export default function HomePage() {
     const setupEngine = async () => {
       if (audioFile && songData) {
         if (!audioContextRef.current) {
-          audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+          // Legacy Safari exposes webkitAudioContext, which the DOM types
+          // lack — one unchecked widening of `window`, then plain access.
+          const win = window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext };
+          const AudioContextCtor = win.AudioContext ?? win.webkitAudioContext;
+          if (!AudioContextCtor) {
+            setError('Web Audio API is not available in this browser.');
+            return;
+          }
+          audioContextRef.current = new AudioContextCtor();
         }
         
         // Stop and clear the old engine instance if it exists
@@ -392,13 +394,14 @@ export default function HomePage() {
   };
 
   return (
-    <main className="min-h-screen w-full px-4 py-8 sm:py-12">
-      <div className="mx-auto w-full max-w-[1080px] space-y-6 sm:space-y-8">
+    <main className="min-h-screen w-full px-4 py-8 hero:py-12">
+      {/* relative: content stacks above the fixed body::before page glows */}
+      <div className="relative mx-auto w-full max-w-[1080px] space-y-6 hero:space-y-8">
         <Header />
 
         {/* Hero now-playing card (spec §5.2) */}
-        <section className="rounded-[28px] border border-outline-variant/55 bg-surface-container-low p-5 shadow-[0_1px_2px_rgba(0,0,0,0.3),0_4px_16px_rgba(0,0,0,0.18)] sm:p-7">
-          <div className="grid grid-cols-1 gap-7 lg:grid-cols-[1fr_300px]">
+        <section className="rounded-[28px] border border-outline-variant/55 bg-surface-container-low p-5 shadow-[0_1px_2px_rgba(0,0,0,0.3),0_4px_16px_rgba(0,0,0,0.18)] hero:p-7">
+          <div className="grid grid-cols-1 gap-7 hero:grid-cols-[1fr_300px]">
             <div className="min-w-0">
               <h2 className="type-display">{selectedSongName ?? 'No song selected'}</h2>
               <p className="mb-5 mt-1.5 text-[13px] text-on-surface-variant">
@@ -408,11 +411,11 @@ export default function HomePage() {
               </p>
 
               {/* Screen inset: waveform + jewel beat-cluster bar */}
-              <div className="rounded-2xl border border-outline-variant/45 bg-surface-container-lowest p-4 sm:px-5">
-                {isPlayerReady ? (
+              <div className="rounded-2xl border border-outline-variant/45 bg-surface-container-lowest p-4 hero:px-5">
+                {songData && audioFile ? (
                   <Visualization
                     audioFile={audioFile}
-                    beats={songData!.segments}
+                    beats={songData.segments}
                     currentBeat={currentBeat}
                     onSeek={handleSeek}
                   />
@@ -478,15 +481,16 @@ export default function HomePage() {
         </section>
 
         {/* MD3 primary tabs (§5.3) with sliding gold indicator */}
-        <nav aria-label="Sections" className="relative mx-1 flex border-b border-outline-variant/60" role="tablist">
+        <div aria-label="Sections" className="relative mx-1 flex border-b border-outline-variant/60" role="tablist">
           {TABS.map((tab) => (
             <button
+              type="button"
               key={tab.id}
               ref={(el) => { tabRefs.current[tab.id] = el; }}
               role="tab"
               aria-selected={activeTab === tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`h-12 flex-1 px-3 text-sm font-semibold transition-colors duration-200 sm:flex-none sm:px-5 ${
+              className={`h-12 flex-1 px-2.5 text-[13px] font-semibold transition-colors duration-200 hero:flex-none hero:px-5 hero:text-sm ${
                 activeTab === tab.id
                   ? 'text-gold-foreground'
                   : 'text-on-surface-variant hover:text-on-surface'
@@ -502,14 +506,14 @@ export default function HomePage() {
               aria-hidden="true"
             />
           )}
-        </nav>
+        </div>
 
         {/* Loading-song state: thin gold linear progress under the tab bar (§5.3) */}
         {loadingLibrarySong && (
           <div className="loading-bar mx-1" role="progressbar" aria-label={`Loading song: ${selectedSongName}`} />
         )}
 
-        <section className="mt-4 rounded-[20px] border border-outline-variant/45 bg-surface-container-low p-2.5 sm:p-3">
+        <section className="mt-4 rounded-[20px] border border-outline-variant/45 bg-surface-container-low p-2.5 hero:p-3">
           {activeTab === 'library' && (
             <SongLibrary
               onSongSelect={handleSongSelect}

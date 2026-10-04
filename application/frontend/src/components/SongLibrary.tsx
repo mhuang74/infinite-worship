@@ -2,6 +2,7 @@
 
 import React from 'react';
 import StatusChip from '@/components/StatusChip';
+import { formatClock } from '@/lib/format';
 import type { Song } from '@/lib/types';
 
 interface SongLibraryProps {
@@ -13,12 +14,6 @@ interface SongLibraryProps {
   refreshing: boolean;
   selectedSongId?: string | null;
 }
-
-const formatDuration = (seconds: number): string => {
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = Math.floor(seconds % 60);
-  return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
-};
 
 const SongLibrary: React.FC<SongLibraryProps> = ({
   onSongSelect,
@@ -100,9 +95,12 @@ const SongLibrary: React.FC<SongLibraryProps> = ({
                   </div>
                   {hasMeta && (
                     <div className="mt-0.5 truncate text-xs text-on-surface-variant">
-                      {song.duration !== null && formatDuration(song.duration)}
+                      {song.duration !== null && formatClock(song.duration)}
                       {failed && song.failure_reason && (
-                        <span className="text-error"> · {song.failure_reason}</span>
+                        <span className="text-error">
+                          {song.duration !== null ? ' · ' : ''}
+                          {song.failure_reason}
+                        </span>
                       )}
                     </div>
                   )}
