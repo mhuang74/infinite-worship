@@ -17,12 +17,17 @@
 
 'use client';
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Beat, JumpEvent } from '@/lib/types';
 import {
   LAYOUT_RING,
   PAINT_FRAME,
   FADE_SECONDS,
+  GLOW_DOT_POSITION,
+  HALO_RADIUS_FACTOR,
+  PLAY_GROWTH_FOR,
+  PLAY_MAX_REPS,
+  TILE_DIAMETER_FOR,
   type RingLayout,
   type ZenJump,
   type ZenPalette,
@@ -37,6 +42,8 @@ interface ZenModeProps {
   jumps: JumpEvent[];
   /** Bumped by the page whenever the engine resets its jump count (Restart, audio reload): stamps key on (epoch, count). */
   jumpEpoch: number;
+  /** Per-beat playback tallies (beat.id → count); drives growth ribs + cap pulses. */
+  beatPlayCounts?: Map<number, number>;
   /** True while audio is actually running. */
   isPlaying: boolean;
   /** Main-page error state mirrored inside the overlay (spec failure handling). */
@@ -69,6 +76,15 @@ export const readZenPalette = (win: Window): ZenPalette => {
   };
 };
 
+/** #rrggbb | #rgb → "r, g, b" triplet, for building rgba() color stops. */
+const toRgbTriplet = (hex: string): string => {
+  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return '253, 181, 21'; // brand gold fallback
+  const h = m[1];
+  const [r, g, b] = h.length === 3 ? [h[0], h[1], h[2]].map((c) => c + c) : [h.slice(0, 2), h.slice(2, 4), h.slice(4, 6)];
+  return `${parseInt(r, 16)}, ${parseInt(g, 16)}, ${parseInt(b, 16)}`;
+};
+
 /** One repaint: clears, lays out, and replays the draw module's commands. */
 const paintZenCanvas = (
   canvas: HTMLCanvasElement,
@@ -80,12 +96,37 @@ const paintZenCanvas = (
   reducedMotion: boolean,
   nowSec: number,
   glowTSec: number | null,
+  viewExtras: {
+    currentBeatIndex: number;
+    beatPlayCounts?: Map<number, number>;
+    capPulseTSecByIndex?: Map<number, number>;
+  },
 ): void => {
   const ctx2d = canvas.getContext('2d');
   if (!ctx2d) return;
   const target = ctx2d as unknown as DrawTarget;
   target.width = canvas.width;
   target.height = canvas.height;
+
+  // The one opaque object draw.ts cannot create: the glow-dot halo's radial
+  // gradient. Host-built each frame against the real 2D context; draw.ts
+  // receives it opaquely (`unknown`) and falls back to stroke markers when
+  // absent.
+  const currentIndex = viewExtras.currentBeatIndex;
+  let haloGradient: unknown;
+  if (currentIndex >= 0) {
+    const band = TILE_DIAMETER_FOR(beats.length, layout.radius);
+    const counts = viewExtras.beatPlayCounts;
+    const beat = beats[currentIndex];
+    const growth = beat ? PLAY_GROWTH_FOR(counts?.get(beat.id) ?? 0) : 0;
+    const dot = GLOW_DOT_POSITION(layout, band, growth, layout.tiles[currentIndex]);
+    const r = band * HALO_RADIUS_FACTOR;
+    const gradient = ctx2d.createRadialGradient(dot.x, dot.y, 0, dot.x, dot.y, r);
+    gradient.addColorStop(0, `rgba(${toRgbTriplet(palette.playhead)}, 1)`);
+    gradient.addColorStop(1, `rgba(${toRgbTriplet(palette.playhead)}, 0)`);
+    haloGradient = gradient;
+  }
+
   PAINT_FRAME(
     {
       beats,
@@ -96,12 +137,14 @@ const paintZenCanvas = (
       reducedMotion,
       nowSec,
       currentBeatGlowTSec: glowTSec,
+      ...viewExtras,
+      haloGradient,
     },
     target,
   );
 };
 
-const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch, isPlaying, error, onResume, onExit }) => {
+const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch, beatPlayCounts, isPlaying, error, onResume, onExit }) => {
   const overlayRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [showExit, setShowExit] = useState(true);
@@ -116,11 +159,23 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch,
   const jumpsRef = useRef<JumpEvent[]>(jumps);
   const currentBeatRef = useRef<Beat | null>(currentBeat);
   const epochRef = useRef(jumpEpoch);
+  // Cap-pulse state: previous play counts (to detect a count crossing past
+  // PLAY_MAX_REPS) + ring-index → stamp-second map (deleted on expiry).
+  const prevPlayCountsRef = useRef(new Map<number, number>());
+  const capPulseTSecRef = useRef(new Map<number, number>());
+  // Ref mirror of the beatPlayCounts prop: repaint reads refs (it runs at
+  // beat frequency from effects keyed by coarse deps), never props directly.
+  const beatPlayCountsRef = useRef(beatPlayCounts);
+  beatPlayCountsRef.current = beatPlayCounts;
 
   const clearJumpStamps = () => {
     jumpTimestamps.current.clear();
     jumpsRef.current = [];
     glowTSecRef.current = null;
+    // A new jump-list generation means a fresh playback session: growth ribs
+    // and cap pulses restart from an empty slate with it.
+    prevPlayCountsRef.current = new Map();
+    capPulseTSecRef.current.clear();
   };
 
   // Song switch: jump counts restart from 1 — drop the previous song's
@@ -139,11 +194,17 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch,
 
   const [reducedMotion, setReducedMotion] = useState(false);
 
+  // beat id → ring index, shared by the arc resolution and the playhead's
+  // currentBeatIndex (one build per repaint instead of two).
+  const indexById = useMemo(() => {
+    const map = new Map<number, number>();
+    beats.forEach((beat, i) => map.set(beat.id, i));
+    return map;
+  }, [beats]);
+
   // Map jump events to ring indices + arrival timestamps once per jump list.
   const buildZenJumps = useCallback(
     (nowSec: number): ZenJump[] => {
-      const indexById = new Map<number, number>();
-      beats.forEach((beat, i) => indexById.set(beat.id, i));
       // The page keeps a small bounded tail (arcs live ≤ FADE_SECONDS), so
       // this stays O(tail); stamps are (epoch, count)-keyed (review).
       return jumpsRef.current.flatMap((jump) => {
@@ -159,27 +220,69 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch,
         return [{ ...jump, fromIndex, toIndex, eventTSec: stamp }];
       });
     },
-    [beats],
+    [indexById],
   );
 
   const repaint = useCallback(
     (layout: RingLayout, palette: ZenPalette, nowSec: number) => {
       const canvas = canvasRef.current;
       if (!canvas) return;
+      const currentBeat = currentBeatRef.current;
       paintZenCanvas(
         canvas,
         layout,
         palette,
         beats,
-        currentBeatRef.current,
+        currentBeat,
         buildZenJumps(nowSec),
         reducedMotion,
         nowSec,
         reducedMotion ? null : glowTSecRef.current,
+        {
+          currentBeatIndex: currentBeat ? (indexById.get(currentBeat.id) ?? -1) : -1,
+          beatPlayCounts: beatPlayCountsRef.current,
+          capPulseTSecByIndex:
+            reducedMotion || capPulseTSecRef.current.size === 0
+              ? undefined
+              : capPulseTSecRef.current,
+        },
       );
     },
-    [beats, buildZenJumps, reducedMotion],
+    [beats, buildZenJumps, indexById, reducedMotion],
   );
+
+  // Cap pulse: on each beatPlayCounts change, stamp ring indexes whose beat
+  // crossed past PLAY_MAX_REPS since the last observation (7th+ play); stamps
+  // expire naturally (paint reads the decay, ≤1s each) and are deleted when
+  // spent so the map stays bounded. Reduced motion ⇒ no stamp (suppressed
+  // like the glow).
+  useEffect(() => {
+    if (!beatPlayCounts) return;
+    // Always advance prevPlayCountsRef, even under reduced motion — otherwise
+    // a reduced-motion stretch freezes it and turning reduced motion off
+    // bulk-stamps pulses for every beat that capped in the meantime.
+    beatPlayCounts.forEach((count, id) => {
+      if (
+        !reducedMotion &&
+        count > PLAY_MAX_REPS &&
+        (prevPlayCountsRef.current.get(id) ?? 0) <= PLAY_MAX_REPS
+      ) {
+        const ringIndex = indexById.get(id);
+        if (ringIndex !== undefined) capPulseTSecRef.current.set(ringIndex, performance.now() / 1000);
+      }
+      prevPlayCountsRef.current.set(id, count);
+    });
+    if (reducedMotion) return;
+    // Expire spent stamps and repaint so the pulse ramp is visible.
+    const now = performance.now() / 1000;
+    capPulseTSecRef.current.forEach((stamp, idx) => {
+      if (now - stamp >= FADE_SECONDS) capPulseTSecRef.current.delete(idx);
+    });
+    if (capPulseTSecRef.current.size > 0 && layoutRef.current) {
+      repaint(layoutRef.current, readZenPalette(window), now);
+      fadePassRef.current?.();
+    }
+  }, [beatPlayCounts, indexById, reducedMotion, repaint]);
 
   // Entry: request OS fullscreen (layer 2, bonus) + Wake Lock (screen on).
   // Both are progressive enhancements — unsupported/rejected is silent

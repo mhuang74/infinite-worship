@@ -1,5 +1,9 @@
 /**
- * Geometry tests (issue #40): ring of beat tiles, sequential placement.
+ * Geometry tests (issue #40 + v2 step 3): ring of beat tiles, sequential
+ * placement; radius = 0.35 × min(viewport side), clamped [MIN_RING_RADIUS,
+ * box/2 − MAX_RING_HEADROOM] with ceiling>floor>fraction precedence; band
+ * floor 6px, ceiling 44px, slot cap ×0.72.
+ *
  * Angles: beat 0 at 12 o'clock, proceeding clockwise; exactly one tile per
  * beat of the Analysis, evenly spaced around the ring.
  */
@@ -51,39 +55,58 @@ function makeBeat(id) {
   });
 }
 
-{ // Largest square that fits the viewport: radius ≤ half of min(vw, vh)
-  // minus margin; ring stays centered (issue #40: min(vw, vh)).
-  const layout = LAYOUT_RING([makeBeat(0)], { width: 400, height: 700, margin: 24 });
-  assert.equal(layout.center.x, 200);
-  assert.equal(layout.center.y, 350);
-  assert.ok(layout.radius <= 176, `radius ${layout.radius} leaks past the square (max 176)`);
-  assert.ok(layout.radius >= 140, `radius ${layout.radius} too small for a 376px square`);
+{ // v2 radius rule: radius == 0.35 × min(vw, vh) when unclamped. 800×800
+  // margin 32 ⇒ 0.35 × 800 = 280 (spec's approved reference point).
+  const layout = LAYOUT_RING([makeBeat(0)], { width: 800, height: 800, margin: 32 });
+  assert.ok(Math.abs(layout.radius - 280) < 1e-9, `radius ${layout.radius} == 280 at 800×800`);
 }
 
-{ // Portrait→landscape: ring stays circular and inside the viewport with no
-  // reflow-special-casing; min dimension governs both (issue #40).
-  const portrait = LAYOUT_RING(Array.from({ length: 5 }, (_, i) => makeBeat(i)), { width: 390, height: 844, margin: 20 });
-  const landscape = LAYOUT_RING(Array.from({ length: 5 }, (_, i) => makeBeat(i)), { width: 844, height: 390, margin: 20 });
-  assert.ok(portrait.radius <= 175 && landscape.radius <= 175);
-  assert.equal(portrait.radius, landscape.radius);
+{ // Min-side rule: same radius for a portrait and a landscape viewport of
+  // the same two sides (ring stays circular, centered, no reflow). At 390
+  // min side margin 0 the fraction binds but the ceiling caps it
+  // (box/2 − 40 = 155 < 136.5 is false ⇒ fraction: 0.35 × 390 = 136.5).
+  const portrait = LAYOUT_RING(Array.from({ length: 5 }, (_, i) => makeBeat(i)), { width: 390, height: 844, margin: 0 });
+  const landscape = LAYOUT_RING(Array.from({ length: 5 }, (_, i) => makeBeat(i)), { width: 844, height: 390, margin: 0 });
+  assert.equal(portrait.radius, landscape.radius, 'min-side rule: identical radii');
+  assert.ok(Math.abs(portrait.radius - 0.35 * 390) < 1e-9, `radius == 0.35 × 390 (${portrait.radius})`);
+  assert.equal(portrait.center.x, 390 / 2);
+  assert.equal(portrait.center.y, 844 / 2);
+  assert.equal(landscape.center.x, 844 / 2);
+  assert.equal(landscape.center.y, 390 / 2);
+  assert.ok(portrait.radius + 40 <= 390 / 2, 'ring + headroom stays inside the min side');
 }
 
-{ // Realistic beat counts (a 4-minute song ≈ 450-617 beats): the ring must
-  // stay READABLE — each beat's band occupies its angular slot as an annulus
-  // segment. The band thickness never exceeds the slot's arc width (color
-  // separation) and never drops below a visible ~2px; the current tile's
-  // highlight exceeds base thickness so the playhead reads from across the
-  // room (review finding R6, user stories 5/8/9, 6).
+{ // Precedence: ceiling wins over floor, floor wins over fraction. At
+  // 100×100 margin 0: box/2 − 40 = 10 < 64 floor ⇒ radius 10 (the floor
+  // never leaks the ring outside the box).
+  const tiny = LAYOUT_RING([makeBeat(0)], { width: 100, height: 100, margin: 0 });
+  assert.ok(Math.abs(tiny.radius - 10) < 1e-9, `ceiling beats floor: radius ${tiny.radius} == 10`);
+}
+
+{ // Realistic beat counts (a 4-minute song ≈ 450-617 beats): band thickness
+  // with the v2 bounds — floor 6px, ceiling 44px, slot cap ×0.72 kept. The
+  // 900-beat case exceeds the slot cap because the floor binds (accepted
+  // user tradeoff; pre-decided fallback: floor = min(6, slotArc)).
   for (const count of [12, 60, 450, 900]) {
-    const layout = LAYOUT_RING(Array.from({ length: count }, (_, i) => makeBeat(i)), { width: 800, height: 800, margin: 24 });
+    const layout = LAYOUT_RING(Array.from({ length: count }, (_, i) => makeBeat(i)), { width: 800, height: 800, margin: 32 });
     const slotArc = (TAU * layout.radius) / count; // circumferential slot width
     const thickness = TILE_DIAMETER_FOR(count, layout.radius);
+    assert.ok(thickness >= 6, `count ${count}: band ${thickness} below the 6px floor`);
     assert.ok(
-      thickness <= Math.max(4.2, slotArc * 1.5),
+      thickness <= Math.max(6, slotArc * 1.5),
       `count ${count}: band ${thickness.toFixed(1)} too thick for slot ${slotArc.toFixed(1)}`,
     );
-    assert.ok(thickness >= 2, `count ${count}: band ${thickness} invisible`);
   }
+  // Reference points at radius 280: 450 beats keep a visible band; sparse
+  // songs approach the 44px ceiling.
+  const sparse = TILE_DIAMETER_FOR(12, 280);
+  assert.ok(Math.abs(sparse - 44) < 1e-9, `sparse ring reaches the 44px ceiling (${sparse})`);
+  assert.ok(TILE_DIAMETER_FOR(450, 280) >= 6, '450-beat ring keeps a visible band');
+  assert.ok(TILE_DIAMETER_FOR(900, 280) === 6, '900-beat ring sits at the 6px floor');
+  assert.ok(
+    Math.abs(TILE_DIAMETER_FOR(96, 280) - Math.min(44, ((TAU * 280) / 96) * 0.72)) < 1e-9,
+    '96-beat band follows slot ×0.72',
+  );
 }
 
 console.log('geometry.test.mjs OK');

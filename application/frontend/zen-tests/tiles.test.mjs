@@ -1,13 +1,14 @@
 /**
- * Tiles + palette tests (issue #40): cluster→jewel mapping (round-robin,
- * same palette the waveform's jewel bar uses), tile paint commands, current
- * tile highlight with decaying glow.
+ * Tiles + palette tests (issue #40 + v2 step 1): cluster→jewel mapping
+ * (round-robin, same palette the waveform's jewel bar uses), tile paint
+ * commands, current tile highlight with decaying glow, glow-dot playhead
+ * (halo marker + core, midline position, no center ray).
  */
 import assert from 'node:assert/strict';
 import { compileTs, FakeCtx, callsOf } from './harness.mjs';
 
 const drawUrl = compileTs('src/lib/zen/draw.ts');
-const { LAYOUT_RING, JEWEL_COLOR_FOR_CLUSTER, PAINT_FRAME, FADE_SECONDS } = await import(drawUrl);
+const { LAYOUT_RING, JEWEL_COLOR_FOR_CLUSTER, PAINT_FRAME, FADE_SECONDS, GLOW_DOT_POSITION, TILE_DIAMETER_FOR } = await import(drawUrl);
 
 const PALETTE = {
   jewels: ['#ff8a80', '#fdb515', '#7bd5a8', '#8ab8ff', '#cfa9f5', '#7fdce8'],
@@ -39,9 +40,8 @@ function makeBeat(id, cluster) {
   const ctx = new FakeCtx({ width: 400, height: 400 });
   PAINT_FRAME(
     {
-      beats, layout, palette: PALETTE,
-      currentBeat: null, jumps: [], reducedMotion: false, nowSec: 0,
-      currentBeatGlowTSec: null,
+      beats, layout, palette: PALETTE, currentBeat: null, currentBeatIndex: -1,
+      jumps: [], reducedMotion: false, nowSec: 0, currentBeatGlowTSec: null,
     },
     ctx,
   );
@@ -73,7 +73,7 @@ function makeBeat(id, cluster) {
     PAINT_FRAME(
       {
         beats, layout, palette: PALETTE,
-        currentBeat: beats[3], jumps: [], reducedMotion: false, nowSec,
+        currentBeat: beats[3], currentBeatIndex: 3, jumps: [], reducedMotion: false, nowSec,
         currentBeatGlowTSec: glowT,
       },
       ctx,
@@ -99,28 +99,86 @@ function makeBeat(id, cluster) {
   assert.equal(spentA, 0.55, 'spent glow settles at the tile base alpha');
 }
 
-{ // Sweep indicator: exactly one stroke aiming at the current tile; hidden
-  // before the first beat callback.
+{ // Glow-dot playhead (v2 halo-marker fallback): halo ring marker stroke at
+  // band*2.5 radius + solid core fill at band*0.7, both palette.playhead.
   const beats = Array.from({ length: 8 }, (_, i) => makeBeat(i, 0));
   const layout = LAYOUT_RING(beats, { width: 400, height: 400, margin: 20 });
-
-  const withBeat = new FakeCtx({ width: 400, height: 400 });
+  const band = TILE_DIAMETER_FOR(beats.length, layout.radius);
+  const ctx = new FakeCtx({ width: 400, height: 400 });
   PAINT_FRAME(
-    { beats, layout, palette: PALETTE, currentBeat: beats[5], jumps: [], reducedMotion: false, nowSec: 0, currentBeatGlowTSec: null },
-    withBeat,
+    { beats, layout, palette: PALETTE, currentBeat: beats[5], currentBeatIndex: 5, jumps: [], reducedMotion: false, nowSec: 0, currentBeatGlowTSec: null },
+    ctx,
   );
-  const strokes = callsOf(withBeat, 'stroke');
-  const sweeps = strokes.filter((s) => s.strokeStyle === PALETTE.playhead);
-  const arcs = callsOf(withBeat, 'arc');
-  assert.equal(sweeps.length, 1, `expected exactly 1 sweep stroke, got ${sweeps.length} (arcs also use playhead color: ${arcs.length})`);
+  const haloMarkers = callsOf(ctx, 'stroke').filter((s) => s.lineWidth === 2 && s.strokeStyle === PALETTE.playhead);
+  assert.equal(haloMarkers.length, 1, 'exactly one halo marker stroke');
+  const haloArcs = callsOf(ctx, 'arc').filter((a) => Math.abs(a.args[2] - band * 2.5) < 1e-9);
+  assert.equal(haloArcs.length, 1, `halo arc radius == band*2.5 (${band * 2.5})`);
+  const coreFills = callsOf(ctx, 'fill').filter((f) => f.fillStyle === PALETTE.playhead);
+  assert.equal(coreFills.length, 1, 'core disk fill uses playhead color');
+  const coreArcs = callsOf(ctx, 'arc').filter((a) => Math.abs(a.args[2] - band * 0.7) < 1e-9);
+  assert.equal(coreArcs.length, 1, `core arc radius == band*0.7 (${band * 0.7})`);
+  // Dot sits on the current tile's radial at the band midline.
+  const dot = GLOW_DOT_POSITION(layout, band, 0, layout.tiles[5]);
+  for (const a of [...haloArcs, ...coreArcs]) {
+    assert.equal(a.args[0], dot.x, 'dot arc centered on midline x');
+    assert.equal(a.args[1], dot.y, 'dot arc centered on midline y');
+  }
+}
 
-  const beforeFirst = new FakeCtx({ width: 400, height: 400 });
+{ // No center ray anywhere (v2): no path segment may start at the viewport
+  // center; sweep/stem is gone.
+  const beats = Array.from({ length: 8 }, (_, i) => makeBeat(i, 0));
+  const layout = LAYOUT_RING(beats, { width: 400, height: 400, margin: 20 });
+  const ctx = new FakeCtx({ width: 400, height: 400 });
   PAINT_FRAME(
-    { beats, layout, palette: PALETTE, currentBeat: null, jumps: [], reducedMotion: false, nowSec: 0, currentBeatGlowTSec: null },
-    beforeFirst,
+    { beats, layout, palette: PALETTE, currentBeat: beats[5], currentBeatIndex: 5, jumps: [], reducedMotion: false, nowSec: 0, currentBeatGlowTSec: null },
+    ctx,
   );
-  const anySweep = callsOf(beforeFirst, 'stroke').some((s) => s.strokeStyle === PALETTE.playhead);
-  assert.equal(anySweep, false, 'no sweep before the first beat callback');
+  const centerMoveTos = callsOf(ctx, 'moveTo').filter((m) => m.args[0] === layout.center.x && m.args[1] === layout.center.y);
+  assert.equal(centerMoveTos.length, 0, 'no moveTo at the center (no sweep stem)');
+  const centerLineTos = callsOf(ctx, 'lineTo').filter((l) => l.args[0] === layout.center.x && l.args[1] === layout.center.y);
+  assert.equal(centerLineTos.length, 0, 'no lineTo at the center');
+  // No stroked path carries a center-origin ray: every moveTo at the center
+  // would be a stem — there are none (first check above).
+}
+
+{ // No dot before the first beat callback: no halo marker, no core fill.
+  const beats = Array.from({ length: 8 }, (_, i) => makeBeat(i, 0));
+  const layout = LAYOUT_RING(beats, { width: 400, height: 400, margin: 20 });
+  const ctx = new FakeCtx({ width: 400, height: 400 });
+  PAINT_FRAME(
+    { beats, layout, palette: PALETTE, currentBeat: null, currentBeatIndex: -1, jumps: [], reducedMotion: false, nowSec: 0, currentBeatGlowTSec: null },
+    ctx,
+  );
+  const fills = callsOf(ctx, 'fill').filter((f) => f.fillStyle === PALETTE.playhead);
+  const markerStrokes = callsOf(ctx, 'stroke').filter((s) => s.strokeStyle === PALETTE.playhead && s.lineWidth === 2);
+  assert.equal(fills.length, 0, 'no core fill before a beat');
+  assert.equal(markerStrokes.length, 0, 'no halo marker before a beat');
+}
+
+{ // Halo radius scales with the band (band*2.5 relation at two beat counts).
+  for (const count of [96, 450]) {
+    const beats = Array.from({ length: count }, (_, i) => makeBeat(i, 0));
+    const layout = LAYOUT_RING(beats, { width: 800, height: 800, margin: 32 });
+    const band = TILE_DIAMETER_FOR(count, layout.radius);
+    const ctx = new FakeCtx({ width: 800, height: 800 });
+    PAINT_FRAME(
+      { beats, layout, palette: PALETTE, currentBeat: beats[10], currentBeatIndex: 10, jumps: [], reducedMotion: false, nowSec: 0, currentBeatGlowTSec: null },
+      ctx,
+    );
+    const haloArcs = callsOf(ctx, 'arc').filter((a) => Math.abs(a.args[2] - band * 2.5) < 1e-9);
+    assert.equal(haloArcs.length, 1, `count ${count}: halo radius tracks band*2.5 (${band * 2.5})`);
+  }
+}
+
+{ // Midline position: dot is beyond the base midline when the beat has grown
+  // (growth/2 shift); below band/2 = 22 the min() cap keeps DOT_BASE_OFFSET.
+  const beats = Array.from({ length: 8 }, (_, i) => makeBeat(i, 0));
+  const layout = LAYOUT_RING(beats, { width: 800, height: 800, margin: 32 });
+  const band = TILE_DIAMETER_FOR(beats.length, layout.radius);
+  const base = GLOW_DOT_POSITION(layout, band, 0, layout.tiles[0]);
+  const grown = GLOW_DOT_POSITION(layout, band, 18, layout.tiles[0]);
+  assert.ok(Math.abs((grown.x - base.x) + (grown.y - base.y)) > 0, 'growth shifts the dot outward');
 }
 
 { // Reduced motion: current band still highlighted statically (thicker, full
@@ -130,7 +188,7 @@ function makeBeat(id, cluster) {
   const frame = (nowSec) => {
     const ctx = new FakeCtx({ width: 400, height: 400 });
     PAINT_FRAME(
-      { beats, layout, palette: PALETTE, currentBeat: beats[2], jumps: [], reducedMotion: true, nowSec, currentBeatGlowTSec: nowSec - 5 },
+      { beats, layout, palette: PALETTE, currentBeat: beats[2], currentBeatIndex: 2, jumps: [], reducedMotion: true, nowSec, currentBeatGlowTSec: nowSec - 5 },
       ctx,
     );
     return ctx;
