@@ -14,6 +14,7 @@ const PALETTE = {
   jewels: ['#ff8a80', '#fdb515', '#7bd5a8', '#8ab8ff', '#cfa9f5', '#7fdce8'],
   playhead: '#fdb515',
   background: '#0e141c',
+  spark: '#FFFFFF',
 };
 
 function makeBeat(id, cluster) {
