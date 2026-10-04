@@ -42,6 +42,8 @@ export interface ZenPalette {
   playhead: string;
   /** Background of the zen overlay. */
   background: string;
+  /** Jump-spark bolt color (scheme-split; white in dark, dark ink in light). */
+  spark: string;
 }
 
 export interface ZenViewState {
@@ -99,8 +101,6 @@ const SPARK_SECONDS = 0.2;
 const MEMORY_BEATS = 16;
 /** Jump chord stroke width. */
 const ARC_LINE_WIDTH = 3.2;
-/** Electricity is white: bolt color, deliberately not a palette member. */
-const SPARK_WHITE = '#FFFFFF';
 /** Bolt jitter amplitude (px) along the curve's perpendicular. */
 const SPARK_JITTER_PX = 5;
 
@@ -353,7 +353,7 @@ export function PAINT_FRAME(view: ZenViewState, ctx: DrawTarget): void {
         }
         const drawBolt = (width: number, alpha: number) => {
           ctx.beginPath();
-          ctx.strokeStyle = SPARK_WHITE;
+          ctx.strokeStyle = palette.spark;
           ctx.lineWidth = width;
           ctx.globalAlpha = alpha;
           ctx.moveTo(from.x, from.y);

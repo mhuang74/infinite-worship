@@ -56,6 +56,9 @@
   --jewel-sapphire: #8ab8ff;
   --jewel-amethyst: #cfa9f5;
   --jewel-cyan: #7fdce8;
+
+  /* §2.4 zen overlay spark bolt (scheme-split; dark = white) */
+  --zen-spark: #ffffff;
 }
 
 @media (prefers-color-scheme: light) {
@@ -103,6 +106,9 @@
     --jewel-sapphire: #1d4ed8;
     --jewel-amethyst: #7b3fa8;
     --jewel-cyan: #0e7c8c;
+
+    /* Zen overlay spark bolt — dark ink for visibility on #f9f9ff (§2.4) */
+    --zen-spark: #3d4758;
   }
 }
 

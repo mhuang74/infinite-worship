@@ -46,8 +46,6 @@ interface ZenModeProps {
   beatPlayCounts?: Map<number, number>;
   /** True while audio is actually running. */
   isPlaying: boolean;
-  /** Main-page error state mirrored inside the overlay (spec failure handling). */
-  error?: string | null;
   /** Retry playback from the tap-to-begin gate (suspended-context fallback). */
   onResume: () => void;
   /** Exit back to the normal player (audio keeps playing). */
@@ -73,6 +71,7 @@ export const readZenPalette = (win: Window): ZenPalette => {
     jewels: JEWEL_VARS.map((v) => read(v, '#fdb515')),
     playhead: read('--wave-playhead', '#fdb515'),
     background: read('--surface', '#0e141c'),
+    spark: read('--zen-spark', '#ffffff'),
   };
 };
 
@@ -144,7 +143,7 @@ const paintZenCanvas = (
   );
 };
 
-const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch, beatPlayCounts, isPlaying, error, onResume, onExit }) => {
+const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch, beatPlayCounts, isPlaying, onResume, onExit }) => {
   const overlayRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [showExit, setShowExit] = useState(true);
@@ -502,10 +501,6 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch,
   }, []);
   handleExitRef.current = handleExit;
 
-  // Failure surface (spec): the overlay covers the main page's banner, so an
-  // audio load/decode failure during zen must be mirrored here — same message
-  // state, ✕ still available. The mode neither crashes nor blanks silently.
-
   return (
     <div
       ref={overlayRef}
@@ -516,12 +511,6 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch,
       aria-label="Zen mode — fullscreen visualization"
     >
       <canvas ref={canvasRef} className="absolute inset-0" />
-
-      {error && (
-        <div role="alert" className="banner-error absolute inset-x-6 top-20">
-          {error}
-        </div>
-      )}
 
       {needsTap && (
         <button
