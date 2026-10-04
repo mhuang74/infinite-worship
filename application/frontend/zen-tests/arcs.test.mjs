@@ -117,6 +117,12 @@ function boltStrokes(ctx, width) {
   const first = boltLineTos.map((l) => l.args);
   const second = callsOf(ctx2, 'lineTo').filter((l) => l.strokeStyle === SPARK_WHITE).map((l) => l.args);
   assert.deepEqual(first, second, 'bolt jitter is stable across repaints');
+  // Jagged, not a uniform kink: the 5 halo midpoints must NOT share a single
+  // fixed offset (a reseeded-per-call LCG would displace every point by the
+  // same scalar and render a straight shifted arc).
+  const midHalo = first.slice(0, 5);
+  const distinct = new Set(midHalo.map(([x, y]) => `${x},${y}`));
+  assert.equal(distinct.size, 5, 'all 5 bolt midpoints distinct (per-midpoint jitter advance)');
   // Dimmed chord: beatsSince = (9−1)%12 = 8 ⇒ alpha = 0.45 × 0.575.
   const chords = chordStrokes(ctx);
   assert.equal(chords.length, 1, 'chord also strokes during spark');

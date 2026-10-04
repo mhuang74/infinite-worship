@@ -191,14 +191,17 @@ const arcMemAlpha = (beatsSince: number): number => {
 };
 
 /**
- * Deterministic LCG jitter for a spark midpoint: seeded by (from.id, to.id),
- * advanced once per call — stable across fade-pass repaints within the
- * 0.2s spark window (a Math.random-per-frame fallback would shimmer).
+ * Deterministic LCG jitter for a spark bolt: created once per jump, advanced
+ * once per midpoint — stable across fade-pass repaints within the 0.2s spark
+ * window (a Math.random-per-frame fallback would shimmer), and jagged
+ * (per-midpoint offsets differ, unlike a reseeded-per-call hash).
  */
-const SPARK_JITTER = (seed: { fromId: number; toId: number }): number => {
-  let s = (Math.imul(seed.fromId, 2654435761) ^ Math.imul(seed.toId, 40503)) >>> 0;
-  s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
-  return ((s / 0x1_0000_0000) * 2 - 1) * SPARK_JITTER_PX;
+const SPARK_JITTER = (fromId: number, toId: number): (() => number) => {
+  let s = (Math.imul(fromId, 2654435761) ^ Math.imul(toId, 40503)) >>> 0;
+  return () => {
+    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+    return ((s / 0x1_0000_0000) * 2 - 1) * SPARK_JITTER_PX;
+  };
 };
 
 /** Point on a quadratic Bézier at parameter t. */
@@ -243,8 +246,13 @@ export function PAINT_FRAME(view: ZenViewState, ctx: DrawTarget): void {
     const beat = beats[i];
     if (!beat) return;
     const count = counts?.get(beat.id) ?? 0;
+    // Missing stamp ⇒ no pulse (never a default-active one): decay maps
+    // elapsed ≤ 0 to 1, so a fallback default must NOT be a sentinel like
+    // Infinity (decay(−Inf) = 1 brightens the whole ring).
     const pulseDecay =
-      !reducedMotion && pulses ? decay(nowSec - (pulses.get(i) ?? Infinity)) : 0;
+      !reducedMotion && pulses?.get(i) !== undefined
+        ? decay(nowSec - pulses.get(i)!)
+        : 0;
     ctx.beginPath();
     ctx.strokeStyle = JEWEL_COLOR_FOR_CLUSTER(beat.cluster, palette);
     let lineWidth = band;
@@ -331,7 +339,7 @@ export function PAINT_FRAME(view: ZenViewState, ctx: DrawTarget): void {
         // t = k/6, k = 1..5, plus implicit start at A), each midpoint offset
         // perpendicular by the deterministic LCG jitter. Halo (2.5px, alpha
         // 1.0) + core (1.0px, alpha 0.95), both near-white.
-        const lcg = { fromId: jump.from.id, toId: jump.to.id };
+        const nextJitter = SPARK_JITTER(jump.from.id, jump.to.id);
         const points: { x: number; y: number }[] = [];
         for (let k = 1; k <= 5; k++) {
           const t = k / 6;
@@ -340,7 +348,7 @@ export function PAINT_FRAME(view: ZenViewState, ctx: DrawTarget): void {
           const tx = 2 * (1 - t) * (cx - from.x) + 2 * t * (to.x - cx);
           const ty = 2 * (1 - t) * (cy - from.y) + 2 * t * (to.y - cy);
           const len = Math.hypot(tx, ty) || 1;
-          const off = SPARK_JITTER(lcg);
+          const off = nextJitter();
           points.push({ x: p.x + (-ty / len) * off, y: p.y + (tx / len) * off });
         }
         const drawBolt = (width: number, alpha: number) => {
