@@ -90,7 +90,10 @@ const Visualization: React.FC<VisualizationProps> = ({ audioFile, beats, current
         cursorWidth: 2,
         height: 88,
         barWidth: 2,
-        barGap: 1,
+        // §5.4: thin out bars on the mobile breakpoint (the canvas cannot
+        // overflow the inset; a wider gap halves bar density like the
+        // mockup's every-second-bar-hidden rule).
+        barGap: window.matchMedia('(max-width: 819px)').matches ? 3 : 1,
         barRadius: 2,
         normalize: true,
 

@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { formatClock } from '@/lib/format';
 import type { Beat } from '@/lib/types';
 
 interface SongMetadataProps {
@@ -13,13 +14,6 @@ interface SongMetadataProps {
   totalPlayingTimeSec?: number | null;
   totalJumps?: number | null;
 }
-
-const formatTime = (seconds?: number | null) => {
-  if (seconds == null || !Number.isFinite(seconds)) return '--:--';
-  const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60);
-  return `${m}:${s.toString().padStart(2, '0')}`;
-};
 
 const MetaRow: React.FC<{ label: string; value: React.ReactNode }> = ({ label, value }) => (
   <div className="flex items-center justify-between gap-3 border-b border-outline-variant/45 py-2.5 last:border-b-0">
@@ -39,14 +33,14 @@ const SongMetadata: React.FC<SongMetadataProps> = ({
   totalJumps,
 }) => {
   return (
-    <section className="rounded-[20px] border border-outline-variant/45 bg-surface-container p-5 sm:px-6">
+    <section className="rounded-[20px] border border-outline-variant/45 bg-surface-container p-5 hero:px-6">
       <header className="mb-3">
         <h2 className="type-card-title">Track Info</h2>
         <p className="mt-0.5 text-xs text-on-surface-variant">Live from the remix engine</p>
       </header>
       <div>
         <MetaRow label="Title" value={fileName || 'Untitled'} />
-        <MetaRow label="Duration" value={formatTime(durationSec)} />
+        <MetaRow label="Duration" value={formatClock(durationSec)} />
         <MetaRow label="Beats" value={beatsCount ?? '--'} />
         <MetaRow label="Total Jump Points" value={totalJumpPoints ?? '--'} />
         <MetaRow
@@ -62,7 +56,7 @@ const SongMetadata: React.FC<SongMetadataProps> = ({
           }
         />
         <MetaRow label="Total Jumps" value={totalJumps ?? '--'} />
-        <MetaRow label="Total Playing Time" value={formatTime(totalPlayingTimeSec)} />
+        <MetaRow label="Total Playing Time" value={formatClock(totalPlayingTimeSec)} />
         <MetaRow
           label="Status"
           value={
