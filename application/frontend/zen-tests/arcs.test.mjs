@@ -15,8 +15,8 @@ const PALETTE = {
   jewels: ['#ff8a80', '#fdb515', '#7bd5a8', '#8ab8ff', '#cfa9f5', '#7fdce8'],
   playhead: '#fdb515',
   background: '#0e141c',
+  spark: '#FFFFFF',
 };
-const SPARK_WHITE = '#FFFFFF';
 const ARC_LINE_WIDTH = 3.2;
 const MEMORY_BEATS = 16;
 
@@ -58,7 +58,7 @@ function chordStrokes(ctx) {
 /** Bolt strokes: white strokes at halo (2.5) or core (1.0) width. */
 function boltStrokes(ctx, width) {
   return callsOf(ctx, 'stroke').filter(
-    (s) => s.lineWidth === width && s.strokeStyle === SPARK_WHITE,
+    (s) => s.lineWidth === width && s.strokeStyle === PALETTE.spark,
   );
 }
 
@@ -109,13 +109,13 @@ function boltStrokes(ctx, width) {
   const boltMoves = callsOf(ctx, 'moveTo').filter((m) => m.args[0] === layout.tiles[1].x && m.args[1] === layout.tiles[1].y);
   assert.equal(boltMoves.length, 3, 'two bolt paths + one chord start at the source tile');
   // Each bolt path: 5 lineTos after its moveTo.
-  const boltLineTos = callsOf(ctx, 'lineTo').filter((l) => l.strokeStyle === SPARK_WHITE);
+  const boltLineTos = callsOf(ctx, 'lineTo').filter((l) => l.strokeStyle === PALETTE.spark);
   assert.equal(boltLineTos.length, 10, 'two bolt passes × 5 segments');
   // Jitter is deterministic per jump: two paints in the same spark window
   // give identical bolt points.
   const ctx2 = paint(beats, layout, { currentBeat: beats[9], jumps, nowSec: 5.15 });
   const first = boltLineTos.map((l) => l.args);
-  const second = callsOf(ctx2, 'lineTo').filter((l) => l.strokeStyle === SPARK_WHITE).map((l) => l.args);
+  const second = callsOf(ctx2, 'lineTo').filter((l) => l.strokeStyle === PALETTE.spark).map((l) => l.args);
   assert.deepEqual(first, second, 'bolt jitter is stable across repaints');
   // Jagged, not a uniform kink: the 5 halo midpoints must NOT share a single
   // fixed offset (a reseeded-per-call LCG would displace every point by the

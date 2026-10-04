@@ -32,7 +32,7 @@ A fullscreen **Zen Mode** entered via a button in the playback area of the main 
 18. As a listener, I want the exit affordance to reappear if I wiggle or tap the screen, so that I don't have to remember a secret gesture on mobile.
 19. As a listener, I want the audio to keep playing when I exit back to the normal player, so that leaving the visualization doesn't interrupt the song.
 20. As a listener, I want my playback statistics (jumps, time) from the zen session to carry through to the normal player, so that exiting doesn't lose the session.
-21. As a listener, I want the same failure feedback as the main page if the Song's audio can't be loaded, so that I'm told what went wrong and can exit.
+21. As a listener, I want Zen Mode to be a distraction-free view that shows no error or warning banners, so that playback is uninterrupted and purely visual.
 22. As a keyboard user, I want the escape key to exit zen mode, so that I don't have to locate the ✕ with a pointer.
 23. As a desktop user, I want browser-level fullscreen to disengage when I exit zen mode, so I don't end up in fullscreen with no visualization.
 24. As a listener, I want the entry button disabled clearly when nothing is playing, so that I understand I need to start a Song first.
@@ -90,7 +90,7 @@ A fullscreen **Zen Mode** entered via a button in the playback area of the main 
 
 ### Failure handling
 
-- If the audio load/decode for the loaded Song fails while the mode is active, mirror the main page's error surface (same message state) and keep the exit ✕ available. The mode does not crash or blank silently.
+- Zen Mode never shows errors or warnings. If the audio load/decode for the loaded Song fails while the mode is active, nothing is rendered inside the overlay; the failure remains visible via the main page player after exit. The mode does not crash or blank, and the exit ✕ / Esc paths are unaffected.
 
 ### Data flow
 
