@@ -58,9 +58,10 @@ A fullscreen **Zen Mode** entered via a button in the playback area of the main 
 
 - The visualization is a **circle of tiles, one tile per beat of the Analysis, placed sequentially around the ring** (EternalJukebox's actual layout, not segment wedges or cluster grouping).
 - Tile color: `beat.cluster` mapped to the app's existing jewel palette (the same classes the waveform view uses), keeping the visual language consistent.
-- Playhead: the current tile brightens/scales with a decaying glow, plus a thin sweep indicator aiming at the current tile; on a jump, both re-aim.
-- Jump feedback: on each jump, a single transient arc through the center connects the source beat tile to the destination beat tile, fading over ~1s. No permanent edge web is drawn.
-- Layout: the ring occupies the largest square that fits the viewport (`min(vw, vh)`), centered; remaining space is left dark. No orientation lock or rotation.
+- Playhead: halo glow dot ON the ring at the current beat, centered on the current band's midline (tracks repetition growth) + thickened current band with a decaying glow; no center ray.
+- Jump feedback: on each jump, one smooth curved chord bowing toward the ring center with a white-hot jagged electricity spark for the first ~0.2s; the chord then persists as beat-driven short-term memory — alpha 1.0 → 0.15 over 16 beats, → 0 over the following 16 (gone at 32). No permanent edge web is drawn.
+- Layout: ring radius = 0.35 × min(viewport side), clamped [64, box/2 − 40px headroom] (ceiling > floor > fraction), centered; remaining space is left dark. No orientation lock or rotation.
+- Repetition: per-beat play counts grow stepped outward ribs (6 × 3px, outward alpha ramp, inner edge fixed at the base band's outer edge); counts kept across Restart, reset on song load; a 7th+ play on a capped beat re-pulses its brightness for ~1s (suppressed under reduced motion).
 - Rendering: a single `<canvas>`. Draw happens on each beat change; a short fade pass (bounded, ~1s) handles glow/arc decay, then the screen is static until the next beat. No continuous rAF loop.
 - `prefers-reduced-motion: reduce` suppresses the decaying glow and the arc flash; the current tile still highlights statically.
 - No new dependencies.

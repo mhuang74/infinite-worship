@@ -65,6 +65,9 @@ export default function HomePage() {
   // freshen correctly (review finding).
   const jumpEpochRef = useRef(0);
   const [jumpEpoch, setJumpEpoch] = useState(0);
+  // Per-beat playback tallies (beat.id → play count): drives growth ribs +
+  // cap pulses in zen mode. Reset on new-song load, kept across Restart.
+  const [beatPlayCounts, setBeatPlayCounts] = useState<Map<number, number>>(new Map());
 
   const [pollingSongId, setPollingSongId] = useState<string | null>(null);
 
@@ -164,10 +167,20 @@ export default function HomePage() {
 
         try {
           const audioBuffer = await createAudioBuffer(audioFile, audioContextRef.current);
-          
+
           // Callback for the engine to update the UI
           const onBeatChange = (beat: Beat) => {
             setCurrentBeat(beat);
+            // One tally per scheduled beat — the engine's onBeatChange fires
+            // exactly once per audible playback (seek/crossfade paths included),
+            // which is the "played back several times" semantics growth ribs
+            // need. State copy per tick (≤N entries at ~2-4Hz) is acceptable
+            // for repaint driving; the Map is small and immutable thereafter.
+            setBeatPlayCounts((prev) => {
+              const next = new Map(prev);
+              next.set(beat.id, (next.get(beat.id) ?? 0) + 1);
+              return next;
+            });
           };
 
           const onJump = (jump: JumpEvent) => {
@@ -269,6 +282,8 @@ export default function HomePage() {
         const loaded = await loadSongForPlayback(song);
 
         loadedSongIdRef.current = song.song_id;
+        // New song ⇒ fresh play counts (growth ribs restart; Restart keeps them).
+        setBeatPlayCounts(new Map());
         // Update state with the fetched data
         setSongData({ segments: loaded.beats });
         setAudioFile(loaded.audioFile);
@@ -586,6 +601,7 @@ export default function HomePage() {
           currentBeat={currentBeat}
           jumps={jumpEvents}
           jumpEpoch={jumpEpoch}
+          beatPlayCounts={beatPlayCounts}
           isPlaying={isPlaying}
           error={error}
           onResume={handlePlayPause}
