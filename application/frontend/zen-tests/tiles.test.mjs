@@ -1,0 +1,148 @@
+/**
+ * Tiles + palette tests (issue #40): cluster→jewel mapping (round-robin,
+ * same palette the waveform's jewel bar uses), tile paint commands, current
+ * tile highlight with decaying glow.
+ */
+import assert from 'node:assert/strict';
+import { compileTs, FakeCtx, callsOf } from './harness.mjs';
+
+const drawUrl = compileTs('src/lib/zen/draw.ts');
+const { LAYOUT_RING, JEWEL_COLOR_FOR_CLUSTER, PAINT_FRAME, FADE_SECONDS } = await import(drawUrl);
+
+const PALETTE = {
+  jewels: ['#ff8a80', '#fdb515', '#7bd5a8', '#8ab8ff', '#cfa9f5', '#7fdce8'],
+  playhead: '#fdb515',
+  background: '#0e141c',
+};
+
+function makeBeat(id, cluster) {
+  return { id, start: id * 0.5, duration: 0.5, cluster, segment: 0, jump_candidates: [] };
+}
+
+{ // Cluster index → palette: round-robin across the six jewels, wrap-safe.
+  const clusters = [0, 1, 2, 3, 4, 5, 6, 11, -1, 42];
+  const expected = [
+    '#ff8a80', '#fdb515', '#7bd5a8', '#8ab8ff', '#cfa9f5', '#7fdce8',
+    '#ff8a80', '#7fdce8', // 6 → 0, 11 → 5 (11 % 6)
+    '#7fdce8', // -1 wraps to last
+    '#ff8a80', // 42 → 42 % 6 = 0
+  ];
+  clusters.forEach((cluster, i) => {
+    assert.equal(JEWEL_COLOR_FOR_CLUSTER(cluster, PALETTE), expected[i], `cluster ${cluster}`);
+  });
+}
+
+{ // Every tile is painted as an annulus band arc on the ring; color follows
+  // its beat cluster (annulus-band seam, review R6).
+  const beats = [makeBeat(0, 2), makeBeat(1, 0), makeBeat(2, 5)];
+  const layout = LAYOUT_RING(beats, { width: 400, height: 400, margin: 20 });
+  const ctx = new FakeCtx({ width: 400, height: 400 });
+  PAINT_FRAME(
+    {
+      beats, layout, palette: PALETTE,
+      currentBeat: null, jumps: [], reducedMotion: false, nowSec: 0,
+      currentBeatGlowTSec: null,
+    },
+    ctx,
+  );
+  const arcs = callsOf(ctx, 'arc');
+  assert.equal(arcs.length, 3, 'one band arc per beat');
+  arcs.forEach((c, i) => {
+    assert.equal(c.args[0], layout.center.x, `band ${i} centered on ring x`);
+    assert.equal(c.args[1], layout.center.y, `band ${i} centered on ring y`);
+    assert.equal(c.args[2], layout.radius, `band ${i} rides the ring radius`);
+  });
+  // Band colors follow cluster order.
+  assert.deepEqual(arcs.map((c) => c.strokeStyle), [
+    JEWEL_COLOR_FOR_CLUSTER(2, PALETTE),
+    JEWEL_COLOR_FOR_CLUSTER(0, PALETTE),
+    JEWEL_COLOR_FOR_CLUSTER(5, PALETTE),
+  ]);
+  // Each band spans its angular slot (minus the gap), starting 12 o'clock.
+  const first = arcs[0];
+  const slot = (Math.PI * 2) / 3;
+  assert.ok(Math.abs((first.args[3] - (-Math.PI / 2)) - 0.02) < 0.05, `band 0 starts at the slot: ${first.args[3]}`);
+  assert.ok(Math.abs((first.args[4] - first.args[3]) - (slot - 0.04)) < 0.05, `band 0 spans its slot: ${first.args[4] - first.args[3]}`);
+}
+
+{ // Current tile: thicker band, and glows — alpha decays over FADE_SECONDS.
+  const beats = Array.from({ length: 8 }, (_, i) => makeBeat(i, i % 6));
+  const layout = LAYOUT_RING(beats, { width: 400, height: 400, margin: 20 });
+  const frame = (nowSec, glowT) => {
+    const ctx = new FakeCtx({ width: 400, height: 400 });
+    PAINT_FRAME(
+      {
+        beats, layout, palette: PALETTE,
+        currentBeat: beats[3], jumps: [], reducedMotion: false, nowSec,
+        currentBeatGlowTSec: glowT,
+      },
+      ctx,
+    );
+    return ctx;
+  };
+
+  const fresh = frame(10, 10); // glow at its peak
+  const later = frame(10, 10 - FADE_SECONDS / 2); // decayed halfway
+  const spent = frame(10, 10 - FADE_SECONDS * 2); // fully decayed
+
+  const currentArc = (ctx) => callsOf(ctx, 'arc')[3]; // fourth tile is current
+  const freshW = currentArc(fresh).lineWidth;
+  const laterW = currentArc(later).lineWidth;
+  assert.equal(freshW, laterW, 'glow scales once per beat, not per decay time');
+  assert.ok(freshW > callsOf(fresh, 'arc')[0].lineWidth, 'current band is thicker vs others');
+
+  const freshA = currentArc(fresh).globalAlpha;
+  const laterA = currentArc(later).globalAlpha;
+  const spentA = currentArc(spent).globalAlpha;
+  assert.ok(freshA > laterA, `fresh alpha ${freshA} should exceed decayed ${laterA}`);
+  assert.ok(laterA > spentA, `decayed ${laterA} should exceed spent ${spentA}`);
+  assert.equal(spentA, 0.55, 'spent glow settles at the tile base alpha');
+}
+
+{ // Sweep indicator: exactly one stroke aiming at the current tile; hidden
+  // before the first beat callback.
+  const beats = Array.from({ length: 8 }, (_, i) => makeBeat(i, 0));
+  const layout = LAYOUT_RING(beats, { width: 400, height: 400, margin: 20 });
+
+  const withBeat = new FakeCtx({ width: 400, height: 400 });
+  PAINT_FRAME(
+    { beats, layout, palette: PALETTE, currentBeat: beats[5], jumps: [], reducedMotion: false, nowSec: 0, currentBeatGlowTSec: null },
+    withBeat,
+  );
+  const strokes = callsOf(withBeat, 'stroke');
+  const sweeps = strokes.filter((s) => s.strokeStyle === PALETTE.playhead);
+  const arcs = callsOf(withBeat, 'arc');
+  assert.equal(sweeps.length, 1, `expected exactly 1 sweep stroke, got ${sweeps.length} (arcs also use playhead color: ${arcs.length})`);
+
+  const beforeFirst = new FakeCtx({ width: 400, height: 400 });
+  PAINT_FRAME(
+    { beats, layout, palette: PALETTE, currentBeat: null, jumps: [], reducedMotion: false, nowSec: 0, currentBeatGlowTSec: null },
+    beforeFirst,
+  );
+  const anySweep = callsOf(beforeFirst, 'stroke').some((s) => s.strokeStyle === PALETTE.playhead);
+  assert.equal(anySweep, false, 'no sweep before the first beat callback');
+}
+
+{ // Reduced motion: current band still highlighted statically (thicker, full
+  // alpha) — no decaying pulse.
+  const beats = Array.from({ length: 8 }, (_, i) => makeBeat(i, 1));
+  const layout = LAYOUT_RING(beats, { width: 400, height: 400, margin: 20 });
+  const frame = (nowSec) => {
+    const ctx = new FakeCtx({ width: 400, height: 400 });
+    PAINT_FRAME(
+      { beats, layout, palette: PALETTE, currentBeat: beats[2], jumps: [], reducedMotion: true, nowSec, currentBeatGlowTSec: nowSec - 5 },
+      ctx,
+    );
+    return ctx;
+  };
+  const early = frame(20);
+  const later = frame(25);
+  const current = (ctx) => callsOf(ctx, 'arc')[2];
+  const ea = current(early);
+  const la = current(later);
+  assert.equal(ea.lineWidth, la.lineWidth, 'static highlight thickness under reduced motion');
+  assert.equal(ea.globalAlpha, la.globalAlpha, 'no alpha decay under reduced motion');
+  assert.ok(ea.lineWidth > callsOf(early, 'arc')[0].lineWidth, 'current band is still thicker');
+}
+
+console.log('tiles.test.mjs OK');

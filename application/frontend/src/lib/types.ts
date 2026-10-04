@@ -12,6 +12,14 @@ export interface Cluster {
   beats: number[];
 }
 
+/** One remix jump: the playback left `from` and landed on `to` (issue #39). */
+export interface JumpEvent {
+  /** Running count of jumps including this one. */
+  count: number;
+  from: Beat;
+  to: Beat;
+}
+
 export type SongStatus = 'pending' | 'processing' | 'ready' | 'failed';
 
 export interface Song {

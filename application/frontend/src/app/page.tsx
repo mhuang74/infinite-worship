@@ -5,6 +5,7 @@ import api from '@/lib/api';
 import FileUpload from '@/components/FileUpload';
 import Header from '@/components/Header';
 import PlaybackControls from '@/components/PlaybackControls';
+import ZenMode from '@/components/ZenMode';
 import Visualization from '@/components/Visualization';
 import SongMetadata from '@/components/SongMetadata';
 import SongLibrary from '@/components/SongLibrary';
@@ -13,7 +14,7 @@ import { AudioEngine, createAudioBuffer } from '@/lib/audio';
 import { loadSongForPlayback } from '@/lib/player';
 import { isPlayable } from '@/lib/upload';
 import { formatClock } from '@/lib/format';
-import type { Beat, Song } from '@/lib/types';
+import type { Beat, Song, JumpEvent } from '@/lib/types';
 
 const TABS = [
   { id: 'library', label: 'Song Library' },
@@ -52,6 +53,18 @@ export default function HomePage() {
   const [shouldAutoplay, setShouldAutoplay] = useState(false);
   const [totalJumps, setTotalJumps] = useState(0);
   const [totalPlayingTimeSec, setTotalPlayingTimeSec] = useState(0);
+  // Zen mode (issues #38–#42): fullscreen overlay over this page. The Engine
+  // is NOT torn down across the transition — statistics keep accumulating.
+  const [zenActive, setZenActive] = useState(false);
+  // Widened jump events (issue #39): kept for the zen arc drawing; the
+  // existing counter derives from jump.count as before.
+  const [jumpEvents, setJumpEvents] = useState<JumpEvent[]>([]);
+  // Jump epoch: the engine restarts its count (count=0 event) on Restart and
+  // when an audio file reloads in place — the new count re-uses old values.
+  // Zen arc stamps are keyed by (epoch, count) so a restarted engine's jumps
+  // freshen correctly (review finding).
+  const jumpEpochRef = useRef(0);
+  const [jumpEpoch, setJumpEpoch] = useState(0);
 
   const [pollingSongId, setPollingSongId] = useState<string | null>(null);
 
@@ -99,6 +112,7 @@ export default function HomePage() {
   useEffect(() => {
     setTotalJumps(0);
     setTotalPlayingTimeSec(0);
+    setJumpEvents([]);
   }, [songData]);
 
   const totalJumpPoints = useMemo(() => {
@@ -142,8 +156,21 @@ export default function HomePage() {
             setCurrentBeat(beat);
           };
 
-          const onJump = (jumps: number) => {
-            setTotalJumps(jumps);
+          const onJump = (jump: JumpEvent) => {
+            setTotalJumps(jump.count);
+            // Count 0: the engine reset its counter (Restart / audio reload).
+            // A NEW jump list generation begins — trim stale events for zen
+            // and bump the stamp epoch so restarted counts draw fresh arcs.
+            if (jump.count === 0) {
+              jumpEpochRef.current += 1;
+              setJumpEpoch(jumpEpochRef.current);
+              setJumpEvents([]);
+              return;
+            }
+            // Widened event (issue #39): retain the pair for zen arc drawing.
+            // Zen only needs ~1s of arc life; keep a small bounded tail so a
+            // long session never accumulates thousands of events (review).
+            setJumpEvents((prev) => [...prev.slice(-7), jump]);
           };
 
           const onPlaybackStarted = () => {
@@ -479,6 +506,8 @@ export default function HomePage() {
                 onPlayPause={handlePlayPause}
                 onRestart={handleRestart}
                 onJumpProbabilityChange={handleJumpProbabilityChange}
+                onEnterZen={() => setZenActive(true)}
+                zenAvailable={isPlaying}
               />
             </div>
 
@@ -565,6 +594,21 @@ export default function HomePage() {
           )}
         </section>
       </div>
+
+      {/* Zen mode overlay (issues #38–#42): renders above everything; the
+          engine is untouched, so audio + stats continue across entry/exit. */}
+      {zenActive && songData && (
+        <ZenMode
+          beats={songData.segments}
+          currentBeat={currentBeat}
+          jumps={jumpEvents}
+          jumpEpoch={jumpEpoch}
+          isPlaying={isPlaying}
+          error={error}
+          onResume={handlePlayPause}
+          onExit={() => setZenActive(false)}
+        />
+      )}
     </main>
   );
 }
