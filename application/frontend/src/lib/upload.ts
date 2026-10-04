@@ -24,14 +24,18 @@ export async function computeSongId(file: File): Promise<string> {
   return `${encodedFilename}_${hash}`;
 }
 
+/** Phases of the presign → PUT → finalize flow, for progress display. */
+export type UploadPhase = 'presign' | 'upload' | 'finalize';
+
 /**
  * Full upload flow (ADR-0002): presign via BFF, PUT the raw file to R2 at its
  * final key, then ask the BFF to finalize — enqueueing the analysis Worker.
  */
-export async function uploadSong(file: File): Promise<UploadTicket> {
+export async function uploadSong(file: File, onPhase?: (phase: UploadPhase) => void): Promise<UploadTicket> {
   const song_id = await computeSongId(file);
   const contentType = file.type || 'application/octet-stream';
 
+  onPhase?.('presign');
   const presignResponse = await fetch('/api/uploads', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -45,6 +49,7 @@ export async function uploadSong(file: File): Promise<UploadTicket> {
 
   // PUT the raw bytes straight to the presigned URL with the signed
   // Content-Type; a mismatch makes R2 reject the request.
+  onPhase?.('upload');
   const putResponse = await fetch(ticket.upload_url, {
     method: 'PUT',
     headers: { 'Content-Type': contentType },
@@ -55,6 +60,7 @@ export async function uploadSong(file: File): Promise<UploadTicket> {
   }
 
   // Kick off analysis: finalize enqueues the SQS message for the Worker.
+  onPhase?.('finalize');
   const finalizeResponse = await fetch(`/api/songs/${encodeURIComponent(song_id)}/finalize`, {
     method: 'POST',
   });
