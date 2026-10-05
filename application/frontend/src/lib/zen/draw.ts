@@ -5,13 +5,13 @@
  * Given the Analysis beat list, the active theme's palette, the current beat
  * and the jump events, this module decides every circle-drawing fact — tile
  * layout angles, cluster→color mapping, glow-dot cursor, growth ribs, jump
- * arcs + energy beam, cap pulses — and emits drawing commands against an injected
+ * arcs + glow, cap pulses — and emits drawing commands against an injected
  * 2D-context-like interface. The ZenMode component is a thin host that
  * supplies a real canvas context (plus the one opaque object draw.ts cannot
  * create itself: the halo's radial gradient).
  *
  * Rendering model (spec Implementation Decisions): draw on each beat change;
- * a short bounded fade pass (~1s) handles the energy-beam flash, glow decay and cap
+ * a short bounded fade pass (~1s) handles the jump-arc glow, glow decay and cap
  * pulses; the screen is static between events. No continuous rAF loop.
  * Jump-arc memory (32 beats) repaints inside the beat-change bursts.
  */
@@ -38,8 +38,6 @@ export interface TilePosition {
 export interface ZenPalette {
   /** Jewel colors in cluster order (round-robin). */
   jewels: string[];
-  /** Playhead/sweep accent (gold foreground of the active scheme). */
-  playhead: string;
   /** Background of the zen overlay. */
   background: string;
 }
@@ -77,7 +75,7 @@ export type ZenJump = JumpEvent & { fromIndex: number; toIndex: number; eventTSe
 /** Tile geometry knobs (single place; the host supplies the canvas size). */
 /** Tile diameter ceiling for readable rings (TILE_DIAMETER_FOR clamps). */
 const TILE_MAX_DIAMETER_PX = 44;
-/** Bounded fade window: the energy-beam flash, glow decay and cap pulses settle inside this (spec ~1s). */
+/** Bounded fade window: the jump-arc glow, glow decay and cap pulses settle inside this (spec ~1s). */
 export const FADE_SECONDS = 1.0;
 /** Ring radius floor (never smaller than this unless the viewport ceiling is tighter). */
 const MIN_RING_RADIUS = 64;
@@ -95,16 +93,14 @@ export const PLAY_MAX_REPS = 6;
 export const PLAY_GROWTH_PX = 3;
 /** Rib alpha ramp, inner (oldest) → outer; rib 1 = base-band alpha (no seam at the flush edge). */
 const RIB_ALPHAS = [0.9, 0.8, 0.7, 0.6, 0.5, 0.42];
-/** Energy-beam firing duration (time-based, from the jump's arrival stamp). */
-const BEAM_SECONDS = 0.2;
+/** Jump-arc glow window: glow layers decay linearly to 0 over this (time-based, from the jump's arrival stamp). */
+const GLOW_SECONDS = 1.0;
 /** Jump-arc beat-driven memory schedule: full → 0.15 alpha over 16 beats, → 0 over the next 16. */
 const MEMORY_BEATS = 16;
 /** Jump chord stroke width. */
 const ARC_LINE_WIDTH = 3.2;
-/** Energy-beam core width (thicker than the persistent chord's 3.2px). */
-const BEAM_CORE_WIDTH = 6;
-/** Beam glow layers, outer → inner: width px + fraction of the core's alpha. */
-const BEAM_GLOW_LAYERS = [
+/** Arc glow layers, outer → inner: width px + fraction of the chord's alpha. */
+const ARC_GLOW_LAYERS = [
   { width: 18, alphaFactor: 0.18 },
   { width: 11, alphaFactor: 0.35 },
 ];
@@ -283,9 +279,10 @@ export function PAINT_FRAME(view: ZenViewState, ctx: DrawTarget): void {
   ctx.globalAlpha = 1;
 
   // Jump arcs: one smooth quadratic chord per jump bowing toward the center,
-  // beat-driven short-term memory; an energy beam fires along the chord for
-  // the first 0.2s (thicker, layered glow, linear ramp), then the same chord
-  // persists as beat-driven memory. Suppress entirely under reduced motion.
+  // beat-driven short-term memory, colored by the TARGET beat's jewel. For the
+  // first GLOW_SECONDS the chord is backed by additive glow layers (linear
+  // ramp decay), which fade into the fixed-width chord. Suppress entirely
+  // under reduced motion.
   if (!reducedMotion) {
     for (const jump of jumps) {
       const from = layout.tiles[jump.fromIndex];
@@ -303,7 +300,9 @@ export function PAINT_FRAME(view: ZenViewState, ctx: DrawTarget): void {
       if (memAlpha <= 0) continue; // ≥32 beats: gone (no stroke at all, not a zero-alpha paint)
 
       const age = nowSec - jump.eventTSec;
-      const isBeam = age >= 0 && age < BEAM_SECONDS;
+      if (age < 0) continue; // future-dated (not yet arrived): no strokes at all
+      // Glow window ramp: >0 only inside the first GLOW_SECONDS after arrival.
+      const ramp = clamp01(1 - age / GLOW_SECONDS);
 
       // Control point: endpoint midpoint pulled toward the ring center.
       const mx = (from.x + to.x) / 2;
@@ -311,32 +310,31 @@ export function PAINT_FRAME(view: ZenViewState, ctx: DrawTarget): void {
       const cx = mx + (layout.center.x - mx) * CURVE_INNER_PULL;
       const cy = my + (layout.center.y - my) * CURVE_INNER_PULL;
 
-      if (!isBeam) {
+      const toBeat = beats[jump.toIndex];
+      if (!toBeat) continue;
+      const arcColor = JEWEL_COLOR_FOR_CLUSTER(toBeat.cluster, palette);
+
+      const strokeArc = (width: number, alpha: number) => {
         ctx.beginPath();
-        ctx.strokeStyle = palette.playhead;
-        ctx.lineWidth = ARC_LINE_WIDTH;
-        // One formula everywhere: chord alpha = dim-or-full × beat schedule.
-        ctx.globalAlpha = clamp01(1.0 * memAlpha);
+        ctx.strokeStyle = arcColor;
+        ctx.lineWidth = width;
+        ctx.globalAlpha = clamp01(alpha);
         ctx.moveTo(from.x, from.y);
         ctx.quadraticCurveTo(cx, cy, to.x, to.y);
         ctx.stroke();
-      } else {
-        // Energy beam: the same quadratic path, stroked once per glow layer
-        // (painted first, under) then the core on top. Linear alpha decay
-        // ramp over the firing window; no randomness — deterministic geometry.
-        const ramp = clamp01(1 - age / BEAM_SECONDS);
-        const strokeBeam = (width: number, alphaFactor: number) => {
-          ctx.beginPath();
-          ctx.strokeStyle = palette.playhead;
-          ctx.lineWidth = width;
-          ctx.globalAlpha = clamp01(alphaFactor * ramp * memAlpha);
-          ctx.moveTo(from.x, from.y);
-          ctx.quadraticCurveTo(cx, cy, to.x, to.y);
-          ctx.stroke();
-        };
-        for (const layer of BEAM_GLOW_LAYERS) strokeBeam(layer.width, layer.alphaFactor);
-        strokeBeam(BEAM_CORE_WIDTH, 1.0);
+      };
+
+      // Glow layers paint first (under), only inside the glow window; skip
+      // zero-alpha paints entirely.
+      if (ramp > 0) {
+        for (const layer of ARC_GLOW_LAYERS) {
+          const glowAlpha = clamp01(layer.alphaFactor * ramp * memAlpha);
+          if (glowAlpha <= 0) continue;
+          strokeArc(layer.width, glowAlpha);
+        }
       }
+      // The fixed-width chord is always drawn (from t0; the glow fades into it).
+      strokeArc(ARC_LINE_WIDTH, 1.0 * memAlpha);
     }
     ctx.globalAlpha = 1;
   }
@@ -346,10 +344,13 @@ export function PAINT_FRAME(view: ZenViewState, ctx: DrawTarget): void {
   if (currentIndex >= 0) {
     const tile = layout.tiles[currentIndex];
     const beat = beats[currentIndex];
+    const dotColor = beat
+      ? JEWEL_COLOR_FOR_CLUSTER(beat.cluster, palette)
+      : JEWEL_COLOR_FOR_CLUSTER(0, palette); // first-jewel fallback (pre-callback can't happen here, but never guess a color)
     const growth = beat ? PLAY_GROWTH_FOR(counts?.get(beat.id) ?? 0) : 0;
     const dot = GLOW_DOT_POSITION(layout, band, growth, tile);
     if (view.haloGradient !== undefined) {
-      // Host-built radial gradient (rgba(playhead,1) → rgba(playhead,0)).
+      // Host-built radial gradient (rgba(dotColor,1) → rgba(dotColor,0)).
       ctx.beginPath();
       ctx.fillStyle = view.haloGradient;
       ctx.arc(dot.x, dot.y, band * HALO_RADIUS_FACTOR, 0, TAU);
@@ -357,7 +358,7 @@ export function PAINT_FRAME(view: ZenViewState, ctx: DrawTarget): void {
     } else {
       // Test-verified fallback: stroked halo ring marker.
       ctx.beginPath();
-      ctx.strokeStyle = palette.playhead;
+      ctx.strokeStyle = dotColor;
       ctx.lineWidth = 2;
       ctx.globalAlpha = 1;
       ctx.arc(dot.x, dot.y, band * HALO_RADIUS_FACTOR, 0, TAU);
@@ -365,7 +366,7 @@ export function PAINT_FRAME(view: ZenViewState, ctx: DrawTarget): void {
     }
     // Core: solid disk over the halo center.
     ctx.beginPath();
-    ctx.fillStyle = palette.playhead;
+    ctx.fillStyle = dotColor;
     ctx.arc(dot.x, dot.y, band * 0.7, 0, TAU);
     ctx.fill();
   }

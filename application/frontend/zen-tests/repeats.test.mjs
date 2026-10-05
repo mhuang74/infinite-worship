@@ -12,7 +12,6 @@ const { LAYOUT_RING, PAINT_FRAME, PLAY_GROWTH_FOR, PLAY_MAX_REPS, TILE_DIAMETER_
 
 const PALETTE = {
   jewels: ['#ff8a80', '#fdb515', '#7bd5a8', '#8ab8ff', '#cfa9f5', '#7fdce8'],
-  playhead: '#fdb515',
   background: '#0e141c',
 };
 const RIB_LINE_WIDTH = 3;

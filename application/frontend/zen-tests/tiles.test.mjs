@@ -12,7 +12,6 @@ const { LAYOUT_RING, JEWEL_COLOR_FOR_CLUSTER, PAINT_FRAME, FADE_SECONDS, GLOW_DO
 
 const PALETTE = {
   jewels: ['#ff8a80', '#fdb515', '#7bd5a8', '#8ab8ff', '#cfa9f5', '#7fdce8'],
-  playhead: '#fdb515',
   background: '#0e141c',
 };
 
@@ -100,21 +99,23 @@ function makeBeat(id, cluster) {
 }
 
 { // Glow-dot playhead (v2 halo-marker fallback): halo ring marker stroke at
-  // band*2.5 radius + solid core fill at band*0.7, both palette.playhead.
+  // band*2.5 radius + solid core fill at band*0.7, both the CURRENT beat's
+  // jewel color.
   const beats = Array.from({ length: 8 }, (_, i) => makeBeat(i, 0));
   const layout = LAYOUT_RING(beats, { width: 400, height: 400, margin: 20 });
   const band = TILE_DIAMETER_FOR(beats.length, layout.radius);
+  const dotColor = JEWEL_COLOR_FOR_CLUSTER(beats[5].cluster, PALETTE); // cluster 0
   const ctx = new FakeCtx({ width: 400, height: 400 });
   PAINT_FRAME(
     { beats, layout, palette: PALETTE, currentBeat: beats[5], currentBeatIndex: 5, beatCount: 1, jumps: [], reducedMotion: false, nowSec: 0, currentBeatGlowTSec: null },
     ctx,
   );
-  const haloMarkers = callsOf(ctx, 'stroke').filter((s) => s.lineWidth === 2 && s.strokeStyle === PALETTE.playhead);
+  const haloMarkers = callsOf(ctx, 'stroke').filter((s) => s.lineWidth === 2 && s.strokeStyle === dotColor);
   assert.equal(haloMarkers.length, 1, 'exactly one halo marker stroke');
   const haloArcs = callsOf(ctx, 'arc').filter((a) => Math.abs(a.args[2] - band * 2.5) < 1e-9);
   assert.equal(haloArcs.length, 1, `halo arc radius == band*2.5 (${band * 2.5})`);
-  const coreFills = callsOf(ctx, 'fill').filter((f) => f.fillStyle === PALETTE.playhead);
-  assert.equal(coreFills.length, 1, 'core disk fill uses playhead color');
+  const coreFills = callsOf(ctx, 'fill').filter((f) => f.fillStyle === dotColor);
+  assert.equal(coreFills.length, 1, 'core disk fill uses the current beat jewel color');
   const coreArcs = callsOf(ctx, 'arc').filter((a) => Math.abs(a.args[2] - band * 0.7) < 1e-9);
   assert.equal(coreArcs.length, 1, `core arc radius == band*0.7 (${band * 0.7})`);
   // Dot sits on the current tile's radial at the band midline.
@@ -150,8 +151,9 @@ function makeBeat(id, cluster) {
     { beats, layout, palette: PALETTE, currentBeat: null, currentBeatIndex: -1, beatCount: 0, jumps: [], reducedMotion: false, nowSec: 0, currentBeatGlowTSec: null },
     ctx,
   );
-  const fills = callsOf(ctx, 'fill').filter((f) => f.fillStyle === PALETTE.playhead);
-  const markerStrokes = callsOf(ctx, 'stroke').filter((s) => s.strokeStyle === PALETTE.playhead && s.lineWidth === 2);
+  const fallbackColor = JEWEL_COLOR_FOR_CLUSTER(0, PALETTE); // first-jewel fallback
+  const fills = callsOf(ctx, 'fill').filter((f) => f.fillStyle === fallbackColor);
+  const markerStrokes = callsOf(ctx, 'stroke').filter((s) => s.strokeStyle === fallbackColor && s.lineWidth === 2);
   assert.equal(fills.length, 0, 'no core fill before a beat');
   assert.equal(markerStrokes.length, 0, 'no halo marker before a beat');
 }
