@@ -63,7 +63,7 @@ export interface ZenViewState {
   currentBeatGlowTSec: number | null;
   /** Per-beat playback tallies (beat.id → count); absent ⇒ no growth ribs. */
   beatPlayCounts?: Map<number, number>;
-  /** Ring index → cap-pulse start seconds; only beats past their 7th play. */
+  /** Ring index → cap-pulse start seconds; only beats past PLAY_MAX_REPS (their 16th play). */
   capPulseTSecByIndex?: Map<number, number>;
   /** Host-built radial gradient for the glow-dot halo (opaque to tests; tests exercise the stroke-marker fallback). */
   haloGradient?: unknown;
@@ -79,20 +79,22 @@ const TILE_MAX_DIAMETER_PX = 44;
 export const FADE_SECONDS = 1.0;
 /** Ring radius floor (never smaller than this unless the viewport ceiling is tighter). */
 const MIN_RING_RADIUS = 64;
-/** Fixed geometric headroom: base band half (44/2 = 22) + max rib growth (6 × 3 = 18). */
-const MAX_RING_HEADROOM = 40;
+/** Fixed geometric headroom: base band half (44/2 = 22) + max rib growth (15 × 3 = 45). */
+const MAX_RING_HEADROOM = 67;
 /** Chord bow: control point pulled toward the center by this fraction of the midpoint→center vector. */
 const CURVE_INNER_PULL = 0.35;
 /** Glow-dot offset from the band's inner edge outward (capped at band/2), per the v2 midline decision. */
 const DOT_BASE_OFFSET = 9;
 /** Glow-dot halo extends to band × this radius (host gradient + test marker share the factor). */
 export const HALO_RADIUS_FACTOR = 2.5;
-/** Max growth: per-beat play count above which the band stops growing (7th+ play pulses instead). */
-export const PLAY_MAX_REPS = 6;
+/** Max growth: per-beat play count above which the band stops growing (16th+ play pulses instead). */
+export const PLAY_MAX_REPS = 15;
 /** Outward growth per replay (px of annulus stroke per rep). */
 export const PLAY_GROWTH_PX = 3;
-/** Rib alpha ramp, inner (oldest) → outer; rib 1 = base-band alpha (no seam at the flush edge). */
-const RIB_ALPHAS = [0.9, 0.8, 0.7, 0.6, 0.5, 0.42];
+/** Rib alpha ramp, inner (oldest) → outer: linear 0.9 (base-band alpha, no seam at the flush edge) → RIB_ALPHA_MIN over PLAY_MAX_REPS ribs. */
+const RIB_ALPHA_MIN = 0.02;
+const ribAlpha = (k: number): number =>
+  0.9 - ((k - 1) * (0.9 - RIB_ALPHA_MIN)) / (PLAY_MAX_REPS - 1);
 /** Jump-arc glow window: glow layers decay linearly to 0 over this (time-based, from the jump's arrival stamp). */
 const GLOW_SECONDS = 1.0;
 /** Jump-arc beat-driven memory schedule: full → 0.15 alpha over 16 beats, → 0 over the next 16. */
@@ -166,6 +168,11 @@ const clamp01 = (v: number): number => Math.min(1, Math.max(0, v));
 /** Outward growth (px) for a beat played `count` times: capped at PLAY_MAX_REPS × PLAY_GROWTH_PX. */
 export const PLAY_GROWTH_FOR = (count: number): number =>
   Math.min(count, PLAY_MAX_REPS) * PLAY_GROWTH_PX;
+
+/** Candidate-dot diameter: half the playhead core (core = band × 0.7). */
+export const CANDIDATE_DOT_DIAMETER_FOR = (band: number): number => band * 0.35;
+/** Candidate-dot alpha. */
+export const CANDIDATE_DOT_ALPHA = 0.5;
 
 /**
  * Glow-dot center: on the current tile's radial, at the grown band's midline —
@@ -270,7 +277,7 @@ export function PAINT_FRAME(view: ZenViewState, ctx: DrawTarget): void {
       ctx.lineWidth = PLAY_GROWTH_PX;
       // Cap pulse lifts every rib by the same 0.55..1.0/0.9 brightness factor.
       ctx.globalAlpha = clamp01(
-        pulseDecay > 0 ? (RIB_ALPHAS[k - 1] * (0.55 + 0.45 * pulseDecay)) / 0.9 : RIB_ALPHAS[k - 1],
+        pulseDecay > 0 ? (ribAlpha(k) * (0.55 + 0.45 * pulseDecay)) / 0.9 : ribAlpha(k),
       );
       ctx.arc(layout.center.x, layout.center.y, layout.radius + band / 2 + (k - 0.5) * PLAY_GROWTH_PX, angleStart, angleEnd);
       ctx.stroke();
@@ -335,6 +342,32 @@ export function PAINT_FRAME(view: ZenViewState, ctx: DrawTarget): void {
       }
       // The fixed-width chord is always drawn (from t0; the glow fades into it).
       strokeArc(ARC_LINE_WIDTH, 1.0 * memAlpha);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // Jump-candidate dots: one small translucent dot per beat that is a jump
+  // candidate of the current beat, at the candidate tile's grown-band midline
+  // (same placement rule as the playhead). Static state markers, not motion —
+  // painted under reduced motion too (same rationale as growth ribs).
+  if (currentIndex >= 0) {
+    const current = beats[currentIndex];
+    if (current && Array.isArray(current.jump_candidates)) {
+      for (const id of current.jump_candidates) {
+        if (id === current.id) continue; // self-candidate: no dot under the playhead core
+        const idx = beats.findIndex((b) => b.id === id);
+        if (idx === -1) continue;
+        const cTile = layout.tiles[idx];
+        const cBeat = beats[idx];
+        if (!cTile || !cBeat) continue;
+        const growth = PLAY_GROWTH_FOR(counts?.get(cBeat.id) ?? 0);
+        const pos = GLOW_DOT_POSITION(layout, band, growth, cTile);
+        ctx.beginPath();
+        ctx.fillStyle = JEWEL_COLOR_FOR_CLUSTER(cBeat.cluster, palette);
+        ctx.globalAlpha = CANDIDATE_DOT_ALPHA;
+        ctx.arc(pos.x, pos.y, CANDIDATE_DOT_DIAMETER_FOR(band) / 2, 0, TAU);
+        ctx.fill();
+      }
     }
     ctx.globalAlpha = 1;
   }

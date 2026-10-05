@@ -1,21 +1,24 @@
 /**
  * Repetition growth tests (v2 step 4): per-beat play counts grow stepped
- * outward ribs (6 × 3px, alpha ramp, inner edge fixed at ringRadius + band/2);
+ * outward ribs (15 × 3px, alpha ramp, inner edge fixed at ringRadius + band/2);
  * base annulus is unchanged by counts; cap pulse re-brightens a capped beat's
- * band; the glow dot tracks the grown band's midline.
+ * band; the glow dot tracks the grown band's midline; jump-candidate dots
+ * mark the tiles the current beat can jump to.
  */
 import assert from 'node:assert/strict';
 import { compileTs, FakeCtx, callsOf } from './harness.mjs';
 
 const drawUrl = compileTs('src/lib/zen/draw.ts');
-const { LAYOUT_RING, PAINT_FRAME, PLAY_GROWTH_FOR, PLAY_MAX_REPS, TILE_DIAMETER_FOR, GLOW_DOT_POSITION } = await import(drawUrl);
+const { LAYOUT_RING, PAINT_FRAME, PLAY_GROWTH_FOR, PLAY_MAX_REPS, TILE_DIAMETER_FOR, GLOW_DOT_POSITION, CANDIDATE_DOT_DIAMETER_FOR, CANDIDATE_DOT_ALPHA, JEWEL_COLOR_FOR_CLUSTER } = await import(drawUrl);
 
 const PALETTE = {
   jewels: ['#ff8a80', '#fdb515', '#7bd5a8', '#8ab8ff', '#cfa9f5', '#7fdce8'],
   background: '#0e141c',
 };
 const RIB_LINE_WIDTH = 3;
-const RIB_ALPHAS = [0.9, 0.8, 0.7, 0.6, 0.5, 0.42];
+/** Rib alpha ramp, mirrored from draw.ts: linear 0.9 → RIB_ALPHA_MIN over PLAY_MAX_REPS ribs. */
+const RIB_ALPHA_MIN = 0.02;
+const ribAlpha = (k) => 0.9 - ((k - 1) * (0.9 - RIB_ALPHA_MIN)) / (PLAY_MAX_REPS - 1);
 
 function makeBeat(id, cluster = id % 6) {
   return { id, start: id * 0.5, duration: 0.5, cluster, segment: 0, jump_candidates: [] };
@@ -57,11 +60,12 @@ const BEATS_12 = Array.from({ length: 12 }, (_, i) => makeBeat(i));
 const LAYOUT_12 = LAYOUT_RING(BEATS_12, { width: 800, height: 800, margin: 32 });
 const BAND_12 = TILE_DIAMETER_FOR(12, LAYOUT_12.radius);
 
-{ // play-growth helper: cap at 6 × 3 = 18.
+{ // play-growth helper: cap at 15 × 3 = 45.
   assert.equal(PLAY_GROWTH_FOR(0), 0);
   assert.equal(PLAY_GROWTH_FOR(1), 3);
   assert.equal(PLAY_GROWTH_FOR(6), 18);
-  assert.equal(PLAY_GROWTH_FOR(50), 18);
+  assert.equal(PLAY_GROWTH_FOR(15), 45);
+  assert.equal(PLAY_GROWTH_FOR(50), 45);
   assert.equal(PLAY_GROWTH_FOR(50), PLAY_MAX_REPS * RIB_LINE_WIDTH);
 }
 
@@ -106,8 +110,8 @@ const BAND_12 = TILE_DIAMETER_FOR(12, LAYOUT_12.radius);
 }
 
 { // Rib geometry: count 3 ⇒ exactly 3 rib arcs at radii radius + band/2 +
-  // (k−0.5)·3, lineWidth 3, alphas [0.9, 0.8, 0.7] in order; count 50 ⇒
-  // exactly 6 ribs (cap).
+  // (k−0.5)·3, lineWidth 3, alphas per the computed ramp in order; count 50 ⇒
+  // exactly 15 ribs (cap).
   const ctx3 = paint(BEATS_12, LAYOUT_12, { counts: new Map([[0, 3]]) });
   const ribs3 = ribArcs(ctx3).sort((a, b) => a.args[2] - b.args[2]);
   // Beat 0 is not current, so its 3 ribs are the only rib-stroke arcs.
@@ -117,24 +121,25 @@ const BAND_12 = TILE_DIAMETER_FOR(12, LAYOUT_12.radius);
     const expectedR = LAYOUT_12.radius + BAND_12 / 2 + (k - 0.5) * RIB_LINE_WIDTH;
     assert.ok(Math.abs(a.args[2] - expectedR) < 1e-9, `rib ${k} radius ${a.args[2]} == ${expectedR}`);
     assert.equal(a.lineWidth, RIB_LINE_WIDTH, `rib ${k} lineWidth 3`);
-    assert.ok(Math.abs(a.globalAlpha - RIB_ALPHAS[idx]) < 1e-9, `rib ${k} alpha ${a.globalAlpha} == ${RIB_ALPHAS[idx]}`);
+    assert.ok(Math.abs(a.globalAlpha - ribAlpha(idx + 1)) < 1e-9, `rib ${k} alpha ${a.globalAlpha} == ${ribAlpha(idx + 1)}`);
   });
 
   const ctx50 = paint(BEATS_12, LAYOUT_12, { counts: new Map([[0, 50]]) });
   const ribs50 = ribArcs(ctx50).filter((a) => Math.abs(a.args[2]) > LAYOUT_12.radius);
-  assert.equal(ribs50.length, 6, `count 50 capped at 6 ribs (got ${ribs50.length})`);
+  assert.equal(ribs50.length, 15, `count 50 capped at 15 ribs (got ${ribs50.length})`);
 }
 
 { // Alpha ramp monotone decreasing outward; first rib alpha == 0.9 (base-band
-  // alpha) ⇒ no brightness discontinuity at the flush edge.
-  const ctx = paint(BEATS_12, LAYOUT_12, { counts: new Map([[0, 6]]) });
+  // alpha) ⇒ no brightness discontinuity at the flush edge; last rib fades
+  // to RIB_ALPHA_MIN (near-invisible).
+  const ctx = paint(BEATS_12, LAYOUT_12, { counts: new Map([[0, 15]]) });
   const ribs = ribArcs(ctx).filter((a) => Math.abs(a.args[0] - LAYOUT_12.center.x) < 1e-9).sort((a, b) => a.args[2] - b.args[2]);
-  assert.equal(ribs.length, 6);
+  assert.equal(ribs.length, 15);
   assert.ok(Math.abs(ribs[0].globalAlpha - 0.9) < 1e-9, `rib 1 alpha == base alpha 0.9 (${ribs[0].globalAlpha})`);
   for (let i = 1; i < ribs.length; i++) {
     assert.ok(ribs[i].globalAlpha < ribs[i - 1].globalAlpha, `rib ${i + 1} dimmer outward`);
   }
-  assert.ok(Math.abs(ribs[5].globalAlpha - 0.42) < 1e-9, `outermost rib alpha 0.42 (${ribs[5].globalAlpha})`);
+  assert.ok(Math.abs(ribs[14].globalAlpha - RIB_ALPHA_MIN) < 1e-9, `outermost rib alpha ${RIB_ALPHA_MIN} (${ribs[14].globalAlpha})`);
 }
 
 { // No beatPlayCounts ⇒ zero rib arcs (identical stream to pre-rib paint).
@@ -145,15 +150,15 @@ const BAND_12 = TILE_DIAMETER_FOR(12, LAYOUT_12.radius);
 { // Cap pulse: a stamped ring index past PLAY_MAX_REPS re-brightens the base
   // annulus: alpha = 0.55 + 0.45 × decay(0.5) = 0.775; ribs lift proportionally.
   const pulses = new Map([[0, 9.5]]); // pulse started 0.5s before nowSec=10
-  const counts = new Map([[0, 9]]);
+  const counts = new Map([[0, 17]]);
   const ctx = paint(BEATS_12, LAYOUT_12, { counts, pulses, nowSec: 10 });
   const base = baseArcs(ctx, BAND_12)[0];
   assert.ok(Math.abs(base.globalAlpha - 0.775) < 1e-9, `pulsed base alpha == 0.775 (${base.globalAlpha})`);
   const ribs = ribArcs(ctx).sort((a, b) => a.args[2] - b.args[2]);
-  assert.equal(ribs.length, 6);
-  // Proportional lift: rib alpha = RIB_ALPHAS[k] × (0.55 + 0.45 × 0.5) / 0.9.
+  assert.equal(ribs.length, 15);
+  // Proportional lift: rib alpha = ribAlpha(k) × (0.55 + 0.45 × 0.5) / 0.9.
   ribs.forEach((a, idx) => {
-    const expected = (RIB_ALPHAS[idx] * 0.775) / 0.9;
+    const expected = (ribAlpha(idx + 1) * 0.775) / 0.9;
     assert.ok(Math.abs(a.globalAlpha - expected) < 1e-9, `pulsed rib ${idx + 1} alpha == ${expected} (${a.globalAlpha})`);
   });
 
@@ -172,12 +177,12 @@ const BAND_12 = TILE_DIAMETER_FOR(12, LAYOUT_12.radius);
 { // Reduced motion: cap pulse suppressed (no re-brightening); ribs still
   // render statically.
   const pulses = new Map([[0, 9.5]]);
-  const counts = new Map([[0, 9]]);
+  const counts = new Map([[0, 17]]);
   const ctx = paint(BEATS_12, LAYOUT_12, { counts, pulses, reducedMotion: true, nowSec: 10 });
   const base = baseArcs(ctx, BAND_12)[0];
   assert.equal(base.globalAlpha, 0.9, 'reduced motion ⇒ pulse suppressed');
   const ribs = ribArcs(ctx);
-  assert.equal(ribs.length, 6, 'reduced motion ⇒ static ribs still paint');
+  assert.equal(ribs.length, 15, 'reduced motion ⇒ static ribs still paint');
 }
 
 { // Missing stamp ⇒ NO pulse for that tile: a pulse map holding only index 3
@@ -225,6 +230,53 @@ function decayHalf() {
   const expectedX = LAYOUT_12.center.x + ux * expectedR;
   const expectedY = LAYOUT_12.center.y + uy * expectedR;
   assert.ok(Math.abs(dot.x - expectedX) < 1e-9 && Math.abs(dot.y - expectedY) < 1e-9, `dot at midline formula point (${dot.x}, ${dot.y})`);
+}
+
+{ // Jump-candidate dots: small translucent dots at each candidate tile's
+  // grown-band midline, in the candidate tile's jewel color; nonexistent ids
+  // and the current beat's own id produce nothing; only the CURRENT beat's
+  // candidates matter; no current beat ⇒ no dots.
+  BEATS_12[0].jump_candidates = [1, 5, 99]; // 99 = nonexistent id
+  BEATS_12[2].jump_candidates = [0]; // non-current tile's candidates: ignored
+  try {
+    const counts = new Map([[1, 2]]); // beat 1 played twice ⇒ growth 6
+    const ctx = paint(BEATS_12, LAYOUT_12, { currentBeat: BEATS_12[0], currentIndex: 0, counts, nowSec: 10 });
+    // Candidate-dot fill arcs: radius BAND_12 × 0.35 / 2 exactly, alpha 0.5.
+    const dotArcs = callsOf(ctx, 'arc').filter((a) => Math.abs(a.args[2] - CANDIDATE_DOT_DIAMETER_FOR(BAND_12) / 2) < 1e-9);
+    assert.equal(dotArcs.length, 2, `exactly 2 candidate dots (got ${dotArcs.length})`);
+    assert.equal(CANDIDATE_DOT_DIAMETER_FOR(BAND_12), BAND_12 * 0.35);
+    const growth1 = PLAY_GROWTH_FOR(counts.get(1));
+    const dot1 = GLOW_DOT_POSITION(LAYOUT_12, BAND_12, growth1, LAYOUT_12.tiles[1]);
+    const dot5 = GLOW_DOT_POSITION(LAYOUT_12, BAND_12, PLAY_GROWTH_FOR(0), LAYOUT_12.tiles[5]);
+    const byPos = (dot) => dotArcs.find((a) => Math.abs(a.args[0] - dot.x) < 1e-9 && Math.abs(a.args[1] - dot.y) < 1e-9);
+    const arc1 = byPos(dot1);
+    const arc5 = byPos(dot5);
+    assert.ok(arc1, 'candidate dot on tile 1 at its grown midline');
+    assert.ok(arc5, 'candidate dot on tile 5 at its ungrown midline');
+    assert.equal(arc1.globalAlpha, CANDIDATE_DOT_ALPHA, 'candidate dot alpha 0.5');
+    assert.equal(arc5.globalAlpha, CANDIDATE_DOT_ALPHA, 'candidate dot alpha 0.5');
+    const cBeat1 = BEATS_12[1];
+    assert.equal(arc1.fillStyle, JEWEL_COLOR_FOR_CLUSTER(cBeat1.cluster, PALETTE), 'tile-1 dot uses the tile\'s jewel color');
+    // No dot on the current tile (self skipped), no dot from id 99, none from
+    // beat 2's candidate list while beat 0 is current.
+    const dot0 = GLOW_DOT_POSITION(LAYOUT_12, BAND_12, PLAY_GROWTH_FOR(0), LAYOUT_12.tiles[0]);
+    assert.ok(!byPos(dot0), 'no self-candidate dot under the playhead');
+    assert.equal(dotArcs.length, 2, 'nonexistent id 99 and beat 2\'s list contribute nothing');
+  } finally {
+    BEATS_12[0].jump_candidates = [];
+    BEATS_12[2].jump_candidates = [];
+  }
+
+  { // No current beat ⇒ zero candidate dots.
+    BEATS_12[0].jump_candidates = [1];
+    try {
+      const ctx = paint(BEATS_12, LAYOUT_12, { currentIndex: -1 });
+      const dotArcs = callsOf(ctx, 'arc').filter((a) => Math.abs(a.args[2] - CANDIDATE_DOT_DIAMETER_FOR(BAND_12) / 2) < 1e-9);
+      assert.equal(dotArcs.length, 0, 'no current beat ⇒ no candidate dots');
+    } finally {
+      BEATS_12[0].jump_candidates = [];
+    }
+  }
 }
 
 console.log('repeats.test.mjs OK');
