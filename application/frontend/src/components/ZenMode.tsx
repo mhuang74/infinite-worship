@@ -90,7 +90,6 @@ export const readZenPalette = (win: Window): ZenPalette => {
     jewels: JEWEL_VARS.map((v) => read(v, '#fdb515')),
     playhead: read('--wave-playhead', '#fdb515'),
     background: read('--surface', '#0e141c'),
-    spark: read('--zen-spark', '#ffffff'),
   };
 };
 
