@@ -14,6 +14,7 @@ import { AudioEngine, createAudioBuffer } from '@/lib/audio';
 import { loadSongForPlayback } from '@/lib/player';
 import { isPlayable } from '@/lib/upload';
 import { formatClock } from '@/lib/format';
+import { debugFlagEnabled, startTelemetry, type Telemetry } from '@/lib/smoothness';
 import type { Beat, Song, JumpEvent } from '@/lib/types';
 
 const TABS = [
@@ -128,6 +129,9 @@ export default function HomePage() {
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioEngineRef = useRef<AudioEngine | null>(null);
+  // Playback-smoothness telemetry: kept permanently, wired only under ?debug
+  // (spec: user decision — exception to the cleanup rule). Inert otherwise.
+  const telemetryRef = useRef<Telemetry | null>(null);
 
   // Effect to create or destroy the AudioEngine instance when a song is loaded/unloaded
   useEffect(() => {
@@ -144,7 +148,13 @@ export default function HomePage() {
           }
           audioContextRef.current = new AudioContextCtor();
         }
-        
+
+        // Telemetry (?debug only): started right after the engine is built
+        // below (startTelemetry needs the engine's mainGain for the in-chain
+        // tap). Any previous session is disposed first.
+        telemetryRef.current?.dispose();
+        telemetryRef.current = null;
+
         // Stop and clear the old engine instance if it exists
         if (audioEngineRef.current) {
           audioEngineRef.current.stop();
@@ -156,6 +166,7 @@ export default function HomePage() {
 
           // Callback for the engine to update the UI
           const onBeatChange = (beat: Beat) => {
+            telemetryRef.current?.markBeatCbStart();
             setCurrentBeat(beat);
             // One tally per scheduled beat — the engine's onBeatChange fires
             // exactly once per audible playback (seek/crossfade paths included),
@@ -167,6 +178,7 @@ export default function HomePage() {
               next.set(beat.id, (next.get(beat.id) ?? 0) + 1);
               return next;
             });
+            telemetryRef.current?.markBeatCbEnd(beat);
           };
 
           const onJump = (jump: JumpEvent) => {
@@ -192,6 +204,18 @@ export default function HomePage() {
           };
 
           audioEngineRef.current = new AudioEngine(audioContextRef.current, audioBuffer, songData.segments, onBeatChange, onJump, onPlaybackStarted);
+
+          // Telemetry (?debug only), after the engine exists (the in-chain
+          // gap tap splices mainGain → worklet → destination) but BEFORE the
+          // first play() so no scheduled beat is missed.
+          if (debugFlagEnabled(window.location.search)) {
+            const t = startTelemetry({
+              audioContext: audioContextRef.current,
+              mainGain: audioEngineRef.current.outputNode,
+            });
+            telemetryRef.current = t;
+            audioEngineRef.current.setTelemetry(t.hooks);
+          }
 
           // Set initial state
           setCurrentBeat(songData.segments[0]);
@@ -221,6 +245,8 @@ export default function HomePage() {
     // Cleanup on component unmount
     return () => {
       audioEngineRef.current?.stop();
+      telemetryRef.current?.dispose();
+      telemetryRef.current = null;
     };
   }, [audioFile, songData]);
 
@@ -243,6 +269,8 @@ export default function HomePage() {
         // effect tears down when audioFile/songData go null.
         audioEngineRef.current?.stop();
         audioEngineRef.current = null;
+        telemetryRef.current?.dispose();
+        telemetryRef.current = null;
         loadedSongIdRef.current = null;
         setSongData(null);
         setAudioFile(null);

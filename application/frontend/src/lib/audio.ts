@@ -1,5 +1,9 @@
 
 import { Beat, JumpEvent } from './types';
+import type { TelemetryHooks } from './smoothness';
+
+/** Entry points that spawn a fresh scheduler chain (telemetry's suspect-8 set). */
+type ChainOrigin = 'play' | 'seekToTime' | 'jumpToBeat' | 'crossfadeResume';
 
 export const createAudioBuffer = async (file: File, audioContext: AudioContext): Promise<AudioBuffer> => {
   const arrayBuffer = await file.arrayBuffer();
@@ -22,6 +26,10 @@ export class AudioEngine {
   private totalJumps = 0;
   private mainGain: GainNode;
   private hasPlaybackStarted = false;
+  /** Telemetry hooks (only when ?debug); null in normal playback. */
+  private telemetry: TelemetryHooks | null = null;
+  /** Outstanding chain re-arm timers — telemetry's live-chain count source. */
+  private chainTimers = new Set<NodeJS.Timeout>();
 
   constructor(audioContext: AudioContext, audioBuffer: AudioBuffer, beats: Beat[], onBeatChange: (beat: Beat) => void, onJump: (jump: JumpEvent) => void, onPlaybackStarted?: () => void) {
     this.audioContext = audioContext;
@@ -38,13 +46,39 @@ export class AudioEngine {
     this.jumpProbability = probability;
   }
 
+  /** The engine's output bus — telemetry's in-chain gap tap splices after it. */
+  public get outputNode(): GainNode {
+    return this.mainGain;
+  }
+
+  /**
+   * Attach telemetry after construction: the telemetry module needs the
+   * engine's mainGain (created in the constructor) to splice its worklet
+   * tap, so pages construct the engine first and attach hooks here — before
+   * any play() call, so no beat is missed.
+   */
+  public setTelemetry(hooks: TelemetryHooks | null) {
+    this.telemetry = hooks;
+  }
+
   public play() {
     if (this.isPlaying) {
       return;
     }
     this.isPlaying = true;
     this.nextBeatTime = this.audioContext.currentTime;
+    this.spawnChain('play');
     this.scheduleNextBeat();
+  }
+
+  /**
+   * Register a scheduler-chain entry point for telemetry (suspect 8): the
+   * timer chain's own re-arm does NOT go through here — only fresh chains
+   * spawned from play/seek/jump/restart/crossfade-resume count as EXTRA.
+   */
+  private spawnChain(origin: ChainOrigin) {
+    this.telemetry?.onExtraChain(origin);
+    this.telemetry?.onChainCount(this.chainTimers.size + 1);
   }
 
   public pause() {
@@ -87,6 +121,7 @@ export class AudioEngine {
 
     // If playing, restart the scheduling from the new position
     if (this.isPlaying) {
+      this.spawnChain('seekToTime');
       this.scheduleNextBeat();
     }
   }
@@ -106,6 +141,7 @@ export class AudioEngine {
     this.onJump({ count: this.totalJumps, from, to: beat });
     this.onBeatChange(beat);
     // Drain nothing; next scheduled tick reschedules from the new index/time.
+    this.spawnChain('jumpToBeat');
     this.scheduleNextBeat();
   }
 
@@ -129,9 +165,11 @@ export class AudioEngine {
       const currentBeat = this.beats[this.currentBeatIndex];
       this.onBeatChange(currentBeat);
 
-      // Trigger playback started callback on first beat
-      if (!this.hasPlaybackStarted && this.onPlaybackStarted) {
-        this.onPlaybackStarted();
+      // First beat: fire the page callback and arm telemetry's gap detection
+      // at the first audible beat — silence before playback is not a dropout.
+      if (!this.hasPlaybackStarted) {
+        this.telemetry?.onPlaybackArmed(this.nextBeatTime);
+        this.onPlaybackStarted?.();
         this.hasPlaybackStarted = true;
       }
 
@@ -154,6 +192,7 @@ export class AudioEngine {
           nextBeat = jumpCandidate;
           this.beatsSinceLastJump = 0;
           this.totalJumps++;
+          this.telemetry?.onJumpCount(this.totalJumps);
           this.onJump({ count: this.totalJumps, from: currentBeat, to: jumpCandidate });
         } else {
           nextBeat = this.beats[this.currentBeatIndex + 1];
@@ -168,16 +207,32 @@ export class AudioEngine {
       } else {
         // This part should ideally not be reached due to the crossfade
         this.isPlaying = false;
+        this.telemetry?.onRestartWithoutCrossfade(this.currentBeatIndex, this.beats.length);
         setTimeout(() => this.restart(), 3000);
         break;
       }
     }
 
-    setTimeout(() => this.scheduleNextBeat(), 25);
+    this.rearmChainTimer(25);
+  }
+
+  /**
+   * Arm one scheduler-chain timer: fires scheduleNextBeat after `delayMs`,
+   * tracks the outstanding timer so telemetry's live-chain count is
+   * engine-authoritative (suspect 8 accounting).
+   */
+  private rearmChainTimer(delayMs: number) {
+    const timer = setTimeout(() => {
+      this.chainTimers.delete(timer);
+      this.scheduleNextBeat();
+    }, delayMs);
+    this.chainTimers.add(timer);
+    this.telemetry?.onChainCount(this.chainTimers.size);
   }
 
   private scheduleCrossfade() {
     console.log("Starting crossfade...");
+    this.telemetry?.onCrossfadeStart();
     const fadeStartTime = this.nextBeatTime;
     let fadeTime = fadeStartTime;
 
@@ -186,13 +241,15 @@ export class AudioEngine {
     fadeOutGain.connect(this.mainGain);
     const fadeInGain = this.audioContext.createGain();
     fadeInGain.connect(this.mainGain);
+    // Telemetry (suspect 3): count the pair on creation — observation only;
+    // cleanup is a Phase-4 fix gated on before-fix captures.
+    this.telemetry?.onCrossfadeGainsCreated();
 
     // 2. Schedule the final 16 beats to fade out
     for (let i = 0; i < 16; i++) {
       const beatIndex = this.beats.length - 16 + i;
-      const beat = this.beats[beatIndex];
-      this.playBeat(beatIndex, fadeTime, fadeOutGain);
-      fadeTime += beat.duration;
+      this.playBeat(beatIndex, fadeTime, fadeOutGain, 'crossfadeOut');
+      fadeTime += this.beats[beatIndex].duration;
     }
     const fadeEndTime = fadeTime;
 
@@ -205,7 +262,7 @@ export class AudioEngine {
     for (let i = 0; i < 16; i++) {
       const beat = this.beats[i];
       this.onBeatChange(beat);
-      this.playBeat(i, fadeInPlayTime, fadeInGain);
+      this.playBeat(i, fadeInPlayTime, fadeInGain, 'crossfadeIn');
       fadeInPlayTime += beat.duration;
     }
 
@@ -220,17 +277,28 @@ export class AudioEngine {
     this.nextBeatTime = fadeInPlayTime; // Use the end time of the 16-beat fade-in
 
     // 7. Resume normal scheduling after the crossfade duration
-    setTimeout(() => {
-      this.scheduleNextBeat();
-    }, (fadeInPlayTime - this.audioContext.currentTime) * 1000);
+    const resumeDelayMs = (fadeInPlayTime - this.audioContext.currentTime) * 1000;
+    this.spawnChain('crossfadeResume');
+    this.rearmChainTimer(resumeDelayMs);
   }
 
-  private playBeat(beatIndex: number, time: number, destination: AudioNode) {
+  private playBeat(beatIndex: number, time: number, destination: AudioNode, leg: 'main' | 'crossfadeOut' | 'crossfadeIn' = 'main') {
     const beat = this.beats[beatIndex];
     const source = this.audioContext.createBufferSource();
     source.buffer = this.audioBuffer;
     source.connect(destination);
     source.start(time, beat.start, beat.duration);
+    // Telemetry: drift = lookahead slack at scheduling; late = start time
+    // already passed. Both crossfade legs get the crossfade-tagged hook —
+    // one record per scheduled beat, never two.
+    if (this.telemetry) {
+      const ct = this.audioContext.currentTime;
+      const drift = time - ct;
+      const late = time <= ct;
+      if (leg === 'main') this.telemetry.onBeatScheduled(beat, drift, late);
+      else this.telemetry.onCrossfadeLegBeat(beat, drift, late);
+    }
+    this.telemetry?.onNodeCreated(source);
   }
 
   private getJumpCandidate(beat: Beat): Beat | null {
