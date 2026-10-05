@@ -32,13 +32,6 @@ function makeBeat(id, cluster) {
   });
 }
 
-{ // Layout mode pin: 400×400 margin 20 ⇒ r0 = 140 < 200 ⇒ inward mode —
-  // play count encodes as band alpha + lightness here (no rib arcs); the
-  // full schedule is pinned in brightness.test.mjs.
-  const layout = LAYOUT_RING([makeBeat(0, 0)], { width: 400, height: 400, margin: 20 });
-  assert.equal(layout.mode, 'inward', 'small layout renders in inward mode');
-}
-
 { // Every tile is painted as an annulus band arc on the ring; color follows
   // its beat cluster (annulus-band seam, review R6).
   const beats = [makeBeat(0, 2), makeBeat(1, 0), makeBeat(2, 5)];
@@ -126,7 +119,7 @@ function makeBeat(id, cluster) {
   const coreArcs = callsOf(ctx, 'arc').filter((a) => Math.abs(a.args[2] - band * 0.7) < 1e-9);
   assert.equal(coreArcs.length, 1, `core arc radius == band*0.7 (${band * 0.7})`);
   // Dot sits on the current tile's radial at the band midline.
-  const dot = GLOW_DOT_POSITION(layout, band, 0, layout.tiles[5]);
+  const dot = GLOW_DOT_POSITION(layout, band, layout.tiles[5]);
   for (const a of [...haloArcs, ...coreArcs]) {
     assert.equal(a.args[0], dot.x, 'dot arc centered on midline x');
     assert.equal(a.args[1], dot.y, 'dot arc centered on midline y');
@@ -180,14 +173,15 @@ function makeBeat(id, cluster) {
   }
 }
 
-{ // Midline position: dot is beyond the base midline when the beat has grown
-  // (growth/2 shift); below band/2 = 22 the min() cap keeps DOT_BASE_OFFSET.
+{ // Midline position: the dot never shifts with play count (no growth
+  // parameter); below band/2 = 22 the min() cap keeps DOT_BASE_OFFSET.
   const beats = Array.from({ length: 8 }, (_, i) => makeBeat(i, 0));
   const layout = LAYOUT_RING(beats, { width: 800, height: 800, margin: 32 });
   const band = TILE_DIAMETER_FOR(beats.length, layout.radius);
-  const base = GLOW_DOT_POSITION(layout, band, 0, layout.tiles[0]);
-  const grown = GLOW_DOT_POSITION(layout, band, 18, layout.tiles[0]);
-  assert.ok(Math.abs((grown.x - base.x) + (grown.y - base.y)) > 0, 'growth shifts the dot outward');
+  const base = GLOW_DOT_POSITION(layout, band, layout.tiles[0]);
+  const again = GLOW_DOT_POSITION(layout, band, layout.tiles[0]);
+  assert.equal(again.x, base.x, 'dot x stable across calls (no growth shift)');
+  assert.equal(again.y, base.y, 'dot y stable across calls (no growth shift)');
 }
 
 { // Reduced motion: current band still highlighted statically (thicker, full
