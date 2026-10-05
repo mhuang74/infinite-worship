@@ -29,6 +29,9 @@
 
 import type { Beat } from './types';
 
+/** Entry points that spawn a fresh scheduler chain (telemetry's suspect-8 set). */
+export type ChainOrigin = 'play' | 'seekToTime' | 'jumpToBeat' | 'crossfadeResume';
+
 /** Ring capacity per signal stream: 30 min × 1 Hz, plus per-beat headroom. */
 const SAMPLE_CAPACITY = 2400;
 const BEAT_CAPACITY = 2400;
@@ -104,6 +107,8 @@ export interface TelemetrySnapshot {
   gaps: GapEvent[];
   /** Discrete events: context transitions, resumes, longtasks, path events. */
   events: TelemetryEvent[];
+  /** User-heard glitch marks, session-relative seconds (Phase 3 step 4). */
+  glitchMarks: number[];
 }
 
 /** Hooks the AudioEngine calls at its natural instrumentation points. */
@@ -114,7 +119,7 @@ export interface TelemetryHooks {
   onNodeCreated: (source: AudioBufferSourceNode) => void;
   onRestartWithoutCrossfade: (atBeatIndex: number, length: number) => void;
   /** An extra scheduler chain spawned from play/seek/jump/restart (suspect 8). */
-  onExtraChain: (origin: string) => void;
+  onExtraChain: (origin: ChainOrigin) => void;
   /** Engine's authoritative live-chain count, reported whenever it changes. */
   onChainCount: (n: number) => void;
   /** A probabilistic jump fired (count includes this jump). */
@@ -123,6 +128,11 @@ export interface TelemetryHooks {
   onCrossfadeGainsCreated: () => void;
   /** First beat scheduled: audio-time from which gap detection is live. */
   onPlaybackArmed: (atAudioTime: number) => void;
+  /**
+   * Playback stopped (pause/stop/restart boundary): the gap tap disarms so
+   * idle/pause silence is not counted as a dropout; onPlaybackArmed re-arms.
+   */
+  onPlaybackPaused: () => void;
 }
 
 export interface Telemetry {
@@ -137,6 +147,10 @@ export interface Telemetry {
    * the final arbiter when in-page signals and hearing disagree (spec Phase 4).
    */
   captureBlob: () => Promise<Blob | null>;
+  /** Session-relative seconds now — the origin every telemetry t uses. */
+  nowSec: () => number;
+  /** User-heard glitch note at the current session-relative time (Phase 3 step 4). */
+  markGlitch: () => void;
 }
 
 export interface StartTelemetryOptions {
@@ -219,6 +233,11 @@ class GapTapProcessor extends AudioWorkletProcessor {
       } else if (rms > this.gapPeakRms) {
         this.gapPeakRms = rms;
       }
+    } else if (this.gapStartTime !== null) {
+      // Disarmed mid-gap (pause/stop): drop the open gap — silence after a
+      // pause is idle, not a dropout. The partial window is not reported.
+      this.gapStartTime = null;
+      this.gapPeakRms = 0;
     }
     return true;
   }
@@ -384,8 +403,25 @@ export function startTelemetry(options: StartTelemetryOptions): Telemetry {
     onPlaybackArmed: (atAudioTime) => {
       armedAtAudioTime = atAudioTime;
       const w = worklet;
-      if (w) w.port.postMessage({ type: 'armAt', t: atAudioTime });
+      // Re-arm alongside armAt: pause/stop disarmed the tap (arm:false), and
+      // the setup-time arm is one-shot — without this the tap stays blind
+      // after any pause→play cycle.
+      if (w) {
+        w.port.postMessage({ type: 'arm', armed: true });
+        w.port.postMessage({ type: 'armAt', t: atAudioTime });
+      }
     },
+    onPlaybackPaused: () => {
+      const w = worklet;
+      if (w) w.port.postMessage({ type: 'arm', armed: false });
+      logEvent('gaptap.disarmed');
+    },
+  };
+
+  /** User-heard glitch marks, session-relative — directly comparable to gaps[].t. */
+  const glitchMarks: number[] = [];
+  const markGlitch = () => {
+    glitchMarks.push(now());
   };
 
   // onBeatChange callback execution time: the page wraps its handler between
@@ -547,6 +583,7 @@ export function startTelemetry(options: StartTelemetryOptions): Telemetry {
     beats: beats.all,
     gaps: gaps.all,
     events: events.all,
+    glitchMarks,
   });
 
   const dispose = () => {
@@ -569,7 +606,14 @@ export function startTelemetry(options: StartTelemetryOptions): Telemetry {
   // Expose for CDP extraction + the Download-JSON button + the probe script.
   const w = window as unknown as {
     __telemetry?: () => TelemetrySnapshot;
-    __gapTap?: { armed: () => boolean; blockMainThreadMs: (ms: number) => number };
+    __gapTap?: {
+      armed: () => boolean;
+      blockMainThreadMs: (ms: number) => number;
+      /** Probe handles driving the same arm/disarm path the pages drive. */
+      pause: () => void;
+      play: () => void;
+      markGlitch: () => void;
+    };
   };
   w.__telemetry = snapshot;
   w.__gapTap = {
@@ -581,6 +625,11 @@ export function startTelemetry(options: StartTelemetryOptions): Telemetry {
       while (performance.now() < end) sink += Math.sqrt(performance.now());
       return sink;
     },
+    pause: () => hooks.onPlaybackPaused(),
+    play: () => {
+      if (armedAtAudioTime !== null) hooks.onPlaybackArmed(armedAtAudioTime);
+    },
+    markGlitch,
   };
 
   const captureBlob = async (): Promise<Blob | null> => {
@@ -600,5 +649,14 @@ export function startTelemetry(options: StartTelemetryOptions): Telemetry {
   };
 
   void gapTapSetup; // fire-and-forget; errors are logged as events
-  return { hooks, snapshot, dispose, markBeatCbStart, markBeatCbEnd, captureBlob };
+  return {
+    hooks,
+    snapshot,
+    dispose,
+    markBeatCbStart,
+    markBeatCbEnd,
+    captureBlob,
+    nowSec: now,
+    markGlitch,
+  };
 }

@@ -80,8 +80,6 @@ export default function PlaytestPage() {
   const [beatPlayCounts, setBeatPlayCounts] = useState<Map<number, number>>(new Map());
   const [isPlaying, setIsPlaying] = useState(false);
   const [analysisBeats, setAnalysisBeats] = useState<Beat[] | null>(null);
-  /** User glitch notes: wall-clock marks the user taps when they HEAR a glitch. */
-  const [glitchMarks, setGlitchMarks] = useState<number[]>([]);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const engineRef = useRef<AudioEngine | null>(null);
@@ -94,24 +92,25 @@ export default function PlaytestPage() {
     setParams(readParams());
   }, []);
 
-  // Download JSON = the Mac transport (DevTools stays closed there).
+  // Download JSON = the Mac transport (DevTools stays closed there); the
+  // snapshot already carries the session-relative glitchMarks.
   const downloadJson = useCallback(() => {
     const snap = telemetryRef.current?.snapshot();
     if (!snap) return;
-    const payload = { ...snap, glitchMarks };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify(snap, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = `smoothness-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
     a.click();
     URL.revokeObjectURL(url);
-  }, [glitchMarks]);
+  }, []);
 
   // User glitch note (spec Phase 3 step 4): a session-relative timestamp the
-  // user taps when they hear a glitch; cross-checked against gap events after.
+  // user taps when they hear a glitch — the telemetry object owns the origin,
+  // so marks align exactly with gaps[].t and the capture audio.
   const markGlitch = useCallback(() => {
-    setGlitchMarks((prev) => [...prev, performance.now() / 1000]);
+    telemetryRef.current?.markGlitch();
   }, []);
 
   // Download the MediaRecorder capture tail (belt-and-braces arbiter).
@@ -223,6 +222,10 @@ export default function PlaytestPage() {
           void ctx.resume();
           src.start();
           loopSourceRef.current = src;
+          // Arm the gap tap at the loop's first audible moment — the worklet
+          // otherwise stays armAt=null and records nothing (the loop control
+          // is the decisive C1 fork on the Mac, it must actually measure).
+          telemetryRef.current?.hooks.onPlaybackArmed(ctx.currentTime);
           setIsPlaying(true);
           setStatus('loop control playing');
           return;
@@ -324,7 +327,7 @@ export default function PlaytestPage() {
             className="mt-4 ml-2 rounded-full border border-outline-variant px-4 py-2 text-sm"
             data-testid="playtest-mark-glitch"
           >
-            Mark glitch now{glitchMarks.length > 0 ? ` (${glitchMarks.length})` : ''}
+            Mark glitch now
           </button>
           <button
             type="button"

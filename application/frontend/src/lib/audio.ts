@@ -84,12 +84,16 @@ export class AudioEngine {
   public pause() {
     this.isPlaying = false;
     this.hasPlaybackStarted = false;
+    // Telemetry: disarm the gap tap — silence across a pause is idle.
+    this.telemetry?.onPlaybackPaused();
   }
 
   public stop() {
     this.isPlaying = false;
     this.currentBeatIndex = 0;
     this.hasPlaybackStarted = false;
+    // Telemetry: disarm the gap tap — silence across a stop is idle.
+    this.telemetry?.onPlaybackPaused();
   }
 
   public restart() {

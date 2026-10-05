@@ -147,7 +147,7 @@
 
 ## Phase 2 results (2026-10-05, this box, headless Chrome — main-thread signals only)
 
-Environment: `google-chrome` 141 headless-new, flags per Known constraints; throwaway static
+Environment: HeadlessChrome/154 (`google-chrome` headless-new), flags per Known constraints; throwaway static
 server on :39471 serving `music/bruno.mp3` + hand-built grid (443 beats × 0.5 s, bidirectional
 jump candidates, beat 0 at file t=1.0 s to skip the file's 0.63 s leading silence); Next dev
 server on :3000; probe script drove `window.__telemetry` via Playwright CDP.
@@ -183,11 +183,19 @@ server on :3000; probe script drove `window.__telemetry` via Playwright CDP.
 
 Read-outs:
 
+**B-zen deviation from plan:** spec line 101 says "Add B-zen if A vs C shows meaningful zen
+cost" — the A-vs-C comparison showed none (beatCb p99 0.4 vs 0.5 ms, zero longtasks, memory
+slope ≈ 0 MB/min in C), so B-zen was NOT triggered by that criterion. It was run anyway (one
+extra 12-min pass) as a cheap control for the wrap path under repaint load, since the p=0 arm
+exercises crossfades the p=0.15 walk under-weighted; its results matched B exactly and are
+reported in the matrix below.
+
 1. **Drift does NOT trend toward 0 on Linux:** first-30 ≈ 0.082–0.084 s, last-30 ≈ 0.086–0.088 s
    across arms — the scheduler rides the 100 ms lookahead top consistently for 12 min; no
    degradation of scheduling health on this platform. Late starts: only the first beat (arm A/C)
    and the crossfade resume boundary (arm B, drift −0.003/−0.001 — sub-frame, likely the
    25 ms-timer granularity of the crossfade resume; audibly negligible).
+
 2. **Zero longtasks in 4×12 min, including zen=1 arms.** On this box the ZenMode per-beat repaint
    (~500-tile canvas + fade pass) does NOT produce >50 ms main-thread tasks. (V8 flags off in
    prod build could differ; headless dev build is what we can run here.)
