@@ -169,8 +169,8 @@ const clamp01 = (v: number): number => Math.min(1, Math.max(0, v));
 export const PLAY_GROWTH_FOR = (count: number): number =>
   Math.min(count, PLAY_MAX_REPS) * PLAY_GROWTH_PX;
 
-/** Candidate-dot diameter: half the playhead core (core = band × 0.7). */
-export const CANDIDATE_DOT_DIAMETER_FOR = (band: number): number => band * 0.35;
+/** Candidate-dot diameter: equals the playhead core width (core = band × 0.7). */
+export const CANDIDATE_DOT_DIAMETER_FOR = (band: number): number => band * 0.7;
 /** Candidate-dot alpha. */
 export const CANDIDATE_DOT_ALPHA = 0.5;
 
@@ -193,7 +193,7 @@ export function GLOW_DOT_POSITION(
 
 /**
  * Jump-candidate dot center: on the candidate tile's radial, in the inner
- * white space — its OUTER edge sits 2px clear of the band's INNER edge
+ * white space — its OUTER edge sits 3px clear of the band's INNER edge
  * (ringRadius − band/2), fully clear of the band stroke (independent of
  * growth: the dot never sits on the band, unlike the playhead glow-dot).
  */
@@ -203,7 +203,7 @@ export function CANDIDATE_DOT_POSITION(
   tile: TilePosition,
 ): { x: number; y: number } {
   const dotRadius = CANDIDATE_DOT_DIAMETER_FOR(band) / 2;
-  const r = layout.radius - band / 2 - 2 - dotRadius;
+  const r = layout.radius - band / 2 - 3 - dotRadius;
   const ux = layout.radius === 0 ? 1 : (tile.x - layout.center.x) / layout.radius;
   const uy = layout.radius === 0 ? 0 : (tile.y - layout.center.y) / layout.radius;
   return { x: layout.center.x + ux * r, y: layout.center.y + uy * r };
@@ -366,7 +366,7 @@ export function PAINT_FRAME(view: ZenViewState, ctx: DrawTarget): void {
 
   // Jump-candidate dots: one small translucent dot per beat that is a jump
   // candidate of the current beat, in the inner white space — the dot's outer
-  // edge sits 2px clear of the band's inner edge (CANDIDATE_DOT_POSITION).
+  // edge sits 3px clear of the band's inner edge (CANDIDATE_DOT_POSITION).
   // Static state markers, not motion —
   // painted under reduced motion too (same rationale as growth ribs).
   if (currentIndex >= 0) {
