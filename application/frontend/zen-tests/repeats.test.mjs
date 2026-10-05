@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { compileTs, FakeCtx, callsOf } from './harness.mjs';
 
 const drawUrl = compileTs('src/lib/zen/draw.ts');
-const { LAYOUT_RING, PAINT_FRAME, PLAY_GROWTH_FOR, PLAY_MAX_REPS, TILE_DIAMETER_FOR, GLOW_DOT_POSITION, CANDIDATE_DOT_DIAMETER_FOR, CANDIDATE_DOT_ALPHA, JEWEL_COLOR_FOR_CLUSTER } = await import(drawUrl);
+const { LAYOUT_RING, PAINT_FRAME, PLAY_GROWTH_FOR, PLAY_MAX_REPS, TILE_DIAMETER_FOR, GLOW_DOT_POSITION, CANDIDATE_DOT_POSITION, CANDIDATE_DOT_DIAMETER_FOR, CANDIDATE_DOT_ALPHA, JEWEL_COLOR_FOR_CLUSTER } = await import(drawUrl);
 
 const PALETTE = {
   jewels: ['#ff8a80', '#fdb515', '#7bd5a8', '#8ab8ff', '#cfa9f5', '#7fdce8'],
@@ -232,34 +232,38 @@ function decayHalf() {
   assert.ok(Math.abs(dot.x - expectedX) < 1e-9 && Math.abs(dot.y - expectedY) < 1e-9, `dot at midline formula point (${dot.x}, ${dot.y})`);
 }
 
-{ // Jump-candidate dots: small translucent dots at each candidate tile's
-  // grown-band midline, in the candidate tile's jewel color; nonexistent ids
-  // and the current beat's own id produce nothing; only the CURRENT beat's
-  // candidates matter; no current beat ⇒ no dots.
+{ // Jump-candidate dots: small translucent dots in the inner white space —
+  // the dot's OUTER edge sits 2px clear of the band's INNER edge — in the
+  // candidate tile's jewel color; nonexistent ids and the current beat's own
+  // id produce nothing; only the CURRENT beat's candidates matter; no current
+  // beat ⇒ no dots. Independent of growth: play counts never move these dots.
   BEATS_12[0].jump_candidates = [1, 5, 99]; // 99 = nonexistent id
   BEATS_12[2].jump_candidates = [0]; // non-current tile's candidates: ignored
   try {
-    const counts = new Map([[1, 2]]); // beat 1 played twice ⇒ growth 6
-    const ctx = paint(BEATS_12, LAYOUT_12, { currentBeat: BEATS_12[0], currentIndex: 0, counts, nowSec: 10 });
+    const ctx = paint(BEATS_12, LAYOUT_12, { currentBeat: BEATS_12[0], currentIndex: 0, counts: null, nowSec: 10 });
     // Candidate-dot fill arcs: radius BAND_12 × 0.35 / 2 exactly, alpha 0.5.
     const dotArcs = callsOf(ctx, 'arc').filter((a) => Math.abs(a.args[2] - CANDIDATE_DOT_DIAMETER_FOR(BAND_12) / 2) < 1e-9);
     assert.equal(dotArcs.length, 2, `exactly 2 candidate dots (got ${dotArcs.length})`);
     assert.equal(CANDIDATE_DOT_DIAMETER_FOR(BAND_12), BAND_12 * 0.35);
-    const growth1 = PLAY_GROWTH_FOR(counts.get(1));
-    const dot1 = GLOW_DOT_POSITION(LAYOUT_12, BAND_12, growth1, LAYOUT_12.tiles[1]);
-    const dot5 = GLOW_DOT_POSITION(LAYOUT_12, BAND_12, PLAY_GROWTH_FOR(0), LAYOUT_12.tiles[5]);
+    const dot1 = CANDIDATE_DOT_POSITION(LAYOUT_12, BAND_12, LAYOUT_12.tiles[1]);
+    const dot5 = CANDIDATE_DOT_POSITION(LAYOUT_12, BAND_12, LAYOUT_12.tiles[5]);
     const byPos = (dot) => dotArcs.find((a) => Math.abs(a.args[0] - dot.x) < 1e-9 && Math.abs(a.args[1] - dot.y) < 1e-9);
     const arc1 = byPos(dot1);
     const arc5 = byPos(dot5);
-    assert.ok(arc1, 'candidate dot on tile 1 at its grown midline');
-    assert.ok(arc5, 'candidate dot on tile 5 at its ungrown midline');
+    assert.ok(arc1, 'candidate dot on tile 1, 2px clear inside the band');
+    assert.ok(arc5, 'candidate dot on tile 5, 2px clear inside the band');
     assert.equal(arc1.globalAlpha, CANDIDATE_DOT_ALPHA, 'candidate dot alpha 0.5');
     assert.equal(arc5.globalAlpha, CANDIDATE_DOT_ALPHA, 'candidate dot alpha 0.5');
     const cBeat1 = BEATS_12[1];
     assert.equal(arc1.fillStyle, JEWEL_COLOR_FOR_CLUSTER(cBeat1.cluster, PALETTE), 'tile-1 dot uses the tile\'s jewel color');
+    // Edge clearance: dot center radius = ringRadius − band/2 − 2 − dotRadius
+    // (outer edge exactly 2px inside the band's inner edge).
+    const clearR = LAYOUT_12.radius - BAND_12 / 2 - 2 - CANDIDATE_DOT_DIAMETER_FOR(BAND_12) / 2;
+    const r5 = Math.hypot(dot5.x - LAYOUT_12.center.x, dot5.y - LAYOUT_12.center.y);
+    assert.ok(Math.abs(r5 - clearR) < 1e-9, `tile-5 dot center radius clears band inner edge by 2px + dotRadius (${r5} vs ${clearR})`);
     // No dot on the current tile (self skipped), no dot from id 99, none from
     // beat 2's candidate list while beat 0 is current.
-    const dot0 = GLOW_DOT_POSITION(LAYOUT_12, BAND_12, PLAY_GROWTH_FOR(0), LAYOUT_12.tiles[0]);
+    const dot0 = CANDIDATE_DOT_POSITION(LAYOUT_12, BAND_12, LAYOUT_12.tiles[0]);
     assert.ok(!byPos(dot0), 'no self-candidate dot under the playhead');
     assert.equal(dotArcs.length, 2, 'nonexistent id 99 and beat 2\'s list contribute nothing');
   } finally {
