@@ -64,7 +64,7 @@ export default function HomePage() {
 
   const selectedSongIdRef = useRef<string | null>(null);
 
-  const loadSongs = useCallback(async ({ autoplayRandom = false, silent = false }: { autoplayRandom?: boolean; silent?: boolean } = {}) => {
+  const loadSongs = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
     try {
       if (!silent) {
         setLibraryLoading(true);
@@ -75,21 +75,7 @@ export default function HomePage() {
       const fetchedSongs: Song[] = response.data.songs || [];
       setSongs(fetchedSongs);
 
-      if (autoplayRandom && fetchedSongs.length > 0) {
-        const playableSongs = fetchedSongs.filter((song: Song) => song.status === 'ready');
-        if (playableSongs.length === 0) {
-          selectedSongIdRef.current = null;
-          setSelectedSongId(null);
-          setSelectedSongName(null);
-        } else {
-          const randomIndex = Math.floor(Math.random() * playableSongs.length);
-          const randomSong = playableSongs[randomIndex];
-          selectedSongIdRef.current = randomSong.song_id;
-          setShouldAutoplay(true);
-          setSelectedSongId(randomSong.song_id);
-          setSelectedSongName(randomSong.title);
-        }
-      } else if (selectedSongIdRef.current) {
+      if (selectedSongIdRef.current) {
         const matchingSong = fetchedSongs.find((song: Song) => song.song_id === selectedSongIdRef.current);
         if (!matchingSong) {
           selectedSongIdRef.current = null;
@@ -174,6 +160,11 @@ export default function HomePage() {
 
           // Auto-play if flagged
           if (shouldAutoplay) {
+            // The engine effect runs outside the click gesture that selected
+            // the song (fetch + decode intervene), so the context may still
+            // be suspended; resume() from within the click-initiated task
+            // chain lets the first play produce sound.
+            await audioContextRef.current.resume();
             audioEngineRef.current.play();
             setShouldAutoplay(false);
           }
@@ -263,6 +254,9 @@ export default function HomePage() {
       setIsPlaying(false);
       setIsPlaybackPending(false);
     } else {
+      // Browsers suspend a freshly created AudioContext until a user gesture
+      // touches it; resume() here makes the first click produce sound.
+      void audioContextRef.current?.resume();
       setIsPlaybackPending(true);
       audioEngineRef.current.play();
     }
@@ -296,7 +290,7 @@ export default function HomePage() {
   }, [isPlaying]);
 
   useEffect(() => {
-    loadSongs({ autoplayRandom: true });
+    loadSongs();
   }, [loadSongs]);
 
   // Status polling (issue #23): after an upload, the Song row starts as
@@ -393,6 +387,16 @@ export default function HomePage() {
     setSelectedSongName(title);
   };
 
+  const handlePlayRandom = useCallback(() => {
+    const playable = songs.filter((s) => s.status === 'ready');
+    if (playable.length === 0) {
+      setError('No ready songs to play yet — upload one or check back soon.');
+      return;
+    }
+    const song = playable[Math.floor(Math.random() * playable.length)];
+    handleSongSelect(song.song_id, song.title);
+  }, [songs]);
+
   return (
     <main className="min-h-screen w-full px-4 py-8 hero:py-12">
       {/* relative: content stacks above the fixed body::before page glows */}
@@ -403,7 +407,20 @@ export default function HomePage() {
         <section className="rounded-[28px] border border-outline-variant/55 bg-surface-container-low p-5 shadow-[0_1px_2px_rgba(0,0,0,0.3),0_4px_16px_rgba(0,0,0,0.18)] hero:p-7">
           <div className="grid grid-cols-1 gap-7 hero:grid-cols-[1fr_300px]">
             <div className="min-w-0">
-              <h2 className="type-display">{selectedSongName ?? 'No song selected'}</h2>
+              <h2 className="type-display">
+                {selectedSongName ?? (
+                  <>
+                    {'No song selected '}
+                    <button
+                      type="button"
+                      onClick={handlePlayRandom}
+                      className="text-gold-foreground underline decoration-2 underline-offset-4"
+                    >
+                      Let it flow
+                    </button>
+                  </>
+                )}
+              </h2>
               <p className="mb-5 mt-1.5 text-[13px] text-on-surface-variant">
                 {songData
                   ? `${formatClock(audioEngineRef.current ? audioEngineRef.current.getDuration() : null)} · ${songData.segments.length} beats · ${totalJumpPoints ?? 0} jump points`
