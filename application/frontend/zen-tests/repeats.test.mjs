@@ -233,7 +233,7 @@ function decayHalf() {
 }
 
 { // Jump-candidate dots: small translucent dots in the inner white space —
-  // the dot's OUTER edge sits 2px clear of the band's INNER edge — in the
+  // the dot's OUTER edge sits 3px clear of the band's INNER edge — in the
   // candidate tile's jewel color; nonexistent ids and the current beat's own
   // id produce nothing; only the CURRENT beat's candidates matter; no current
   // beat ⇒ no dots. Independent of growth: play counts never move these dots.
@@ -241,26 +241,26 @@ function decayHalf() {
   BEATS_12[2].jump_candidates = [0]; // non-current tile's candidates: ignored
   try {
     const ctx = paint(BEATS_12, LAYOUT_12, { currentBeat: BEATS_12[0], currentIndex: 0, counts: null, nowSec: 10 });
-    // Candidate-dot fill arcs: radius BAND_12 × 0.35 / 2 exactly, alpha 0.5.
+    // Candidate-dot fill arcs: radius BAND_12 × 0.7 / 2 exactly, alpha 0.5.
     const dotArcs = callsOf(ctx, 'arc').filter((a) => Math.abs(a.args[2] - CANDIDATE_DOT_DIAMETER_FOR(BAND_12) / 2) < 1e-9);
     assert.equal(dotArcs.length, 2, `exactly 2 candidate dots (got ${dotArcs.length})`);
-    assert.equal(CANDIDATE_DOT_DIAMETER_FOR(BAND_12), BAND_12 * 0.35);
+    assert.equal(CANDIDATE_DOT_DIAMETER_FOR(BAND_12), BAND_12 * 0.7);
     const dot1 = CANDIDATE_DOT_POSITION(LAYOUT_12, BAND_12, LAYOUT_12.tiles[1]);
     const dot5 = CANDIDATE_DOT_POSITION(LAYOUT_12, BAND_12, LAYOUT_12.tiles[5]);
     const byPos = (dot) => dotArcs.find((a) => Math.abs(a.args[0] - dot.x) < 1e-9 && Math.abs(a.args[1] - dot.y) < 1e-9);
     const arc1 = byPos(dot1);
     const arc5 = byPos(dot5);
-    assert.ok(arc1, 'candidate dot on tile 1, 2px clear inside the band');
-    assert.ok(arc5, 'candidate dot on tile 5, 2px clear inside the band');
+    assert.ok(arc1, 'candidate dot on tile 1, 3px clear inside the band');
+    assert.ok(arc5, 'candidate dot on tile 5, 3px clear inside the band');
     assert.equal(arc1.globalAlpha, CANDIDATE_DOT_ALPHA, 'candidate dot alpha 0.5');
     assert.equal(arc5.globalAlpha, CANDIDATE_DOT_ALPHA, 'candidate dot alpha 0.5');
     const cBeat1 = BEATS_12[1];
     assert.equal(arc1.fillStyle, JEWEL_COLOR_FOR_CLUSTER(cBeat1.cluster, PALETTE), 'tile-1 dot uses the tile\'s jewel color');
-    // Edge clearance: dot center radius = ringRadius − band/2 − 2 − dotRadius
-    // (outer edge exactly 2px inside the band's inner edge).
-    const clearR = LAYOUT_12.radius - BAND_12 / 2 - 2 - CANDIDATE_DOT_DIAMETER_FOR(BAND_12) / 2;
+    // Edge clearance: dot center radius = ringRadius − band/2 − 3 − dotRadius
+    // (outer edge exactly 3px inside the band's inner edge).
+    const clearR = LAYOUT_12.radius - BAND_12 / 2 - 3 - CANDIDATE_DOT_DIAMETER_FOR(BAND_12) / 2;
     const r5 = Math.hypot(dot5.x - LAYOUT_12.center.x, dot5.y - LAYOUT_12.center.y);
-    assert.ok(Math.abs(r5 - clearR) < 1e-9, `tile-5 dot center radius clears band inner edge by 2px + dotRadius (${r5} vs ${clearR})`);
+    assert.ok(Math.abs(r5 - clearR) < 1e-9, `tile-5 dot center radius clears band inner edge by 3px + dotRadius (${r5} vs ${clearR})`);
     // No dot on the current tile (self skipped), no dot from id 99, none from
     // beat 2's candidate list while beat 0 is current.
     const dot0 = CANDIDATE_DOT_POSITION(LAYOUT_12, BAND_12, LAYOUT_12.tiles[0]);
