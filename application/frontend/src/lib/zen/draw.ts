@@ -191,6 +191,24 @@ export function GLOW_DOT_POSITION(
   return { x: layout.center.x + ux * r, y: layout.center.y + uy * r };
 }
 
+/**
+ * Jump-candidate dot center: on the candidate tile's radial, in the inner
+ * white space — its OUTER edge sits 2px clear of the band's INNER edge
+ * (ringRadius − band/2), fully clear of the band stroke (independent of
+ * growth: the dot never sits on the band, unlike the playhead glow-dot).
+ */
+export function CANDIDATE_DOT_POSITION(
+  layout: RingLayout,
+  band: number,
+  tile: TilePosition,
+): { x: number; y: number } {
+  const dotRadius = CANDIDATE_DOT_DIAMETER_FOR(band) / 2;
+  const r = layout.radius - band / 2 - 2 - dotRadius;
+  const ux = layout.radius === 0 ? 1 : (tile.x - layout.center.x) / layout.radius;
+  const uy = layout.radius === 0 ? 0 : (tile.y - layout.center.y) / layout.radius;
+  return { x: layout.center.x + ux * r, y: layout.center.y + uy * r };
+}
+
 /** Beat-driven arc memory alpha: 1.0 → 0.15 over 16 beats, → 0 over the next 16; 0 at ≥32. */
 const arcMemAlpha = (beatsSince: number): number => {
   if (beatsSince <= MEMORY_BEATS) return 1 - 0.85 * (beatsSince / MEMORY_BEATS);
@@ -347,8 +365,9 @@ export function PAINT_FRAME(view: ZenViewState, ctx: DrawTarget): void {
   }
 
   // Jump-candidate dots: one small translucent dot per beat that is a jump
-  // candidate of the current beat, at the candidate tile's grown-band midline
-  // (same placement rule as the playhead). Static state markers, not motion —
+  // candidate of the current beat, in the inner white space — the dot's outer
+  // edge sits 2px clear of the band's inner edge (CANDIDATE_DOT_POSITION).
+  // Static state markers, not motion —
   // painted under reduced motion too (same rationale as growth ribs).
   if (currentIndex >= 0) {
     const current = beats[currentIndex];
@@ -360,8 +379,7 @@ export function PAINT_FRAME(view: ZenViewState, ctx: DrawTarget): void {
         const cTile = layout.tiles[idx];
         const cBeat = beats[idx];
         if (!cTile || !cBeat) continue;
-        const growth = PLAY_GROWTH_FOR(counts?.get(cBeat.id) ?? 0);
-        const pos = GLOW_DOT_POSITION(layout, band, growth, cTile);
+        const pos = CANDIDATE_DOT_POSITION(layout, band, cTile);
         ctx.beginPath();
         ctx.fillStyle = JEWEL_COLOR_FOR_CLUSTER(cBeat.cluster, palette);
         ctx.globalAlpha = CANDIDATE_DOT_ALPHA;
