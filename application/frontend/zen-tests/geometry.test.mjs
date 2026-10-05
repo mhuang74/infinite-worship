@@ -63,22 +63,22 @@ function makeBeat(id) {
 
 { // Min-side rule: same radius for a portrait and a landscape viewport of
   // the same two sides (ring stays circular, centered, no reflow). At 390
-  // min side margin 0 the fraction binds but the ceiling caps it
-  // (box/2 − 40 = 155 < 136.5 is false ⇒ fraction: 0.35 × 390 = 136.5).
+  // min side margin 0 the ceiling binds and caps the fraction
+  // (box/2 − 67 = 195 − 67 = 128 < 0.35 × 390 = 136.5 ⇒ ceiling wins: 128).
   const portrait = LAYOUT_RING(Array.from({ length: 5 }, (_, i) => makeBeat(i)), { width: 390, height: 844, margin: 0 });
   const landscape = LAYOUT_RING(Array.from({ length: 5 }, (_, i) => makeBeat(i)), { width: 844, height: 390, margin: 0 });
   assert.equal(portrait.radius, landscape.radius, 'min-side rule: identical radii');
-  assert.ok(Math.abs(portrait.radius - 0.35 * 390) < 1e-9, `radius == 0.35 × 390 (${portrait.radius})`);
+  assert.ok(Math.abs(portrait.radius - 128) < 1e-9, `radius == 195 − 67 = 128 (${portrait.radius})`);
   assert.equal(portrait.center.x, 390 / 2);
   assert.equal(portrait.center.y, 844 / 2);
   assert.equal(landscape.center.x, 844 / 2);
   assert.equal(landscape.center.y, 390 / 2);
-  assert.ok(portrait.radius + 40 <= 390 / 2, 'ring + headroom stays inside the min side');
+  assert.ok(portrait.radius + 67 <= 390 / 2, 'ring + headroom stays inside the min side');
 }
 
 { // Precedence: ceiling wins over floor, floor wins over fraction. At
-  // 100×100 margin 0: box/2 − 40 = 10 < 64 floor ⇒ radius 10 (the floor
-  // never leaks the ring outside the box).
+  // 100×100 margin 0: box/2 − 67 = 50 − 67 = −17 (negative) < 64 floor ⇒
+  // radius 10 (the degenerate guard wins; the ceiling went negative).
   const tiny = LAYOUT_RING([makeBeat(0)], { width: 100, height: 100, margin: 0 });
   assert.ok(Math.abs(tiny.radius - 10) < 1e-9, `ceiling beats floor: radius ${tiny.radius} == 10`);
 }

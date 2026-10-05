@@ -281,8 +281,8 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch,
   );
 
   // Cap pulse: on each beatPlayCounts change, stamp ring indexes whose beat
-  // increased past PLAY_MAX_REPS (7th play and EVERY further repeat — spec
-  // 4c: each repeat re-pulses); stamps expire naturally (paint reads the
+  // increased past PLAY_MAX_REPS (the 16th play and EVERY further repeat —
+  // spec 4c: each repeat re-pulses); stamps expire naturally (paint reads the
   // decay, ≤1s each) and are deleted when spent so the map stays bounded.
   // Reduced motion ⇒ no stamp (suppressed like the glow).
   useEffect(() => {
