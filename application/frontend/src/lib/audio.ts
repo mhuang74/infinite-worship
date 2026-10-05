@@ -91,6 +91,24 @@ export class AudioEngine {
     }
   }
 
+  /**
+   * Jump playback to a specific beat (Zen mode double-tap-on-tile). Fires the
+   * real jump event (arc + spark + counter) exactly like a probabilistic
+   * jump. No-op when the beat is unknown or playback is not running.
+   */
+  public jumpToBeat(beat: Beat): void {
+    const targetIndex = this.beats.indexOf(beat);
+    if (targetIndex === -1 || !this.isPlaying) return;
+    const from = this.beats[this.currentBeatIndex];
+    this.currentBeatIndex = targetIndex;
+    this.nextBeatTime = this.audioContext.currentTime;
+    this.totalJumps++;
+    this.onJump({ count: this.totalJumps, from, to: beat });
+    this.onBeatChange(beat);
+    // Drain nothing; next scheduled tick reschedules from the new index/time.
+    this.scheduleNextBeat();
+  }
+
   public getDuration(): number {
     return this.audioBuffer.duration;
   }

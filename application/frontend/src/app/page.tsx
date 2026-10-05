@@ -310,6 +310,12 @@ export default function HomePage() {
     }
   }, [isPlaying]);
 
+  // Zen mode double-tap-on-tile: route the tapped beat to the engine's real
+  // jump path (onJump → arcs + counter). No-op while paused (engine guards).
+  const handleZenJumpToBeat = useCallback((beat: Beat) => {
+    audioEngineRef.current?.jumpToBeat(beat);
+  }, []);
+
   // Effect to handle spacebar play/pause
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -613,7 +619,8 @@ export default function HomePage() {
           jumpEpoch={jumpEpoch}
           beatPlayCounts={beatPlayCounts}
           isPlaying={isPlaying}
-          onResume={handlePlayPause}
+          onTogglePlayback={handlePlayPause}
+          onJumpToBeat={handleZenJumpToBeat}
           onExit={() => setZenActive(false)}
         />
       )}
