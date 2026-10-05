@@ -65,27 +65,27 @@ function makeBeat(id) {
 
 { // Min-side rule: same radius for a portrait and a landscape viewport of
   // the same two sides (ring stays circular, centered, no reflow). At 390
-  // min side margin 0: r0 = 0.35 × 390 = 136.5 (brightness mode: r0 < 200 ⇒
+  // min side margin 0: r0 = 0.35 × 390 = 136.5 (inward mode: r0 < 200 ⇒
   // headroom = 22 = band ceiling half only), and 136.5 ≤ 195 − 22 = 173 so
   // the fraction wins: radius 136.5.
   const portrait = LAYOUT_RING(Array.from({ length: 5 }, (_, i) => makeBeat(i)), { width: 390, height: 844, margin: 0 });
   const landscape = LAYOUT_RING(Array.from({ length: 5 }, (_, i) => makeBeat(i)), { width: 844, height: 390, margin: 0 });
   assert.equal(portrait.radius, landscape.radius, 'min-side rule: identical radii');
   assert.ok(Math.abs(portrait.radius - 136.5) < 1e-9, `radius == 0.35 × 390 = 136.5 (${portrait.radius})`);
-  assert.equal(portrait.mode, 'brightness', 'r0 136.5 < 200 ⇒ brightness mode');
+  assert.equal(portrait.mode, 'inward', 'r0 136.5 < 200 ⇒ inward mode');
   assert.equal(portrait.center.x, 390 / 2);
   assert.equal(portrait.center.y, 844 / 2);
   assert.equal(landscape.center.x, 844 / 2);
   assert.equal(landscape.center.y, 390 / 2);
-  assert.ok(portrait.radius + 22 <= 390 / 2, 'ring + brightness-mode headroom stays inside the min side');
+  assert.ok(portrait.radius + 22 <= 390 / 2, 'ring + inward-mode headroom stays inside the min side');
 }
 
 { // Precedence: ceiling wins over floor, floor wins over fraction. At
   // 100×100 margin 0: r0 = max(35, 64) = 64 (floor wins over fraction),
-  // brightness-mode headroom 22 ⇒ ceiling 50 − 22 = 28 < 64 ⇒ radius 28.
+  // inward-mode headroom 22 ⇒ ceiling 50 − 22 = 28 < 64 ⇒ radius 28.
   const tiny = LAYOUT_RING([makeBeat(0)], { width: 100, height: 100, margin: 0 });
   assert.ok(Math.abs(tiny.radius - 28) < 1e-9, `ceiling beats floor: radius ${tiny.radius} == 28`);
-  assert.equal(tiny.mode, 'brightness');
+  assert.equal(tiny.mode, 'inward');
 }
 
 { // Realistic beat counts (a 4-minute song ≈ 450-617 beats): band thickness

@@ -25,8 +25,8 @@ export interface RingLayout {
   radius: number;
   /** One entry per Analysis beat, in order: position + angle around the ring. */
   tiles: TilePosition[];
-  /** Play-count rendering mode: 'ribs' (desktop rib stack) or 'brightness' (small rings). */
-  mode: 'ribs' | 'brightness';
+  /** Play-count rendering mode: 'ribs' (desktop rib stack) or 'inward' (small rings: ribs grow inward from the band's inner edge). */
+  mode: 'ribs' | 'inward';
 }
 
 export interface TilePosition {
@@ -129,7 +129,7 @@ export const START_ANGLE = -Math.PI / 2;
  * at 12 o'clock, clockwise (EternalJukebox's actual layout, spec). Radius is
  * a viewport fraction (0.35 × min side) with precedence: ceiling wins over
  * floor, floor wins over fraction — the floor never leaks the ring outside
- * the box. The geometric headroom is mode-aware: small rings (brightness
+ * the box. The geometric headroom is mode-aware: small rings (inward
  * mode) reserve only the base band half; rib mode reserves the full rib
  * growth too, ramping linearly between the two so the radius is continuous
  * across the mode boundary (no pop on rotate/resize).
@@ -147,14 +147,14 @@ export function LAYOUT_RING(
   // mode decision never feeds back into itself).
   const r0 = Math.max(0.35 * minSide, MIN_RING_RADIUS);
   // Base band half + the rib-growth reserve, ramped from just the base half
-  // (brightness mode) up to the full reserve (rib mode) over r0 200→245.
+  // (inward mode) up to the full reserve (rib mode) over r0 200→245.
   const headroom =
     TILE_MAX_DIAMETER_PX / 2 +
     PLAY_MAX_REPS * PLAY_GROWTH_PX *
       clamp01((r0 - RIB_HEADROOM_RAMP_START) /
               (RIB_MODE_MIN_REQUESTED_RADIUS - RIB_HEADROOM_RAMP_START));
   const radius = Math.max(10, Math.min(r0, box / 2 - headroom));
-  const mode: RingLayout['mode'] = r0 >= RIB_MODE_MIN_REQUESTED_RADIUS ? 'ribs' : 'brightness';
+  const mode: RingLayout['mode'] = r0 >= RIB_MODE_MIN_REQUESTED_RADIUS ? 'ribs' : 'inward';
 
   const spacing = TAU / beats.length;
   const tiles: TilePosition[] = beats.map((_, i) => {
@@ -213,9 +213,9 @@ const decay = (elapsedSec: number): number =>
 
 const clamp01 = (v: number): number => Math.min(1, Math.max(0, v));
 
-/** Outward growth (px) for a beat played `count` times: capped at PLAY_MAX_REPS × PLAY_GROWTH_PX. Keyed off the LAYOUT mode, never a re-derived radius: in brightness mode growth is 0 (the dot sits at the base-band midline and the host halo must not float where ribs would be). */
+/** Outward growth (px) for a beat played `count` times: capped at PLAY_MAX_REPS × PLAY_GROWTH_PX. Keyed off the LAYOUT mode, never a re-derived radius: in inward mode growth is 0 (ribs grow inward and the playhead dot stays at the base-band midline — no ribs exist outside to float a halo over). */
 export const PLAY_GROWTH_FOR = (count: number, mode: RingLayout['mode']): number =>
-  mode === 'brightness' ? 0 : Math.min(count, PLAY_MAX_REPS) * PLAY_GROWTH_PX;
+  mode === 'ribs' ? Math.min(count, PLAY_MAX_REPS) * PLAY_GROWTH_PX : 0;
 
 /** Candidate-dot diameter: equals the playhead core width (core = band × 0.7). */
 export const CANDIDATE_DOT_DIAMETER_FOR = (band: number): number => band * 0.7;
@@ -240,10 +240,13 @@ export function GLOW_DOT_POSITION(
 }
 
 /**
- * Jump-candidate dot center: on the candidate tile's radial, in the inner
- * white space — its OUTER edge sits 3px clear of the band's INNER edge
- * (ringRadius − band/2), fully clear of the band stroke (independent of
- * growth: the dot never sits on the band, unlike the playhead glow-dot).
+ * Jump-candidate dot center: on the candidate tile's radial. In rib mode it
+ * sits in the inner white space — its OUTER edge 3px clear of the band's
+ * INNER edge (ringRadius − band/2), fully clear of the band stroke. In inward
+ * mode the inner space is rib territory, so the dot moves OUTSIDE: its outer
+ * edge sits 3px clear of the band's OUTER edge (ringRadius + band/2).
+ * Independent of growth: the dot never sits on the band, unlike the playhead
+ * glow-dot.
  */
 export function CANDIDATE_DOT_POSITION(
   layout: RingLayout,
@@ -251,7 +254,9 @@ export function CANDIDATE_DOT_POSITION(
   tile: TilePosition,
 ): { x: number; y: number } {
   const dotRadius = CANDIDATE_DOT_DIAMETER_FOR(band) / 2;
-  const r = layout.radius - band / 2 - 3 - dotRadius;
+  const r = layout.mode === 'inward'
+    ? layout.radius + band / 2 + 3 + dotRadius
+    : layout.radius - band / 2 - 3 - dotRadius;
   const ux = layout.radius === 0 ? 1 : (tile.x - layout.center.x) / layout.radius;
   const uy = layout.radius === 0 ? 0 : (tile.y - layout.center.y) / layout.radius;
   return { x: layout.center.x + ux * r, y: layout.center.y + uy * r };
@@ -327,7 +332,7 @@ export function PAINT_FRAME(view: ZenViewState, ctx: DrawTarget): void {
     } else if (pulseDecay > 0) {
       // Cap pulse: re-apply the current-beat-style alpha ramp to this band.
       alpha = clamp01(0.55 + 0.45 * pulseDecay);
-    } else if (layout.mode === 'brightness') {
+    } else if (layout.mode === 'inward') {
       // Small rings: play count encodes as band alpha + color lightness
       // (two redundant channels; alpha alone resolves only 4–6 levels). The
       // current-tile and cap-pulse overrides above win over the count alpha
@@ -347,12 +352,21 @@ export function PAINT_FRAME(view: ZenViewState, ctx: DrawTarget): void {
     ctx.arc(layout.center.x, layout.center.y, layout.radius, angleStart, angleEnd);
     ctx.stroke();
 
-    // Growth ribs: one stepped annulus per rep at full jewel color, flush
-    // against the base band's outer edge (rib k's inner edge = ringRadius +
-    // band/2). Alpha ramps down outward (inner = oldest/brightest). Skipped
-    // entirely in brightness mode — small rings encode play count in band
-    // alpha + lightness instead (rib stacking would eat ~48% of the radius).
-    const reps = layout.mode === 'ribs' ? Math.min(count, PLAY_MAX_REPS) : 0;
+    // Growth ribs: one stepped annulus per rep at full jewel color. In rib
+    // mode they stack flush against the base band's OUTER edge (rib k's inner
+    // edge = ringRadius + band/2; alpha ramps down outward, inner = oldest/
+    // brightest). In inward mode they grow from the band's INNER edge toward
+    // the center — radial extent is the count signal; brightness stays a
+    // secondary channel in the band itself.
+    const ribReps = layout.mode === 'ribs'
+      ? Math.min(count, PLAY_MAX_REPS)
+      : Math.max(0, Math.min(count, PLAY_MAX_REPS,
+          Math.floor((layout.radius - band / 2 - 2) / PLAY_GROWTH_PX)));
+    const ribCenterR = (k: number): number =>
+      layout.mode === 'ribs'
+        ? layout.radius + band / 2 + (k - 0.5) * PLAY_GROWTH_PX
+        : layout.radius - band / 2 - (k - 0.5) * PLAY_GROWTH_PX;
+    const reps = ribReps;
     const ribColor = JEWEL_COLOR_FOR_CLUSTER(beat.cluster, palette);
     for (let k = 1; k <= reps; k++) {
       ctx.beginPath();
@@ -362,7 +376,7 @@ export function PAINT_FRAME(view: ZenViewState, ctx: DrawTarget): void {
       ctx.globalAlpha = clamp01(
         pulseDecay > 0 ? (ribAlpha(k) * (0.55 + 0.45 * pulseDecay)) / 0.9 : ribAlpha(k),
       );
-      ctx.arc(layout.center.x, layout.center.y, layout.radius + band / 2 + (k - 0.5) * PLAY_GROWTH_PX, angleStart, angleEnd);
+      ctx.arc(layout.center.x, layout.center.y, ribCenterR(k), angleStart, angleEnd);
       ctx.stroke();
     }
   });
@@ -430,10 +444,12 @@ export function PAINT_FRAME(view: ZenViewState, ctx: DrawTarget): void {
   }
 
   // Jump-candidate dots: one small translucent dot per beat that is a jump
-  // candidate of the current beat, in the inner white space — the dot's outer
-  // edge sits 3px clear of the band's inner edge (CANDIDATE_DOT_POSITION).
-  // Static state markers, not motion —
-  // painted under reduced motion too (same rationale as growth ribs).
+  // candidate of the current beat, in the candidate tile's radial — INSIDE
+  // the ring in rib mode (outer edge 3px clear of the band's inner edge),
+  // OUTSIDE the ring in inward mode (outer edge 3px clear of the band's
+  // outer edge; see CANDIDATE_DOT_POSITION). Static state markers, not
+  // motion — painted under reduced motion too (same rationale as growth
+  // ribs).
   if (currentIndex >= 0) {
     const current = beats[currentIndex];
     if (current && Array.isArray(current.jump_candidates)) {

@@ -60,7 +60,7 @@ const BEATS_12 = Array.from({ length: 12 }, (_, i) => makeBeat(i));
 const LAYOUT_12 = LAYOUT_RING(BEATS_12, { width: 800, height: 800, margin: 32 });
 const BAND_12 = TILE_DIAMETER_FOR(12, LAYOUT_12.radius);
 
-{ // play-growth helper: cap at 15 × 3 = 45 in rib mode; 0 in brightness mode
+{ // play-growth helper: cap at 15 × 3 = 45 in rib mode; 0 in inward mode
   // (the dot sits at the base-band midline; no ribs exist under a floating
   // halo).
   assert.equal(PLAY_GROWTH_FOR(0, 'ribs'), 0);
@@ -70,7 +70,7 @@ const BAND_12 = TILE_DIAMETER_FOR(12, LAYOUT_12.radius);
   assert.equal(PLAY_GROWTH_FOR(50, 'ribs'), 45);
   assert.equal(PLAY_GROWTH_FOR(50, 'ribs'), PLAY_MAX_REPS * RIB_LINE_WIDTH);
   for (const count of [0, 1, 4, 15, 50]) {
-    assert.equal(PLAY_GROWTH_FOR(count, 'brightness'), 0, `brightness mode: count ${count} ⇒ growth 0`);
+    assert.equal(PLAY_GROWTH_FOR(count, 'inward'), 0, `inward mode: count ${count} ⇒ growth 0`);
   }
 }
 
