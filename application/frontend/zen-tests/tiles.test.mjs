@@ -32,11 +32,11 @@ function makeBeat(id, cluster) {
   });
 }
 
-{ // Layout mode pin: 400×400 margin 20 ⇒ r0 = 140 < 200 ⇒ brightness mode —
+{ // Layout mode pin: 400×400 margin 20 ⇒ r0 = 140 < 200 ⇒ inward mode —
   // play count encodes as band alpha + lightness here (no rib arcs); the
   // full schedule is pinned in brightness.test.mjs.
   const layout = LAYOUT_RING([makeBeat(0, 0)], { width: 400, height: 400, margin: 20 });
-  assert.equal(layout.mode, 'brightness', 'small layout renders in brightness mode');
+  assert.equal(layout.mode, 'inward', 'small layout renders in inward mode');
 }
 
 { // Every tile is painted as an annulus band arc on the ring; color follows
