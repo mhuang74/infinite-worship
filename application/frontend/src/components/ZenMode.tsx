@@ -25,6 +25,7 @@ import {
   FADE_SECONDS,
   GLOW_DOT_POSITION,
   HALO_RADIUS_FACTOR,
+  JEWEL_COLOR_FOR_CLUSTER,
   PLAY_GROWTH_FOR,
   PLAY_MAX_REPS,
   START_ANGLE,
@@ -88,7 +89,6 @@ export const readZenPalette = (win: Window): ZenPalette => {
   return {
     // Canvas paint cannot use Tailwind classes: same jewels, resolved values.
     jewels: JEWEL_VARS.map((v) => read(v, '#fdb515')),
-    playhead: read('--wave-playhead', '#fdb515'),
     background: read('--surface', '#0e141c'),
   };
 };
@@ -140,8 +140,9 @@ const paintZenCanvas = (
     const dot = GLOW_DOT_POSITION(layout, band, growth, layout.tiles[currentIndex]);
     const r = band * HALO_RADIUS_FACTOR;
     const gradient = ctx2d.createRadialGradient(dot.x, dot.y, 0, dot.x, dot.y, r);
-    gradient.addColorStop(0, `rgba(${toRgbTriplet(palette.playhead)}, 1)`);
-    gradient.addColorStop(1, `rgba(${toRgbTriplet(palette.playhead)}, 0)`);
+    const dotColor = beat ? JEWEL_COLOR_FOR_CLUSTER(beat.cluster, palette) : JEWEL_COLOR_FOR_CLUSTER(0, palette);
+    gradient.addColorStop(0, `rgba(${toRgbTriplet(dotColor)}, 1)`);
+    gradient.addColorStop(1, `rgba(${toRgbTriplet(dotColor)}, 0)`);
     haloGradient = gradient;
   }
 
