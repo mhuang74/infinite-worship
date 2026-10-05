@@ -4,7 +4,7 @@
  * No React, no DOM: the single seam chosen by the spec's Testing Decisions.
  * Given the Analysis beat list, the active theme's palette, the current beat
  * and the jump events, this module decides every circle-drawing fact — tile
- * layout angles, cluster→color mapping, glow-dot cursor, growth ribs, jump
+ * layout angles, cluster→color mapping, glow-dot cursor, inward growth ribs, jump
  * arcs + glow, cap pulses — and emits drawing commands against an injected
  * 2D-context-like interface. The ZenMode component is a thin host that
  * supplies a real canvas context (plus the one opaque object draw.ts cannot
@@ -25,8 +25,8 @@ export interface RingLayout {
   radius: number;
   /** One entry per Analysis beat, in order: position + angle around the ring. */
   tiles: TilePosition[];
-  /** Play-count rendering mode: 'ribs' (desktop rib stack) or 'inward' (small rings: ribs grow inward from the band's inner edge). */
-  mode: 'ribs' | 'inward';
+  /** Rib stroke width in px; ramps 3 → 7 over minSide 820 → 920 (see LAYOUT_RING). */
+  ribWidth: number;
 }
 
 export interface TilePosition {
@@ -81,12 +81,6 @@ const TILE_MAX_DIAMETER_PX = 44;
 export const FADE_SECONDS = 1.0;
 /** Ring radius floor (never smaller than this unless the viewport ceiling is tighter). */
 const MIN_RING_RADIUS = 64;
-/** r0 (requested radius) below which headroom ramps down from the rib reserve. */
-const RIB_HEADROOM_RAMP_START = 200;
-/** r0 at/above which rib mode engages and the full rib reserve is granted. The
- *  flip sits at the ramp TOP so headroom is exactly the rib reserve on both
- *  sides — continuous, no radius pop at the mode boundary. */
-const RIB_MODE_MIN_REQUESTED_RADIUS = 245;
 /** Brightness mode: never-played band alpha. */
 const COUNT_DIM_ALPHA = 0.35;
 /** Brightness mode: count at which the band reaches full alpha / max mix. */
@@ -102,9 +96,7 @@ const DOT_BASE_OFFSET = 9;
 export const HALO_RADIUS_FACTOR = 2.5;
 /** Max growth: per-beat play count above which the band stops growing (16th+ play pulses instead). */
 export const PLAY_MAX_REPS = 15;
-/** Outward growth per replay (px of annulus stroke per rep). */
-export const PLAY_GROWTH_PX = 3;
-/** Rib alpha ramp, inner (oldest) → outer: linear 0.9 (base-band alpha, no seam at the flush edge) → RIB_ALPHA_MIN over PLAY_MAX_REPS ribs. */
+/** Rib alpha ramp: rib 1 flush against the band's inner edge at 0.9 (base-band alpha, no seam), decaying inward to RIB_ALPHA_MIN over PLAY_MAX_REPS ribs. */
 const RIB_ALPHA_MIN = 0.02;
 const ribAlpha = (k: number): number =>
   0.9 - ((k - 1) * (0.9 - RIB_ALPHA_MIN)) / (PLAY_MAX_REPS - 1);
@@ -127,12 +119,10 @@ export const START_ANGLE = -Math.PI / 2;
 /**
  * Lay out the ring: one tile per beat, sequential around the circle starting
  * at 12 o'clock, clockwise (EternalJukebox's actual layout, spec). Radius is
- * a viewport fraction (0.35 × min side) with precedence: ceiling wins over
- * floor, floor wins over fraction — the floor never leaks the ring outside
- * the box. The geometric headroom is mode-aware: small rings (inward
- * mode) reserve only the base band half; rib mode reserves the full rib
- * growth too, ramping linearly between the two so the radius is continuous
- * across the mode boundary (no pop on rotate/resize).
+ * a viewport fraction with precedence: ceiling wins over floor, floor wins
+ * over fraction — the floor never leaks the ring outside the box. Ribs grow
+ * INWARD from the band's inner edge on every viewport, so the box reserve is
+ * just the band's outer half.
  */
 export function LAYOUT_RING(
   beats: Beat[],
@@ -143,18 +133,21 @@ export function LAYOUT_RING(
   const cy = viewport.height / 2;
   const minSide = Math.min(viewport.width, viewport.height);
   const box = minSide - margin * 2;
-  // Requested radius: a pure function of the viewport (no circularity — the
-  // mode decision never feeds back into itself).
-  const r0 = Math.max(0.35 * minSide, MIN_RING_RADIUS);
-  // Base band half + the rib-growth reserve, ramped from just the base half
-  // (inward mode) up to the full reserve (rib mode) over r0 200→245.
-  const headroom =
-    TILE_MAX_DIAMETER_PX / 2 +
-    PLAY_MAX_REPS * PLAY_GROWTH_PX *
-      clamp01((r0 - RIB_HEADROOM_RAMP_START) /
-              (RIB_MODE_MIN_REQUESTED_RADIUS - RIB_HEADROOM_RAMP_START));
+  // Desktop optimization ramp: below an 820px min side everything matches the
+  // phone (0.35 fraction, 3px ribs); above a 920px min side it reaches the
+  // desktop targets (0.42 fraction, 7px ribs). Continuous in between — no pop
+  // when resizing across the breakpoint. 820/920 mirror the app's mobile/desktop
+  // CSS breakpoint (max-width:819px / min-width:820px).
+  const desktopT = clamp01((minSide - 820) / 100); // 0 at ≤820, 1 at ≥920
+  const radiusFraction = 0.35 + 0.07 * desktopT;
+  const ribWidth = 3 + 4 * desktopT;
+  const r0 = Math.max(radiusFraction * minSide, MIN_RING_RADIUS);
+  // Inward growth consumes inner space only, so the box reserve is just the
+  // band's outer half. (Candidate dots paint up to ~34px outside the band on
+  // sparse desktop rings — accepted: they are 0.5-alpha markers, and the 32px
+  // margin absorbs all but ≤2px at the cardinal extremes of ≤28-beat rings.)
+  const headroom = TILE_MAX_DIAMETER_PX / 2;
   const radius = Math.max(10, Math.min(r0, box / 2 - headroom));
-  const mode: RingLayout['mode'] = r0 >= RIB_MODE_MIN_REQUESTED_RADIUS ? 'ribs' : 'inward';
 
   const spacing = TAU / beats.length;
   const tiles: TilePosition[] = beats.map((_, i) => {
@@ -166,7 +159,7 @@ export function LAYOUT_RING(
     };
   });
 
-  return { center: { x: cx, y: cy }, radius, tiles, mode };
+  return { center: { x: cx, y: cy }, radius, tiles, ribWidth };
 }
 
 /**
@@ -213,40 +206,33 @@ const decay = (elapsedSec: number): number =>
 
 const clamp01 = (v: number): number => Math.min(1, Math.max(0, v));
 
-/** Outward growth (px) for a beat played `count` times: capped at PLAY_MAX_REPS × PLAY_GROWTH_PX. Keyed off the LAYOUT mode, never a re-derived radius: in inward mode growth is 0 (ribs grow inward and the playhead dot stays at the base-band midline — no ribs exist outside to float a halo over). */
-export const PLAY_GROWTH_FOR = (count: number, mode: RingLayout['mode']): number =>
-  mode === 'ribs' ? Math.min(count, PLAY_MAX_REPS) * PLAY_GROWTH_PX : 0;
-
 /** Candidate-dot diameter: equals the playhead core width (core = band × 0.7). */
 export const CANDIDATE_DOT_DIAMETER_FOR = (band: number): number => band * 0.7;
 /** Candidate-dot alpha. */
 export const CANDIDATE_DOT_ALPHA = 0.5;
 
 /**
- * Glow-dot center: on the current tile's radial, at the grown band's midline —
- * `ringRadius − band/2 + min(DOT_BASE_OFFSET, band/2) + growth/2` outward
- * (v2 decision 1: base/2 can reach 22px, deeper than any dot placement).
+ * Glow-dot center: on the current tile's radial, at the base band's midline —
+ * `ringRadius − band/2 + min(DOT_BASE_OFFSET, band/2)` outward (v2 decision 1:
+ * base/2 can reach 22px, deeper than any dot placement). Independent of play
+ * count: ribs grow inward and never move the band or the playhead.
  */
 export function GLOW_DOT_POSITION(
   layout: RingLayout,
   band: number,
-  growth: number,
   tile: TilePosition,
 ): { x: number; y: number } {
-  const r = layout.radius - band / 2 + Math.min(DOT_BASE_OFFSET, band / 2) + growth / 2;
+  const r = layout.radius - band / 2 + Math.min(DOT_BASE_OFFSET, band / 2);
   const ux = layout.radius === 0 ? 1 : (tile.x - layout.center.x) / layout.radius;
   const uy = layout.radius === 0 ? 0 : (tile.y - layout.center.y) / layout.radius;
   return { x: layout.center.x + ux * r, y: layout.center.y + uy * r };
 }
 
 /**
- * Jump-candidate dot center: on the candidate tile's radial. In rib mode it
- * sits in the inner white space — its OUTER edge 3px clear of the band's
- * INNER edge (ringRadius − band/2), fully clear of the band stroke. In inward
- * mode the inner space is rib territory, so the dot moves OUTSIDE: its outer
- * edge sits 3px clear of the band's OUTER edge (ringRadius + band/2).
- * Independent of growth: the dot never sits on the band, unlike the playhead
- * glow-dot.
+ * Jump-candidate dot center: on the candidate tile's radial, OUTSIDE the ring
+ * on every viewport — its outer edge sits 3px clear of the band's OUTER edge
+ * (ringRadius + band/2); the inner space is rib territory. Independent of
+ * growth: the dot never sits on the band, unlike the playhead glow-dot.
  */
 export function CANDIDATE_DOT_POSITION(
   layout: RingLayout,
@@ -254,9 +240,7 @@ export function CANDIDATE_DOT_POSITION(
   tile: TilePosition,
 ): { x: number; y: number } {
   const dotRadius = CANDIDATE_DOT_DIAMETER_FOR(band) / 2;
-  const r = layout.mode === 'inward'
-    ? layout.radius + band / 2 + 3 + dotRadius
-    : layout.radius - band / 2 - 3 - dotRadius;
+  const r = layout.radius + band / 2 + 3 + dotRadius;
   const ux = layout.radius === 0 ? 1 : (tile.x - layout.center.x) / layout.radius;
   const uy = layout.radius === 0 ? 0 : (tile.y - layout.center.y) / layout.radius;
   return { x: layout.center.x + ux * r, y: layout.center.y + uy * r };
@@ -293,7 +277,7 @@ export function PAINT_FRAME(view: ZenViewState, ctx: DrawTarget): void {
   // Tiles: one annulus band per beat, occupying its angular slot on the ring
   // (EternalJukebox's layout — the segment spans the slot, colored by cluster).
   // The inner edge sits at ringRadius − band/2 for EVERY band (invariant);
-  // replays grow outward as stepped per-rep ribs, never inward.
+  // replays grow inward as stepped per-rep ribs, never outward.
   const band = TILE_DIAMETER_FOR(N, layout.radius);
   const slot = TAU / N;
   // Gap between bands: proportional to the slot, never larger than a fraction
@@ -332,18 +316,15 @@ export function PAINT_FRAME(view: ZenViewState, ctx: DrawTarget): void {
     } else if (pulseDecay > 0) {
       // Cap pulse: re-apply the current-beat-style alpha ramp to this band.
       alpha = clamp01(0.55 + 0.45 * pulseDecay);
-    } else if (layout.mode === 'inward') {
-      // Small rings: play count encodes as band alpha + color lightness
-      // (two redundant channels; alpha alone resolves only 4–6 levels). The
-      // current-tile and cap-pulse overrides above win over the count alpha
-      // exactly as they win over the desktop 0.9.
+    } else {
+      // Play count encodes as band alpha + color lightness (two redundant
+      // channels; alpha alone resolves only 4–6 levels). The current-tile and
+      // cap-pulse overrides above win over the count alpha.
       const progress = Math.sqrt(Math.min(count, COUNT_FULL_REPS) / COUNT_FULL_REPS);
       // sqrt: big relative steps for the first few plays (where session count
       // mass lives), compressed tail; the cap pulse carries the >16 signal.
       alpha = COUNT_DIM_ALPHA + (1 - COUNT_DIM_ALPHA) * progress;
       ctx.strokeStyle = COUNT_COLOR_FOR(jewel, progress, palette.background);
-    } else {
-      alpha = 0.9;
     }
     ctx.globalAlpha = alpha;
     ctx.lineWidth = lineWidth;
@@ -352,26 +333,21 @@ export function PAINT_FRAME(view: ZenViewState, ctx: DrawTarget): void {
     ctx.arc(layout.center.x, layout.center.y, layout.radius, angleStart, angleEnd);
     ctx.stroke();
 
-    // Growth ribs: one stepped annulus per rep at full jewel color. In rib
-    // mode they stack flush against the base band's OUTER edge (rib k's inner
-    // edge = ringRadius + band/2; alpha ramps down outward, inner = oldest/
-    // brightest). In inward mode they grow from the band's INNER edge toward
-    // the center — radial extent is the count signal; brightness stays a
-    // secondary channel in the band itself.
-    const ribReps = layout.mode === 'ribs'
-      ? Math.min(count, PLAY_MAX_REPS)
-      : Math.max(0, Math.min(count, PLAY_MAX_REPS,
-          Math.floor((layout.radius - band / 2 - 2) / PLAY_GROWTH_PX)));
+    // Growth ribs: one stepped annulus per rep at full jewel color, growing
+    // from the band's INNER edge toward the center on every viewport — radial
+    // extent is the count signal; brightness stays a secondary channel in the
+    // band itself. Rib k's centerline sits at ringRadius − band/2 − (k−0.5) ×
+    // ribWidth: rib 1 flush against the band's inner edge.
+    const ribReps = Math.max(0, Math.min(count, PLAY_MAX_REPS,
+      Math.floor((layout.radius - band / 2 - 2) / layout.ribWidth)));
     const ribCenterR = (k: number): number =>
-      layout.mode === 'ribs'
-        ? layout.radius + band / 2 + (k - 0.5) * PLAY_GROWTH_PX
-        : layout.radius - band / 2 - (k - 0.5) * PLAY_GROWTH_PX;
+      layout.radius - band / 2 - (k - 0.5) * layout.ribWidth;
     const reps = ribReps;
     const ribColor = JEWEL_COLOR_FOR_CLUSTER(beat.cluster, palette);
     for (let k = 1; k <= reps; k++) {
       ctx.beginPath();
       ctx.strokeStyle = ribColor;
-      ctx.lineWidth = PLAY_GROWTH_PX;
+      ctx.lineWidth = layout.ribWidth;
       // Cap pulse lifts every rib by the same 0.55..1.0/0.9 brightness factor.
       ctx.globalAlpha = clamp01(
         pulseDecay > 0 ? (ribAlpha(k) * (0.55 + 0.45 * pulseDecay)) / 0.9 : ribAlpha(k),
@@ -444,10 +420,9 @@ export function PAINT_FRAME(view: ZenViewState, ctx: DrawTarget): void {
   }
 
   // Jump-candidate dots: one small translucent dot per beat that is a jump
-  // candidate of the current beat, in the candidate tile's radial — INSIDE
-  // the ring in rib mode (outer edge 3px clear of the band's inner edge),
-  // OUTSIDE the ring in inward mode (outer edge 3px clear of the band's
-  // outer edge; see CANDIDATE_DOT_POSITION). Static state markers, not
+  // candidate of the current beat, in the candidate tile's radial — OUTSIDE
+  // the ring on every viewport (outer edge 3px clear of the band's outer
+  // edge; see CANDIDATE_DOT_POSITION). Static state markers, not
   // motion — painted under reduced motion too (same rationale as growth
   // ribs).
   if (currentIndex >= 0) {
@@ -479,8 +454,7 @@ export function PAINT_FRAME(view: ZenViewState, ctx: DrawTarget): void {
     const dotColor = beat
       ? JEWEL_COLOR_FOR_CLUSTER(beat.cluster, palette)
       : JEWEL_COLOR_FOR_CLUSTER(0, palette); // first-jewel fallback (pre-callback can't happen here, but never guess a color)
-    const growth = beat ? PLAY_GROWTH_FOR(counts?.get(beat.id) ?? 0, layout.mode) : 0;
-    const dot = GLOW_DOT_POSITION(layout, band, growth, tile);
+    const dot = GLOW_DOT_POSITION(layout, band, tile);
     if (view.haloGradient !== undefined) {
       // Host-built radial gradient (rgba(dotColor,1) → rgba(dotColor,0)).
       ctx.beginPath();

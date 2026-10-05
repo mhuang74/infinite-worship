@@ -26,7 +26,6 @@ import {
   GLOW_DOT_POSITION,
   HALO_RADIUS_FACTOR,
   JEWEL_COLOR_FOR_CLUSTER,
-  PLAY_GROWTH_FOR,
   PLAY_MAX_REPS,
   START_ANGLE,
   TILE_DIAMETER_FOR,
@@ -134,10 +133,8 @@ const paintZenCanvas = (
   let haloGradient: unknown;
   if (currentIndex >= 0) {
     const band = TILE_DIAMETER_FOR(beats.length, layout.radius);
-    const counts = viewExtras.beatPlayCounts;
     const beat = beats[currentIndex];
-    const growth = beat ? PLAY_GROWTH_FOR(counts?.get(beat.id) ?? 0, layout.mode) : 0;
-    const dot = GLOW_DOT_POSITION(layout, band, growth, layout.tiles[currentIndex]);
+    const dot = GLOW_DOT_POSITION(layout, band, layout.tiles[currentIndex]);
     const r = band * HALO_RADIUS_FACTOR;
     const gradient = ctx2d.createRadialGradient(dot.x, dot.y, 0, dot.x, dot.y, r);
     const dotColor = beat ? JEWEL_COLOR_FOR_CLUSTER(beat.cluster, palette) : JEWEL_COLOR_FOR_CLUSTER(0, palette);
