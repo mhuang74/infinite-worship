@@ -69,6 +69,39 @@ const parseBeats = (raw: unknown): Beat[] => {
   return beats;
 };
 
+/**
+ * First and last audible regions of a decoded buffer, for the loop control:
+ * RMS over 0.5 s windows; a window is audible when its RMS exceeds
+ * NEAR_SILENCE_RMS (same threshold order as the gap tap). Returns the start
+ * of the first audible window and the END of the last one so the loop never
+ * crosses lead-in or tail silence (a wrap through silence reads as a
+ * multi-second "dropout" on the render-thread tap).
+ */
+const NEAR_SILENCE_RMS = 1e-4;
+const WINDOW_SEC = 0.5;
+const audibleRegion = (buffer: AudioBuffer): { startSec: number; endSec: number } => {
+  const windowLen = Math.max(1, Math.floor(WINDOW_SEC * buffer.sampleRate));
+  const windows = Math.floor(buffer.length / windowLen);
+  const loud = new Array<boolean>(windows);
+  for (let w = 0; w < windows; w++) {
+    let sum = 0;
+    const offset = w * windowLen;
+    for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+      const data = buffer.getChannelData(ch);
+      for (let i = 0; i < windowLen; i++) sum += data[offset + i] * data[offset + i];
+    }
+    const rms = Math.sqrt(sum / (windowLen * buffer.numberOfChannels));
+    loud[w] = rms >= NEAR_SILENCE_RMS;
+  }
+  const first = loud.indexOf(true);
+  const last = loud.lastIndexOf(true);
+  if (first === -1) return { startSec: 0, endSec: buffer.duration }; // all-silent fallback: loop everything
+  return {
+    startSec: first * WINDOW_SEC,
+    endSec: Math.min(buffer.duration, (last + 1) * WINDOW_SEC),
+  };
+};
+
 export default function PlaytestPage() {
   const [params, setParams] = useState<HarnessParams | null>(null);
   const [status, setStatus] = useState('idle');
@@ -215,20 +248,25 @@ export default function PlaytestPage() {
           } else {
             bus.connect(ctx.destination);
           }
+          // Loop only the AUDIBLE region: loop=true alone replays the file's
+          // lead-in silence every wrap AND wraps through any tail quiet
+          // stretch — bruno's 5.6 s tail silence surfaced as a 4.85 s
+          // "dropout" at each wrap (verified; loud→loud loop points wrap
+          // seamlessly). Scan the decoded buffer for the first/last
+          // audible sample (RMS over 0.5 s windows above a near-silence
+          // threshold) and loop between those, starting on the first one.
+          const region = audibleRegion(audioBuffer);
           const src = ctx.createBufferSource();
           src.buffer = audioBuffer;
           src.loop = true;
+          src.loopStart = region.startSec;
+          src.loopEnd = region.endSec;
           src.connect(bus);
           void ctx.resume();
-          src.start();
+          src.start(0, region.startSec);
           loopSourceRef.current = src;
-          // Arm the gap tap at the loop's first AUDIBLE moment: src.start()
-          // plays from file 0, and bruno's ~0.63 s lead-in silence would
-          // otherwise register as a spurious onset gap in the very control
-          // (C1) that decides the Mac platform fork. Offset matches the
-          // engine grid's T0.
-          const LEAD_IN_SEC = 1.0;
-          telemetryRef.current?.hooks.onPlaybackArmed(ctx.currentTime + LEAD_IN_SEC);
+          // The audible region starts now — arm the tap immediately.
+          telemetryRef.current?.hooks.onPlaybackArmed(ctx.currentTime);
           setIsPlaying(true);
           setStatus('loop control playing');
           return;

@@ -174,6 +174,10 @@ export function debugFlagEnabled(search: string): boolean {
 const WORKLET_SOURCE = `
 const SILENCE_THRESHOLD = 1e-4;
 const MIN_GAP_SEC = 0.02;
+/** Graph warm-up after arming: src.start's first ~60 ms can render silent
+ * while the chain starts pulling — not a dropout. Ignore onsets this close
+ * to the arm point. */
+const WARMUP_SEC = 0.5;
 class GapTapProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
@@ -226,7 +230,7 @@ class GapTapProcessor extends AudioWorkletProcessor {
         this.gapStartTime = null;
         this.gapPeakRms = 0;
       }
-    } else if (this.enabled) {
+    } else if (this.enabled && now - this.armAt >= WARMUP_SEC) {
       if (this.gapStartTime === null) {
         this.gapStartTime = now;
         this.gapPeakRms = rms;
