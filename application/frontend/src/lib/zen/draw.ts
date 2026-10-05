@@ -59,6 +59,8 @@ export interface ZenViewState {
   jumps: ZenJump[];
   /** `prefers-reduced-motion: reduce` — suppress glow pulse, sparks, arcs and cap pulses. */
   reducedMotion: boolean;
+  /** Monotonic beat-tick counter (host increments once per distinct beat callback); drives jump-arc memory decay. */
+  beatCount: number;
   /** Now, in seconds (monotonic; performance.now()/1000 in the host). */
   nowSec: number;
   /** Timestamp of the last beat change, for the glow decay (seconds). */
@@ -71,8 +73,8 @@ export interface ZenViewState {
   haloGradient?: unknown;
 }
 
-/** Jump event carrying the ring indices the arc needs + its start time. */
-export type ZenJump = JumpEvent & { fromIndex: number; toIndex: number; eventTSec: number };
+/** Jump event carrying the ring indices the arc needs + its arrival time/beat tick. */
+export type ZenJump = JumpEvent & { fromIndex: number; toIndex: number; eventTSec: number; eventBeatCount: number };
 
 /** Tile geometry knobs (single place; the host supplies the canvas size). */
 /** Tile diameter ceiling for readable rings (TILE_DIAMETER_FOR clamps). */
@@ -309,10 +311,13 @@ export function PAINT_FRAME(view: ZenViewState, ctx: DrawTarget): void {
       const to = layout.tiles[jump.toIndex];
       if (!from || !to) continue;
 
-      // Spec formula, literally: before the first beat callback
-      // (currentBeatIndex = −1) the wrap lands ≥32 ⇒ memAlpha 0 ⇒ skipped —
-      // no stale full-alpha chords before playback starts.
-      const beatsSince = (((currentIndex - jump.fromIndex) % N) + N) % N;
+      // Decay anchors to recency of the JUMP EVENT, not playhead position —
+      // measuring the playhead's wrapped distance from the source tile would
+      // re-light an old arc at full alpha every lap of the ring.
+      // Before the first beat callback (currentIndex = −1) the host's
+      // beatCount is still 0, so any pre-playback fixture jump ages past the
+      // 32-beat window and draws nothing — no stale full-alpha chords.
+      const beatsSince = Math.max(0, view.beatCount - jump.eventBeatCount);
       const memAlpha = arcMemAlpha(beatsSince);
       if (memAlpha <= 0) continue; // ≥32 beats: gone (no stroke at all, not a zero-alpha paint)
 

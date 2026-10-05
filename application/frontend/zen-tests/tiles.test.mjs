@@ -41,7 +41,7 @@ function makeBeat(id, cluster) {
   const ctx = new FakeCtx({ width: 400, height: 400 });
   PAINT_FRAME(
     {
-      beats, layout, palette: PALETTE, currentBeat: null, currentBeatIndex: -1,
+      beats, layout, palette: PALETTE, currentBeat: null, currentBeatIndex: -1, beatCount: 0,
       jumps: [], reducedMotion: false, nowSec: 0, currentBeatGlowTSec: null,
     },
     ctx,
@@ -74,7 +74,7 @@ function makeBeat(id, cluster) {
     PAINT_FRAME(
       {
         beats, layout, palette: PALETTE,
-        currentBeat: beats[3], currentBeatIndex: 3, jumps: [], reducedMotion: false, nowSec,
+        currentBeat: beats[3], currentBeatIndex: 3, beatCount: 1, jumps: [], reducedMotion: false, nowSec,
         currentBeatGlowTSec: glowT,
       },
       ctx,
@@ -107,7 +107,7 @@ function makeBeat(id, cluster) {
   const band = TILE_DIAMETER_FOR(beats.length, layout.radius);
   const ctx = new FakeCtx({ width: 400, height: 400 });
   PAINT_FRAME(
-    { beats, layout, palette: PALETTE, currentBeat: beats[5], currentBeatIndex: 5, jumps: [], reducedMotion: false, nowSec: 0, currentBeatGlowTSec: null },
+    { beats, layout, palette: PALETTE, currentBeat: beats[5], currentBeatIndex: 5, beatCount: 1, jumps: [], reducedMotion: false, nowSec: 0, currentBeatGlowTSec: null },
     ctx,
   );
   const haloMarkers = callsOf(ctx, 'stroke').filter((s) => s.lineWidth === 2 && s.strokeStyle === PALETTE.playhead);
@@ -132,7 +132,7 @@ function makeBeat(id, cluster) {
   const layout = LAYOUT_RING(beats, { width: 400, height: 400, margin: 20 });
   const ctx = new FakeCtx({ width: 400, height: 400 });
   PAINT_FRAME(
-    { beats, layout, palette: PALETTE, currentBeat: beats[5], currentBeatIndex: 5, jumps: [], reducedMotion: false, nowSec: 0, currentBeatGlowTSec: null },
+    { beats, layout, palette: PALETTE, currentBeat: beats[5], currentBeatIndex: 5, beatCount: 1, jumps: [], reducedMotion: false, nowSec: 0, currentBeatGlowTSec: null },
     ctx,
   );
   const centerMoveTos = callsOf(ctx, 'moveTo').filter((m) => m.args[0] === layout.center.x && m.args[1] === layout.center.y);
@@ -148,7 +148,7 @@ function makeBeat(id, cluster) {
   const layout = LAYOUT_RING(beats, { width: 400, height: 400, margin: 20 });
   const ctx = new FakeCtx({ width: 400, height: 400 });
   PAINT_FRAME(
-    { beats, layout, palette: PALETTE, currentBeat: null, currentBeatIndex: -1, jumps: [], reducedMotion: false, nowSec: 0, currentBeatGlowTSec: null },
+    { beats, layout, palette: PALETTE, currentBeat: null, currentBeatIndex: -1, beatCount: 0, jumps: [], reducedMotion: false, nowSec: 0, currentBeatGlowTSec: null },
     ctx,
   );
   const fills = callsOf(ctx, 'fill').filter((f) => f.fillStyle === PALETTE.playhead);
@@ -164,7 +164,7 @@ function makeBeat(id, cluster) {
     const band = TILE_DIAMETER_FOR(count, layout.radius);
     const ctx = new FakeCtx({ width: 800, height: 800 });
     PAINT_FRAME(
-      { beats, layout, palette: PALETTE, currentBeat: beats[10], currentBeatIndex: 10, jumps: [], reducedMotion: false, nowSec: 0, currentBeatGlowTSec: null },
+      { beats, layout, palette: PALETTE, currentBeat: beats[10], currentBeatIndex: 10, beatCount: 1, jumps: [], reducedMotion: false, nowSec: 0, currentBeatGlowTSec: null },
       ctx,
     );
     const haloArcs = callsOf(ctx, 'arc').filter((a) => Math.abs(a.args[2] - band * 2.5) < 1e-9);
@@ -189,7 +189,7 @@ function makeBeat(id, cluster) {
   const frame = (nowSec) => {
     const ctx = new FakeCtx({ width: 400, height: 400 });
     PAINT_FRAME(
-      { beats, layout, palette: PALETTE, currentBeat: beats[2], currentBeatIndex: 2, jumps: [], reducedMotion: true, nowSec, currentBeatGlowTSec: nowSec - 5 },
+      { beats, layout, palette: PALETTE, currentBeat: beats[2], currentBeatIndex: 2, beatCount: 1, jumps: [], reducedMotion: true, nowSec, currentBeatGlowTSec: nowSec - 5 },
       ctx,
     );
     return ctx;
