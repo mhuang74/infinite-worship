@@ -14,7 +14,6 @@ const PALETTE = {
   jewels: ['#ff8a80', '#fdb515', '#7bd5a8', '#8ab8ff', '#cfa9f5', '#7fdce8'],
   playhead: '#fdb515',
   background: '#0e141c',
-  spark: '#FFFFFF',
 };
 const RIB_LINE_WIDTH = 3;
 const RIB_ALPHAS = [0.9, 0.8, 0.7, 0.6, 0.5, 0.42];

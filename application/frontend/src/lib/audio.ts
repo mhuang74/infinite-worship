@@ -93,7 +93,7 @@ export class AudioEngine {
 
   /**
    * Jump playback to a specific beat (Zen mode double-tap-on-tile). Fires the
-   * real jump event (arc + spark + counter) exactly like a probabilistic
+   * real jump event (arc + energy beam + counter) exactly like a probabilistic
    * jump. No-op when the beat is unknown or playback is not running.
    */
   public jumpToBeat(beat: Beat): void {

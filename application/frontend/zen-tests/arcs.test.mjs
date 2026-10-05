@@ -1,7 +1,8 @@
 /**
  * Jump arc tests (v2 step 2): one smooth quadratic chord per jump bowing
- * toward the ring center; a jagged white-hot bolt rides it for the first
- * 0.2s; the chord then persists as beat-driven short-term memory
+ * toward the ring center; an energy beam fires along it for the first 0.2s
+ * (thicker core + layered glow, linear alpha ramp, playhead gold); the chord
+ * then persists as beat-driven short-term memory
  * (alpha 1.0 → 0.15 over 16 beats, → 0 over the following 16, gone at 32).
  * Suppressed entirely under reduced motion; no arcs for sequential playback.
  */
@@ -15,9 +16,10 @@ const PALETTE = {
   jewels: ['#ff8a80', '#fdb515', '#7bd5a8', '#8ab8ff', '#cfa9f5', '#7fdce8'],
   playhead: '#fdb515',
   background: '#0e141c',
-  spark: '#FFFFFF',
 };
 const ARC_LINE_WIDTH = 3.2;
+const BEAM_CORE_WIDTH = 6;
+const BEAM_GLOW_WIDTHS = [18, 11];
 const MEMORY_BEATS = 16;
 
 function makeBeat(id) {
@@ -56,10 +58,10 @@ function chordStrokes(ctx) {
   );
 }
 
-/** Bolt strokes: white strokes at halo (2.5) or core (1.0) width. */
-function boltStrokes(ctx, width) {
+/** Beam strokes: playhead-colored strokes at a glow (18/11) or core (6) width. */
+function beamStrokes(ctx, width) {
   return callsOf(ctx, 'stroke').filter(
-    (s) => s.lineWidth === width && s.strokeStyle === PALETTE.spark,
+    (s) => s.lineWidth === width && s.strokeStyle === PALETTE.playhead,
   );
 }
 
@@ -68,7 +70,7 @@ function boltStrokes(ctx, width) {
   const beats = Array.from({ length: 12 }, (_, i) => makeBeat(i));
   const layout = LAYOUT_RING(beats, { width: 400, height: 400, margin: 20 });
   const jumps = [{ count: 1, from: beats[1], to: beats[9], fromIndex: 1, toIndex: 9, eventTSec: 5, eventBeatCount: 0 }];
-  // Paint 1s after the spark so only the memory-phase chord remains.
+  // Paint 1s after the beam so only the memory-phase chord remains.
   const ctx = paint(beats, layout, { currentBeat: beats[9], jumps, nowSec: 5.5 });
 
   const chords = chordStrokes(ctx);
@@ -95,59 +97,74 @@ function boltStrokes(ctx, width) {
   assert.ok(Math.abs(memChords[0].globalAlpha - 0.575) < 1e-9, `memory alpha at beatsSince 8 == 0.575 (${memChords[0].globalAlpha})`);
 }
 
-{ // Spark phase (<0.2s): jagged bolt = 1 moveTo + 5 lineTos (6-point path,
-  // two passes: halo 2.5 alpha 1.0 + core 1.0 alpha 0.95, both #FFFFFF) over
-  // a dimmed chord (alpha = 0.45 × memAlpha).
+{ // Energy-beam phase (<0.2s): the SAME quadratic chord path, stroked three
+  // times — outer glow (18px, alpha 0.18 × ramp × memAlpha), inner glow
+  // (11px, alpha 0.35 × ramp × memAlpha), core (6px, alpha 1.0 × ramp ×
+  // memAlpha) — all playhead gold. The persistent 3.2px chord does NOT
+  // stroke underneath during the beam window (the core fully covers it).
   const beats = Array.from({ length: 12 }, (_, i) => makeBeat(i));
   const layout = LAYOUT_RING(beats, { width: 400, height: 400, margin: 20 });
   const jumps = [{ count: 1, from: beats[1], to: beats[9], fromIndex: 1, toIndex: 9, eventTSec: 5, eventBeatCount: 0 }];
+  // age = 0.1 ⇒ ramp = 0.5; memAlpha(8) = 0.575.
   const ctx = paint(beats, layout, { currentBeat: beats[9], jumps, beatCount: 8, nowSec: 5.1 });
 
-  const halos = boltStrokes(ctx, 2.5);
-  const cores = boltStrokes(ctx, 1.0);
-  assert.equal(halos.length, 1, 'one bolt halo stroke');
-  assert.equal(cores.length, 1, 'one bolt core stroke');
-  assert.equal(halos[0].globalAlpha, 1.0, 'bolt halo alpha 1.0');
-  assert.ok(Math.abs(cores[0].globalAlpha - 0.95) < 1e-9, 'bolt core alpha 0.95');
-  const boltMoves = callsOf(ctx, 'moveTo').filter((m) => m.args[0] === layout.tiles[1].x && m.args[1] === layout.tiles[1].y);
-  assert.equal(boltMoves.length, 3, 'two bolt paths + one chord start at the source tile');
-  // Each bolt path: 5 lineTos after its moveTo.
-  const boltLineTos = callsOf(ctx, 'lineTo').filter((l) => l.strokeStyle === PALETTE.spark);
-  assert.equal(boltLineTos.length, 10, 'two bolt passes × 5 segments');
-  // Jitter is deterministic per jump: two paints in the same spark window
-  // give identical bolt points.
-  const ctx2 = paint(beats, layout, { currentBeat: beats[9], jumps, nowSec: 5.15 });
-  const first = boltLineTos.map((l) => l.args);
-  const second = callsOf(ctx2, 'lineTo').filter((l) => l.strokeStyle === PALETTE.spark).map((l) => l.args);
-  assert.deepEqual(first, second, 'bolt jitter is stable across repaints');
-  // Jagged, not a uniform kink: the 5 halo midpoints must NOT share a single
-  // fixed offset (a reseeded-per-call LCG would displace every point by the
-  // same scalar and render a straight shifted arc).
-  const midHalo = first.slice(0, 5);
-  const distinct = new Set(midHalo.map(([x, y]) => `${x},${y}`));
-  assert.equal(distinct.size, 5, 'all 5 bolt midpoints distinct (per-midpoint jitter advance)');
-  // Dimmed chord: 8 beats elapsed ⇒ alpha = 0.45 × 0.575.
-  const chords = chordStrokes(ctx);
-  assert.equal(chords.length, 1, 'chord also strokes during spark');
-  assert.ok(Math.abs(chords[0].globalAlpha - 0.45 * 0.575) < 1e-9, `spark chord alpha == 0.45 × memAlpha(8) (${chords[0].globalAlpha})`);
-  {
-    // Fresh spark at b=0: the jump just fired — alpha == 0.45 × 1.0.
-    const ctx0 = paint(beats, layout, { currentBeat: beats[9], jumps, beatCount: 0, nowSec: 5.05 });
-    const chords0 = chordStrokes(ctx0);
-    assert.ok(Math.abs(chords0[0].globalAlpha - 0.45) < 1e-9, `spark chord alpha at b=0 == 0.45 (${chords0[0].globalAlpha})`);
-  }
+  const outer = beamStrokes(ctx, BEAM_GLOW_WIDTHS[0]);
+  const inner = beamStrokes(ctx, BEAM_GLOW_WIDTHS[1]);
+  const core = beamStrokes(ctx, BEAM_CORE_WIDTH);
+  assert.equal(outer.length, 1, 'one outer glow stroke');
+  assert.equal(inner.length, 1, 'one inner glow stroke');
+  assert.equal(core.length, 1, 'one core stroke');
+  const ramp = 0.5;
+  const memAlpha = 0.575;
+  assert.ok(Math.abs(core[0].globalAlpha - 1.0 * ramp * memAlpha) < 1e-9, `core alpha == 1.0 × ramp × memAlpha (${core[0].globalAlpha})`);
+  assert.ok(Math.abs(inner[0].globalAlpha - 0.35 * ramp * memAlpha) < 1e-9, `inner glow alpha == 0.35 × ramp × memAlpha (${inner[0].globalAlpha})`);
+  assert.ok(Math.abs(outer[0].globalAlpha - 0.18 * ramp * memAlpha) < 1e-9, `outer glow alpha == 0.18 × ramp × memAlpha (${outer[0].globalAlpha})`);
+  assert.equal(outer[0].strokeStyle, PALETTE.playhead, 'outer glow is playhead gold');
+  assert.equal(inner[0].strokeStyle, PALETTE.playhead, 'inner glow is playhead gold');
+  assert.equal(core[0].strokeStyle, PALETTE.playhead, 'core is playhead gold');
+  // Layer order: outer glow first, core last (glow renders under the core).
+  const allStrokes = callsOf(ctx, 'stroke');
+  const beamIdx = allStrokes.map((s, i) => ([18, 11, 6].includes(s.lineWidth) && s.strokeStyle === PALETTE.playhead ? i : -1)).filter((i) => i >= 0);
+  assert.equal(beamIdx.length, 3, 'three beam strokes total');
+  assert.equal(allStrokes[beamIdx[0]].lineWidth, 18, 'outer glow painted first');
+  assert.equal(allStrokes[beamIdx[1]].lineWidth, 11, 'inner glow painted second');
+  assert.equal(allStrokes[beamIdx[2]].lineWidth, 6, 'core painted last');
+  // Geometry: each layer is a single quadratic path starting at the source tile.
+  const beamMoves = callsOf(ctx, 'moveTo').filter((m) => m.args[0] === layout.tiles[1].x && m.args[1] === layout.tiles[1].y);
+  assert.equal(beamMoves.length, 3, 'three beam paths start at the source tile');
+  const beamLineTos = callsOf(ctx, 'lineTo').filter((l) => l.strokeStyle === PALETTE.playhead);
+  assert.equal(beamLineTos.length, 0, 'beam layers are pure quadratics (no lineTos)');
+  const quads = callsOf(ctx, 'quadraticCurveTo');
+  assert.equal(quads.length, 3, 'one quadratic per beam layer');
+  // No dimmed chord underneath during the beam window.
+  assert.equal(chordStrokes(ctx).length, 0, 'persistent chord skipped during the beam window');
+  // Determinism: the beam has no randomness — a repaint in the same window
+  // shares identical quadratic geometry.
+  const ctx2 = paint(beats, layout, { currentBeat: beats[9], jumps, beatCount: 8, nowSec: 5.1 });
+  const first = callsOf(ctx, 'quadraticCurveTo').map((q) => q.args);
+  const second = callsOf(ctx2, 'quadraticCurveTo').map((q) => q.args);
+  assert.deepEqual(first, second, 'beam geometry is stable across repaints');
+  // Linear ramp: later in the window ⇒ proportionally dimmer core, same geometry.
+  const ctx3 = paint(beats, layout, { currentBeat: beats[9], jumps, beatCount: 8, nowSec: 5.15 });
+  const ramp2 = 0.25;
+  const core3 = beamStrokes(ctx3, 6);
+  assert.ok(Math.abs(core3[0].globalAlpha - 1.0 * ramp2 * memAlpha) < 1e-9, `core alpha at age 0.15 == 1.0 × 0.25 × memAlpha (${core3[0].globalAlpha})`);
+  assert.deepEqual(callsOf(ctx3, 'quadraticCurveTo').map((q) => q.args), second, 'beam geometry unchanged at a different ramp');
 }
 
-{ // No bolt at ≥ 0.2s.
+{ // No beam at ≥ 0.2s.
   const beats = Array.from({ length: 12 }, (_, i) => makeBeat(i));
   const layout = LAYOUT_RING(beats, { width: 400, height: 400, margin: 20 });
   const jumps = [{ count: 1, from: beats[1], to: beats[9], fromIndex: 1, toIndex: 9, eventTSec: 5, eventBeatCount: 0 }];
   const ctx = paint(beats, layout, { currentBeat: beats[9], jumps, nowSec: 5.2 });
-  assert.equal(boltStrokes(ctx, 2.5).length, 0, 'no bolt halo at the spark boundary');
-  assert.equal(boltStrokes(ctx, 1.0).length, 0, 'no bolt core at the spark boundary');
-  // Future-dated event (not yet arrived): no bolt either.
+  assert.equal(beamStrokes(ctx, BEAM_GLOW_WIDTHS[0]).length, 0, 'no outer glow at the beam boundary');
+  assert.equal(beamStrokes(ctx, BEAM_GLOW_WIDTHS[1]).length, 0, 'no inner glow at the beam boundary');
+  assert.equal(beamStrokes(ctx, BEAM_CORE_WIDTH).length, 0, 'no core at the beam boundary');
+  // The persistent chord IS present after the beam powers down.
+  assert.equal(chordStrokes(ctx).length, 1, 'chord strokes after the beam window');
+  // Future-dated event (not yet arrived): no beam either.
   const futureCtx = paint(beats, layout, { currentBeat: beats[9], jumps, nowSec: 4.9 });
-  assert.equal(boltStrokes(futureCtx, 2.5).length, 0, 'no bolt before the event time');
+  assert.equal(beamStrokes(futureCtx, BEAM_GLOW_WIDTHS[0]).length, 0, 'no beam before the event time');
 }
 
 { // Beat-decay contract (memory + ghost phases, one formula).
@@ -198,9 +215,10 @@ function boltStrokes(ctx, width) {
     currentBeat: beats[4], currentIndex: 4, jumps, beatCount: 42, nowSec: 6,
   });
   assert.equal(chordStrokes(ctx).length, 0, 'old jump on its source tile ⇒ no phantom chord');
-  // Sanity: the same jump a few beats after arrival still draws.
+  // Sanity: the same jump a few beats after arrival still draws (past the
+  // 0.2s beam window, so the persistent chord strokes).
   const fresh = paint(beats, layout, {
-    currentBeat: beats[4], currentIndex: 4, jumps, beatCount: 3, nowSec: 5.05,
+    currentBeat: beats[4], currentIndex: 4, jumps, beatCount: 3, nowSec: 5.5,
   });
   assert.equal(chordStrokes(fresh).length, 1, 'fresh jump draws its chord');
 }
@@ -246,22 +264,25 @@ function boltStrokes(ctx, width) {
   });
   assert.equal(chordStrokes(broken).length, 0, 'missing tile ⇒ no arc');
 
-  // Reduced motion: no arcs, no sparks at all.
+  // Reduced motion: no arcs, no beam at all.
   const rmCtx = paint(beats, layout, {
     currentBeat: beats[16], currentIndex: 16, jumps,
     reducedMotion: true, nowSec: 5.05,
   });
   assert.equal(chordStrokes(rmCtx).length, 0, 'reduced motion suppresses chords');
-  assert.equal(boltStrokes(rmCtx, 2.5).length, 0, 'reduced motion suppresses bolt halos');
-  assert.equal(boltStrokes(rmCtx, 1.0).length, 0, 'reduced motion suppresses bolt cores');
+  assert.equal(beamStrokes(rmCtx, BEAM_GLOW_WIDTHS[0]).length, 0, 'reduced motion suppresses outer glow');
+  assert.equal(beamStrokes(rmCtx, BEAM_GLOW_WIDTHS[1]).length, 0, 'reduced motion suppresses inner glow');
+  assert.equal(beamStrokes(rmCtx, BEAM_CORE_WIDTH).length, 0, 'reduced motion suppresses beam core');
 }
 
-{ // Sequential playback only (no jump): zero arcs, zero bolts.
+{ // Sequential playback only (no jump): zero arcs, zero beams.
   const beats = Array.from({ length: 12 }, (_, i) => makeBeat(i));
   const layout = LAYOUT_RING(beats, { width: 400, height: 400, margin: 20 });
   const ctx = paint(beats, layout, { currentBeat: beats[4], currentIndex: 4, jumps: [], nowSec: 2 });
   assert.equal(chordStrokes(ctx).length, 0, 'no chord strokes without a jump');
-  assert.equal(boltStrokes(ctx, 2.5).length, 0, 'no bolts without a jump');
+  assert.equal(beamStrokes(ctx, BEAM_GLOW_WIDTHS[0]).length, 0, 'no beams without a jump');
+  assert.equal(beamStrokes(ctx, BEAM_GLOW_WIDTHS[1]).length, 0, 'no beams without a jump');
+  assert.equal(beamStrokes(ctx, BEAM_CORE_WIDTH).length, 0, 'no beams without a jump');
 }
 
 { // Two overlapping jumps: each gets its own chord. Alphas follow elapsed

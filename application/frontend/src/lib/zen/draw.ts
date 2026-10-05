@@ -5,13 +5,13 @@
  * Given the Analysis beat list, the active theme's palette, the current beat
  * and the jump events, this module decides every circle-drawing fact — tile
  * layout angles, cluster→color mapping, glow-dot cursor, growth ribs, jump
- * arcs + sparks, cap pulses — and emits drawing commands against an injected
+ * arcs + energy beam, cap pulses — and emits drawing commands against an injected
  * 2D-context-like interface. The ZenMode component is a thin host that
  * supplies a real canvas context (plus the one opaque object draw.ts cannot
  * create itself: the halo's radial gradient).
  *
  * Rendering model (spec Implementation Decisions): draw on each beat change;
- * a short bounded fade pass (~1s) handles the spark flash, glow decay and cap
+ * a short bounded fade pass (~1s) handles the energy-beam flash, glow decay and cap
  * pulses; the screen is static between events. No continuous rAF loop.
  * Jump-arc memory (32 beats) repaints inside the beat-change bursts.
  */
@@ -42,8 +42,6 @@ export interface ZenPalette {
   playhead: string;
   /** Background of the zen overlay. */
   background: string;
-  /** Jump-spark bolt color (scheme-split; white in dark, dark ink in light). */
-  spark: string;
 }
 
 export interface ZenViewState {
@@ -57,7 +55,7 @@ export interface ZenViewState {
   currentBeatIndex: number;
   /** Fully-resolved jump events (indices + arrival time). Most recent last. */
   jumps: ZenJump[];
-  /** `prefers-reduced-motion: reduce` — suppress glow pulse, sparks, arcs and cap pulses. */
+  /** `prefers-reduced-motion: reduce` — suppress glow pulse, beam, arcs and cap pulses. */
   reducedMotion: boolean;
   /** Monotonic beat-tick counter (host increments once per distinct beat callback); drives jump-arc memory decay. */
   beatCount: number;
@@ -79,7 +77,7 @@ export type ZenJump = JumpEvent & { fromIndex: number; toIndex: number; eventTSe
 /** Tile geometry knobs (single place; the host supplies the canvas size). */
 /** Tile diameter ceiling for readable rings (TILE_DIAMETER_FOR clamps). */
 const TILE_MAX_DIAMETER_PX = 44;
-/** Bounded fade window: the spark flash, glow decay and cap pulses settle inside this (spec ~1s). */
+/** Bounded fade window: the energy-beam flash, glow decay and cap pulses settle inside this (spec ~1s). */
 export const FADE_SECONDS = 1.0;
 /** Ring radius floor (never smaller than this unless the viewport ceiling is tighter). */
 const MIN_RING_RADIUS = 64;
@@ -97,14 +95,19 @@ export const PLAY_MAX_REPS = 6;
 export const PLAY_GROWTH_PX = 3;
 /** Rib alpha ramp, inner (oldest) → outer; rib 1 = base-band alpha (no seam at the flush edge). */
 const RIB_ALPHAS = [0.9, 0.8, 0.7, 0.6, 0.5, 0.42];
-/** Electricity-spark flash duration (time-based, from the jump's arrival stamp). */
-const SPARK_SECONDS = 0.2;
+/** Energy-beam firing duration (time-based, from the jump's arrival stamp). */
+const BEAM_SECONDS = 0.2;
 /** Jump-arc beat-driven memory schedule: full → 0.15 alpha over 16 beats, → 0 over the next 16. */
 const MEMORY_BEATS = 16;
 /** Jump chord stroke width. */
 const ARC_LINE_WIDTH = 3.2;
-/** Bolt jitter amplitude (px) along the curve's perpendicular. */
-const SPARK_JITTER_PX = 5;
+/** Energy-beam core width (thicker than the persistent chord's 3.2px). */
+const BEAM_CORE_WIDTH = 6;
+/** Beam glow layers, outer → inner: width px + fraction of the core's alpha. */
+const BEAM_GLOW_LAYERS = [
+  { width: 18, alphaFactor: 0.18 },
+  { width: 11, alphaFactor: 0.35 },
+];
 
 const TAU = Math.PI * 2;
 /** 12 o'clock in canvas space (y grows downward). */
@@ -190,29 +193,6 @@ const arcMemAlpha = (beatsSince: number): number => {
   if (beatsSince <= MEMORY_BEATS) return 1 - 0.85 * (beatsSince / MEMORY_BEATS);
   if (beatsSince < MEMORY_BEATS * 2) return 0.15 * (1 - (beatsSince - MEMORY_BEATS) / MEMORY_BEATS);
   return 0;
-};
-
-/**
- * Deterministic LCG jitter for a spark bolt: created once per jump, advanced
- * once per midpoint — stable across fade-pass repaints within the 0.2s spark
- * window (a Math.random-per-frame fallback would shimmer), and jagged
- * (per-midpoint offsets differ, unlike a reseeded-per-call hash).
- */
-const SPARK_JITTER = (fromId: number, toId: number): (() => number) => {
-  let s = (Math.imul(fromId, 2654435761) ^ Math.imul(toId, 40503)) >>> 0;
-  return () => {
-    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
-    return ((s / 0x1_0000_0000) * 2 - 1) * SPARK_JITTER_PX;
-  };
-};
-
-/** Point on a quadratic Bézier at parameter t. */
-const quadAt = (t: number, ax: number, ay: number, cx: number, cy: number, bx: number, by: number) => {
-  const u = 1 - t;
-  return {
-    x: u * u * ax + 2 * u * t * cx + t * t * bx,
-    y: u * u * ay + 2 * u * t * cy + t * t * by,
-  };
 };
 
 /**
@@ -303,8 +283,9 @@ export function PAINT_FRAME(view: ZenViewState, ctx: DrawTarget): void {
   ctx.globalAlpha = 1;
 
   // Jump arcs: one smooth quadratic chord per jump bowing toward the center,
-  // beat-driven short-term memory; a jagged white-hot bolt rides the chord
-  // for the first 0.2s. Suppress entirely under reduced motion.
+  // beat-driven short-term memory; an energy beam fires along the chord for
+  // the first 0.2s (thicker, layered glow, linear ramp), then the same chord
+  // persists as beat-driven memory. Suppress entirely under reduced motion.
   if (!reducedMotion) {
     for (const jump of jumps) {
       const from = layout.tiles[jump.fromIndex];
@@ -322,7 +303,7 @@ export function PAINT_FRAME(view: ZenViewState, ctx: DrawTarget): void {
       if (memAlpha <= 0) continue; // ≥32 beats: gone (no stroke at all, not a zero-alpha paint)
 
       const age = nowSec - jump.eventTSec;
-      const isSpark = age >= 0 && age < SPARK_SECONDS;
+      const isBeam = age >= 0 && age < BEAM_SECONDS;
 
       // Control point: endpoint midpoint pulled toward the ring center.
       const mx = (from.x + to.x) / 2;
@@ -330,43 +311,31 @@ export function PAINT_FRAME(view: ZenViewState, ctx: DrawTarget): void {
       const cx = mx + (layout.center.x - mx) * CURVE_INNER_PULL;
       const cy = my + (layout.center.y - my) * CURVE_INNER_PULL;
 
-      ctx.beginPath();
-      ctx.strokeStyle = palette.playhead;
-      ctx.lineWidth = ARC_LINE_WIDTH;
-      // One formula everywhere: chord alpha = dim-or-full × beat schedule.
-      ctx.globalAlpha = clamp01((isSpark ? 0.45 : 1.0) * memAlpha);
-      ctx.moveTo(from.x, from.y);
-      ctx.quadraticCurveTo(cx, cy, to.x, to.y);
-      ctx.stroke();
-
-      if (isSpark) {
-        // Jagged bolt: from endpoint A, 5 lineTos along the chord (samples at
-        // t = k/6, k = 1..5, plus implicit start at A), each midpoint offset
-        // perpendicular by the deterministic LCG jitter. Halo (2.5px, alpha
-        // 1.0) + core (1.0px, alpha 0.95), both near-white.
-        const nextJitter = SPARK_JITTER(jump.from.id, jump.to.id);
-        const points: { x: number; y: number }[] = [];
-        for (let k = 1; k <= 5; k++) {
-          const t = k / 6;
-          const p = quadAt(t, from.x, from.y, cx, cy, to.x, to.y);
-          // Perpendicular of the curve's tangent at t.
-          const tx = 2 * (1 - t) * (cx - from.x) + 2 * t * (to.x - cx);
-          const ty = 2 * (1 - t) * (cy - from.y) + 2 * t * (to.y - cy);
-          const len = Math.hypot(tx, ty) || 1;
-          const off = nextJitter();
-          points.push({ x: p.x + (-ty / len) * off, y: p.y + (tx / len) * off });
-        }
-        const drawBolt = (width: number, alpha: number) => {
+      if (!isBeam) {
+        ctx.beginPath();
+        ctx.strokeStyle = palette.playhead;
+        ctx.lineWidth = ARC_LINE_WIDTH;
+        // One formula everywhere: chord alpha = dim-or-full × beat schedule.
+        ctx.globalAlpha = clamp01(1.0 * memAlpha);
+        ctx.moveTo(from.x, from.y);
+        ctx.quadraticCurveTo(cx, cy, to.x, to.y);
+        ctx.stroke();
+      } else {
+        // Energy beam: the same quadratic path, stroked once per glow layer
+        // (painted first, under) then the core on top. Linear alpha decay
+        // ramp over the firing window; no randomness — deterministic geometry.
+        const ramp = clamp01(1 - age / BEAM_SECONDS);
+        const strokeBeam = (width: number, alphaFactor: number) => {
           ctx.beginPath();
-          ctx.strokeStyle = palette.spark;
+          ctx.strokeStyle = palette.playhead;
           ctx.lineWidth = width;
-          ctx.globalAlpha = alpha;
+          ctx.globalAlpha = clamp01(alphaFactor * ramp * memAlpha);
           ctx.moveTo(from.x, from.y);
-          for (const p of points) ctx.lineTo(p.x, p.y);
+          ctx.quadraticCurveTo(cx, cy, to.x, to.y);
           ctx.stroke();
         };
-        drawBolt(2.5, 1.0);
-        drawBolt(1.0, 0.95);
+        for (const layer of BEAM_GLOW_LAYERS) strokeBeam(layer.width, layer.alphaFactor);
+        strokeBeam(BEAM_CORE_WIDTH, 1.0);
       }
     }
     ctx.globalAlpha = 1;
