@@ -27,6 +27,7 @@ import {
   HALO_RADIUS_FACTOR,
   PLAY_GROWTH_FOR,
   PLAY_MAX_REPS,
+  START_ANGLE,
   TILE_DIAMETER_FOR,
   type RingLayout,
   type ZenJump,
@@ -46,14 +47,32 @@ interface ZenModeProps {
   beatPlayCounts?: Map<number, number>;
   /** True while audio is actually running. */
   isPlaying: boolean;
-  /** Retry playback from the tap-to-begin gate (suspended-context fallback). */
-  onResume: () => void;
+  /** Toggle play/pause (gate resume, paused-overlay tap, corner ⏸/▶). */
+  onTogglePlayback: () => void;
+  /** Jump playback to the beat the user double-tapped on the ring. */
+  onJumpToBeat: (beat: Beat) => void;
   /** Exit back to the normal player (audio keeps playing). */
   onExit: () => void;
 }
 
 /** ✕ auto-hide delay (spec: 3s idle). */
 const EXIT_IDLE_MS = 3000;
+
+/** Conventional double-tap window (ms) for jump-on-tile. */
+const DOUBLE_TAP_MS = 300;
+
+/** Forgiving edge margin (px) for the ring band hit area (finger-scale accuracy). */
+const BAND_FUDGE_PX = 4;
+
+/**
+ * Double-tap proximity slop (px). Real finger taps at the same spot jitter far
+ * more than the 4px band fudge — native double-tap detectors use ~30px touch
+ * slop — so the two taps of a pair may land this far apart and still count.
+ */
+const DOUBLE_TAP_SLOP_PX = 32;
+
+/** Full turn, for angle normalization. */
+const TAU = Math.PI * 2;
 
 /** Jewel palette order — matches the waveform's jewel bar mapping (§2.4). */
 const JEWEL_VARS = ['--jewel-ruby', '--jewel-gold', '--jewel-emerald', '--jewel-sapphire', '--jewel-amethyst', '--jewel-cyan'] as const;
@@ -97,6 +116,7 @@ const paintZenCanvas = (
   glowTSec: number | null,
   viewExtras: {
     currentBeatIndex: number;
+    beatCount: number;
     beatPlayCounts?: Map<number, number>;
     capPulseTSecByIndex?: Map<number, number>;
   },
@@ -143,7 +163,7 @@ const paintZenCanvas = (
   );
 };
 
-const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch, beatPlayCounts, isPlaying, onResume, onExit }) => {
+const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch, beatPlayCounts, isPlaying, onTogglePlayback, onJumpToBeat, onExit }) => {
   const overlayRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [showExit, setShowExit] = useState(true);
@@ -153,11 +173,15 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch,
   // "Once playing the gate never returns for that session" (spec).
   const gateSeenRef = useRef(false);
   // Jump + glow timestamps: set on the corresponding callbacks, read by paint.
-  const jumpTimestamps = useRef(new Map<number, number>());
+  const jumpStamps = useRef(new Map<number, { tSec: number; beatCount: number }>());
   const glowTSecRef = useRef<number | null>(null);
   const jumpsRef = useRef<JumpEvent[]>(jumps);
   const currentBeatRef = useRef<Beat | null>(currentBeat);
   const epochRef = useRef(jumpEpoch);
+  // Monotonic beat-tick counter: incremented once per distinct beat-change
+  // effect run; jump-arc memory decay anchors to this (beats elapsed since
+  // the jump fired), not to the playhead's wrapped position on the ring.
+  const beatCountRef = useRef(0);
   // Cap-pulse state: previous play counts (to detect a count crossing past
   // PLAY_MAX_REPS) + ring-index → stamp-second map (deleted on expiry).
   const prevPlayCountsRef = useRef(new Map<number, number>());
@@ -168,7 +192,7 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch,
   beatPlayCountsRef.current = beatPlayCounts;
 
   const clearJumpStamps = () => {
-    jumpTimestamps.current.clear();
+    jumpStamps.current.clear();
     jumpsRef.current = [];
     glowTSecRef.current = null;
     // A new jump-list generation means a fresh playback session: jump stamps
@@ -208,18 +232,20 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch,
   const buildZenJumps = useCallback(
     (nowSec: number): ZenJump[] => {
       // The page keeps a small bounded tail (arcs live ≤ FADE_SECONDS), so
-      // this stays O(tail); stamps are (epoch, count)-keyed (review).
+      // this stays O(tail); stamps are (epoch, count)-keyed (review). The
+      // beat-tick stamp is cached alongside the time stamp so a later repaint
+      // burst doesn't rebadge an old jump with the current beat count.
       return jumpsRef.current.flatMap((jump) => {
         const stampKey = epochRef.current * 1_000_000 + jump.count;
-        let stamp = jumpTimestamps.current.get(stampKey);
+        let stamp = jumpStamps.current.get(stampKey);
         if (stamp === undefined) {
-          stamp = nowSec;
-          jumpTimestamps.current.set(stampKey, stamp);
+          stamp = { tSec: nowSec, beatCount: beatCountRef.current };
+          jumpStamps.current.set(stampKey, stamp);
         }
         const fromIndex = indexById.get(jump.from.id);
         const toIndex = indexById.get(jump.to.id);
         if (fromIndex === undefined || toIndex === undefined) return [];
-        return [{ ...jump, fromIndex, toIndex, eventTSec: stamp }];
+        return [{ ...jump, fromIndex, toIndex, eventTSec: stamp.tSec, eventBeatCount: stamp.beatCount }];
       });
     },
     [indexById],
@@ -242,6 +268,7 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch,
         reducedMotion ? null : glowTSecRef.current,
         {
           currentBeatIndex: currentBeat ? (indexById.get(currentBeat.id) ?? -1) : -1,
+          beatCount: beatCountRef.current,
           beatPlayCounts: beatPlayCountsRef.current,
           capPulseTSecByIndex:
             reducedMotion || capPulseTSecRef.current.size === 0
@@ -406,10 +433,12 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch,
 
   const fadePassRef = useRef<(() => void) | null>(null);
 
-  // Beat change: aim glow + repaint immediately (one burst, no loop).
+  // Beat change: advance the beat-tick counter + aim glow + repaint
+  // (one burst, no loop).
   useEffect(() => {
     currentBeatRef.current = currentBeat;
     if (!currentBeat) return;
+    beatCountRef.current += 1;
     glowTSecRef.current = performance.now() / 1000;
     if (layoutRef.current) {
       const palette = readZenPalette(window);
@@ -443,7 +472,11 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch,
   const armExitTimer = useCallback(() => {
     setShowExit(true);
     window.clearTimeout(idleTimer.current);
-    idleTimer.current = window.setTimeout(() => setShowExit(false), EXIT_IDLE_MS);
+    // While paused, ✕/⏸/▶ stay visible (no auto-hide) — paused users need
+    // the controls to resume; read the live ref, not a stale closure.
+    idleTimer.current = window.setTimeout(() => {
+      if (isPlayingRef.current) setShowExit(false);
+    }, EXIT_IDLE_MS);
   }, []);
 
   // ✕ visible on entry; reappears on pointer interaction; hides after 3s.
@@ -452,13 +485,67 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch,
     return () => window.clearTimeout(idleTimer.current);
   }, [armExitTimer]);
 
-  const handlePointer = useCallback(() => {
+  // Live isPlaying mirror: timers/click paths must not act on stale closures
+  // (same pattern as onExitRef below).
+  const isPlayingRef = useRef(isPlaying);
+  isPlayingRef.current = isPlaying;
+
+  // Double-tap detection state: the window + finger-scale distance the second
+  // tap must land within to count as a double-tap.
+  const lastTapAtRef = useRef(0);
+  const lastTapXYRef = useRef<{ x: number; y: number } | null>(null);
+
+  // Jump to the angular tile the tap landed on — user intent wins, no
+  // cluster snapping. Screen coords (y grows downward) → the 12-o'clock-
+  // clockwise angle form LAYOUT_RING's TilePosition.angle uses
+  // (START_ANGLE = -π/2); verified round-trip by pause-jump.test.mjs.
+  const handleJumpAtClientPoint = useCallback((clientX: number, clientY: number) => {
+    const layout = layoutRef.current;
+    if (!layout || !isPlayingRef.current) return; // no engine call while paused
+    const dx = clientX - layout.center.x;
+    const dy = clientY - layout.center.y;
+    const dist = Math.hypot(dx, dy);
+    const band = TILE_DIAMETER_FOR(beats.length, layout.radius);
+    const bandHalf = band / 2 + BAND_FUDGE_PX;
+    const inner = Math.max(0, layout.radius - bandHalf);
+    const outer = layout.radius + bandHalf;
+    if (dist < inner || dist > outer) return; // outside the ring band → no jump
+    const angle = Math.atan2(dy, dx) - START_ANGLE; // normalize below
+    const norm = ((angle % TAU) + TAU) % TAU;
+    const slot = TAU / layout.tiles.length;
+    const index = Math.round(norm / slot) % layout.tiles.length;
+    const beat = beats[index];
+    if (beat) onJumpToBeat(beat);
+  }, [beats, onJumpToBeat]);
+
+  // Click (synthesized after pointerup for touch and mouse alike) is the one
+  // tap path: re-arms the ✕ timer, detects double-tap jumps, resumes when
+  // paused. touchAction: 'none' on the overlay suppresses the browser's
+  // double-tap zoom so this window is the only interpretation of the second tap.
+  const handleOverlayClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     armExitTimer();
-  }, [armExitTimer]);
+    const now = Date.now();
+    const last = lastTapAtRef.current;
+    const lastXY = lastTapXYRef.current;
+    lastTapAtRef.current = now;
+    lastTapXYRef.current = { x: e.clientX, y: e.clientY };
+    const isDoubleTap =
+      lastXY !== null && now - last < DOUBLE_TAP_MS &&
+      Math.hypot(e.clientX - lastXY.x, e.clientY - lastXY.y) <= DOUBLE_TAP_SLOP_PX;
+    if (isDoubleTap) {
+      // Reset so a triple-tap doesn't fire two jumps.
+      lastTapAtRef.current = 0;
+      lastTapXYRef.current = null;
+      handleJumpAtClientPoint(e.clientX, e.clientY);
+      return;
+    }
+    // Single tap: outside the entry gate, tap anywhere resumes when paused.
+    if (!needsTap && !isPlaying) onTogglePlayback();
+  }, [armExitTimer, handleJumpAtClientPoint, isPlaying, needsTap, onTogglePlayback]);
 
   const handleGateTap = useCallback(() => {
-    onResume();
-  }, [onResume]);
+    onTogglePlayback();
+  }, [onTogglePlayback]);
 
   // Live onExit without re-subscribing: page.tsx passes a new inline callback
   // per render (which fires at beat frequency), and an effect dep on it would
@@ -505,8 +592,8 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch,
     <div
       ref={overlayRef}
       className="fixed inset-0 z-50 bg-surface"
-      onPointerDown={handlePointer}
-      onPointerMove={handlePointer}
+      onClick={handleOverlayClick}
+      style={{ touchAction: 'none' }}
       role="dialog"
       aria-label="Zen mode — fullscreen visualization"
     >
@@ -523,17 +610,43 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch,
         </button>
       )}
 
+      {/* Paused state: dim + hint; pointer-events-none so the tap that
+          resumes reaches the overlay div itself. ✕/⏸/▶ render after, on top. */}
+      {!needsTap && !isPlaying && (
+        <div className="pointer-events-none absolute inset-0 grid place-items-center bg-surface/60 transition-opacity duration-200">
+          <span className="type-headline text-on-surface-variant">Paused — tap to resume</span>
+        </div>
+      )}
+
       {showExit && !needsTap && (
-        <button
-          type="button"
-          onClick={handleExit}
-          className="absolute right-4 top-4 grid h-11 w-11 place-items-center rounded-full border border-outline-variant bg-surface-container-high/80 text-on-surface-variant transition-opacity duration-200 hover:bg-on-surface/10"
-          aria-label="Exit zen mode"
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-            <path fill="currentColor" d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
-          </svg>
-        </button>
+        <div className="absolute right-4 top-4 flex gap-2">
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onTogglePlayback(); }}
+            className="grid h-11 w-11 place-items-center rounded-full border border-outline-variant bg-surface-container-high/80 text-on-surface-variant transition-opacity duration-200 hover:bg-on-surface/10"
+            aria-label={isPlaying ? 'Pause playback' : 'Resume playback'}
+          >
+            {isPlaying ? (
+              <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path fill="currentColor" d="M8 5h3v14H8zM13 5h3v14h-3z" />
+              </svg>
+            ) : (
+              <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path fill="currentColor" d="M8 5v14l11-7z" />
+              </svg>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); handleExit(); }}
+            className="grid h-11 w-11 place-items-center rounded-full border border-outline-variant bg-surface-container-high/80 text-on-surface-variant transition-opacity duration-200 hover:bg-on-surface/10"
+            aria-label="Exit zen mode"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path fill="currentColor" d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+            </svg>
+          </button>
+        </div>
       )}
     </div>
   );
