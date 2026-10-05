@@ -7,9 +7,12 @@
 media_domain   = "media.michaelhuang.xyz" # hostname within the TF_VAR_cloudflare_zone_id zone
 r2_bucket_name = "infinite-worship-media"
 
-# Local dev, the production custom domain, and the QA preview custom domain:
+# Local dev (3000 + two extra ports for parallel agent dev servers), the
+# production custom domain, and the QA preview custom domain:
 cors_allowed_origins = [
   "http://localhost:3000",
+  "http://localhost:3001",
+  "http://localhost:3002",
   "https://infinite-worship.vercel.app",
   "https://infinite-worship.michaelhuang.xyz",
   "https://qa-infinite-worship.michaelhuang.xyz",

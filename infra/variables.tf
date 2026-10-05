@@ -41,6 +41,8 @@ variable "cors_allowed_origins" {
   type        = list(string)
   default = [
     "http://localhost:3000",
+    "http://localhost:3001",
+    "http://localhost:3002",
     # Add the production Vercel origin(s), e.g. "https://infinite-worship.vercel.app",
     # via a tfvars override or -var once known.
   ]
