@@ -32,6 +32,7 @@ function paint(beats, layout, { currentBeat = null, currentIndex = -1, counts = 
       palette: PALETTE,
       currentBeat,
       currentBeatIndex: currentIndex ?? (currentBeat ? beats.findIndex((b) => b.id === currentBeat.id) : -1),
+      beatCount: 0,
       jumps: [],
       reducedMotion,
       nowSec,

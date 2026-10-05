@@ -27,7 +27,7 @@ function makeBeat(id) {
 function paint(
   beats,
   layout,
-  { currentBeat, currentIndex, jumps, reducedMotion = false, nowSec = 0, counts = null } = {},
+  { currentBeat, currentIndex, jumps, reducedMotion = false, nowSec = 0, counts = null, beatCount = 0 } = {},
 ) {
   const ctx = new FakeCtx({ width: 400, height: 400 });
   PAINT_FRAME(
@@ -37,6 +37,7 @@ function paint(
       palette: PALETTE,
       currentBeat: currentBeat ?? null,
       currentBeatIndex: currentIndex ?? (currentBeat ? beats.findIndex((b) => b.id === currentBeat.id) : -1),
+      beatCount,
       jumps,
       reducedMotion,
       nowSec,
@@ -66,7 +67,7 @@ function boltStrokes(ctx, width) {
   // lineWidth 3.2; control point bows toward the ring center.
   const beats = Array.from({ length: 12 }, (_, i) => makeBeat(i));
   const layout = LAYOUT_RING(beats, { width: 400, height: 400, margin: 20 });
-  const jumps = [{ count: 1, from: beats[1], to: beats[9], fromIndex: 1, toIndex: 9, eventTSec: 5 }];
+  const jumps = [{ count: 1, from: beats[1], to: beats[9], fromIndex: 1, toIndex: 9, eventTSec: 5, eventBeatCount: 0 }];
   // Paint 1s after the spark so only the memory-phase chord remains.
   const ctx = paint(beats, layout, { currentBeat: beats[9], jumps, nowSec: 5.5 });
 
@@ -88,8 +89,10 @@ function boltStrokes(ctx, width) {
   const expectedCy = my + (layout.center.y - my) * 0.35;
   assert.ok(Math.abs(q.args[0] - expectedCx) < 1e-9, `ctrl x bows to the center (${q.args[0]} vs ${expectedCx})`);
   assert.ok(Math.abs(q.args[1] - expectedCy) < 1e-9, `ctrl y bows to the center (${q.args[1]} vs ${expectedCy})`);
-  // Memory phase (beatsSince = (9−1)%12 = 8 ⇒ alpha = 1 − 0.85·8/16 = 0.575).
-  assert.ok(Math.abs(chords[0].globalAlpha - 0.575) < 1e-9, `memory alpha at beatsSince 8 == 0.575 (${chords[0].globalAlpha})`);
+  // Memory phase (8 beats elapsed since arrival ⇒ alpha = 1 − 0.85·8/16 = 0.575).
+  const memCtx = paint(beats, layout, { currentBeat: beats[9], jumps, beatCount: 8, nowSec: 5.5 });
+  const memChords = chordStrokes(memCtx);
+  assert.ok(Math.abs(memChords[0].globalAlpha - 0.575) < 1e-9, `memory alpha at beatsSince 8 == 0.575 (${memChords[0].globalAlpha})`);
 }
 
 { // Spark phase (<0.2s): jagged bolt = 1 moveTo + 5 lineTos (6-point path,
@@ -97,8 +100,8 @@ function boltStrokes(ctx, width) {
   // a dimmed chord (alpha = 0.45 × memAlpha).
   const beats = Array.from({ length: 12 }, (_, i) => makeBeat(i));
   const layout = LAYOUT_RING(beats, { width: 400, height: 400, margin: 20 });
-  const jumps = [{ count: 1, from: beats[1], to: beats[9], fromIndex: 1, toIndex: 9, eventTSec: 5 }];
-  const ctx = paint(beats, layout, { currentBeat: beats[9], jumps, nowSec: 5.1 });
+  const jumps = [{ count: 1, from: beats[1], to: beats[9], fromIndex: 1, toIndex: 9, eventTSec: 5, eventBeatCount: 0 }];
+  const ctx = paint(beats, layout, { currentBeat: beats[9], jumps, beatCount: 8, nowSec: 5.1 });
 
   const halos = boltStrokes(ctx, 2.5);
   const cores = boltStrokes(ctx, 1.0);
@@ -123,14 +126,13 @@ function boltStrokes(ctx, width) {
   const midHalo = first.slice(0, 5);
   const distinct = new Set(midHalo.map(([x, y]) => `${x},${y}`));
   assert.equal(distinct.size, 5, 'all 5 bolt midpoints distinct (per-midpoint jitter advance)');
-  // Dimmed chord: beatsSince = (9−1)%12 = 8 ⇒ alpha = 0.45 × 0.575.
+  // Dimmed chord: 8 beats elapsed ⇒ alpha = 0.45 × 0.575.
   const chords = chordStrokes(ctx);
   assert.equal(chords.length, 1, 'chord also strokes during spark');
   assert.ok(Math.abs(chords[0].globalAlpha - 0.45 * 0.575) < 1e-9, `spark chord alpha == 0.45 × memAlpha(8) (${chords[0].globalAlpha})`);
   {
-    // Fresh spark at b=0: current beat still on the FROM tile (jump just
-    // fired; the to-beat hasn't started yet) — alpha == 0.45 × 1.0.
-    const ctx0 = paint(beats, layout, { currentBeat: beats[1], currentIndex: 1, jumps, nowSec: 5.05 });
+    // Fresh spark at b=0: the jump just fired — alpha == 0.45 × 1.0.
+    const ctx0 = paint(beats, layout, { currentBeat: beats[9], jumps, beatCount: 0, nowSec: 5.05 });
     const chords0 = chordStrokes(ctx0);
     assert.ok(Math.abs(chords0[0].globalAlpha - 0.45) < 1e-9, `spark chord alpha at b=0 == 0.45 (${chords0[0].globalAlpha})`);
   }
@@ -139,7 +141,7 @@ function boltStrokes(ctx, width) {
 { // No bolt at ≥ 0.2s.
   const beats = Array.from({ length: 12 }, (_, i) => makeBeat(i));
   const layout = LAYOUT_RING(beats, { width: 400, height: 400, margin: 20 });
-  const jumps = [{ count: 1, from: beats[1], to: beats[9], fromIndex: 1, toIndex: 9, eventTSec: 5 }];
+  const jumps = [{ count: 1, from: beats[1], to: beats[9], fromIndex: 1, toIndex: 9, eventTSec: 5, eventBeatCount: 0 }];
   const ctx = paint(beats, layout, { currentBeat: beats[9], jumps, nowSec: 5.2 });
   assert.equal(boltStrokes(ctx, 2.5).length, 0, 'no bolt halo at the spark boundary');
   assert.equal(boltStrokes(ctx, 1.0).length, 0, 'no bolt core at the spark boundary');
@@ -151,19 +153,21 @@ function boltStrokes(ctx, width) {
 { // Beat-decay contract (memory + ghost phases, one formula).
   const beats = Array.from({ length: 48 }, (_, i) => makeBeat(i));
   const layout = LAYOUT_RING(beats, { width: 800, height: 800, margin: 32 });
-  // Jump from 4 to 8; the ring position walks forward from the FROM tile:
-  // ringPos = 4 + beatsSince (mod 48). Assert the spec's alpha schedule at
-  // each beatsSince directly.
+  // Jump from 4 to 8; decay is anchored to the jump's arrival beat tick:
+  // beatsSince = beatCount − eventBeatCount. Assert the spec's alpha
+  // schedule at each beatsSince directly. currentIndex is irrelevant to the
+  // alpha now (walked forward anyway to mirror real playback).
   const cases = [
     [0, 1.0], [8, 0.575], [16, 0.15], [24, 0.075], [31, 0.15 * (1 / 16)],
   ];
   for (const [beatsSince, expected] of cases) {
-    const jumps = [{ count: 1, from: beats[4], to: beats[8], fromIndex: 4, toIndex: 8, eventTSec: 5 }];
+    const jumps = [{ count: 1, from: beats[4], to: beats[8], fromIndex: 4, toIndex: 8, eventTSec: 5, eventBeatCount: 0 }];
     const ringPos = (4 + beatsSince) % 48;
     const ctx = paint(beats, layout, {
       currentBeat: beats[ringPos],
       currentIndex: ringPos,
       jumps,
+      beatCount: beatsSince,
       nowSec: 6,
     });
     const chords = chordStrokes(ctx);
@@ -176,9 +180,29 @@ function boltStrokes(ctx, width) {
   // ≥32 beats: no chord stroke at all.
   const gone = paint(beats, layout, {
     currentBeat: beats[(4 + 32) % 48], currentIndex: (4 + 32) % 48,
-    jumps: [{ count: 1, from: beats[4], to: beats[8], fromIndex: 4, toIndex: 8, eventTSec: 5 }], nowSec: 6,
+    jumps: [{ count: 1, from: beats[4], to: beats[8], fromIndex: 4, toIndex: 8, eventTSec: 5, eventBeatCount: 0 }],
+    beatCount: 32, nowSec: 6,
   });
   assert.equal(chordStrokes(gone).length, 0, 'alpha 0 at ≥32 ⇒ no stroke at all');
+}
+
+{ // REGRESSION (phantom re-light): a jump 32+ beats OLD must NOT re-draw when
+  // the playhead wraps around and sits exactly ON its source tile. The old
+  // playhead-anchored formula ((currentIndex − fromIndex) % N) measured 0
+  // there and re-lit the arc at full alpha every lap of the ring.
+  const beats = Array.from({ length: 48 }, (_, i) => makeBeat(i));
+  const layout = LAYOUT_RING(beats, { width: 800, height: 800, margin: 32 });
+  // Jump fired at beat tick 2 (playhead was ON tile 4); 40 beats elapsed.
+  const jumps = [{ count: 1, from: beats[4], to: beats[8], fromIndex: 4, toIndex: 8, eventTSec: 5, eventBeatCount: 2 }];
+  const ctx = paint(beats, layout, {
+    currentBeat: beats[4], currentIndex: 4, jumps, beatCount: 42, nowSec: 6,
+  });
+  assert.equal(chordStrokes(ctx).length, 0, 'old jump on its source tile ⇒ no phantom chord');
+  // Sanity: the same jump a few beats after arrival still draws.
+  const fresh = paint(beats, layout, {
+    currentBeat: beats[4], currentIndex: 4, jumps, beatCount: 3, nowSec: 5.05,
+  });
+  assert.equal(chordStrokes(fresh).length, 1, 'fresh jump draws its chord');
 }
 
 { // Monotone decreasing across the schedule.
@@ -186,9 +210,9 @@ function boltStrokes(ctx, width) {
   const layout = LAYOUT_RING(beats, { width: 800, height: 800, margin: 32 });
   const alphas = [];
   for (let b = 0; b < 31; b++) {
-    // Jump fired while the ring position was 4; position walks forward.
-    const jumps = [{ count: 1, from: beats[4], to: beats[8], fromIndex: 4, toIndex: 8, eventTSec: 5 }];
-    const ctx = paint(beats, layout, { currentBeat: null, currentIndex: (4 + b) % 48, jumps, nowSec: 6 });
+    // Jump fired at beat tick 0; the beat-tick counter walks forward.
+    const jumps = [{ count: 1, from: beats[4], to: beats[8], fromIndex: 4, toIndex: 8, eventTSec: 5, eventBeatCount: 0 }];
+    const ctx = paint(beats, layout, { currentBeat: null, currentIndex: (4 + b) % 48, jumps, beatCount: b, nowSec: 6 });
     alphas.push(chordStrokes(ctx)[0].globalAlpha);
   }
   for (let i = 1; i < alphas.length; i++) {
@@ -196,28 +220,29 @@ function boltStrokes(ctx, width) {
   }
 }
 
-{ // Wrap: jump from index 40 of 48, current at 2 ⇒ beatsSince 10 ⇒ 0.469.
+{ // Beat count ≥ eventBeatCount: jump fired 10 ticks ago ⇒ 0.469 (no
+  // wrap arithmetic — decay is pure elapsed beats).
   const beats = Array.from({ length: 48 }, (_, i) => makeBeat(i));
   const layout = LAYOUT_RING(beats, { width: 800, height: 800, margin: 32 });
-  const jumps = [{ count: 1, from: beats[40], to: beats[4], fromIndex: 40, toIndex: 4, eventTSec: 5 }];
-  const ctx = paint(beats, layout, { currentBeat: beats[2], currentIndex: 2, jumps, nowSec: 6 });
+  const jumps = [{ count: 1, from: beats[40], to: beats[4], fromIndex: 40, toIndex: 4, eventTSec: 5, eventBeatCount: 0 }];
+  const ctx = paint(beats, layout, { currentIndex: 2, jumps, beatCount: 10, nowSec: 6 });
   const chords = chordStrokes(ctx);
   const expected = 1 - 0.85 * (10 / MEMORY_BEATS); // 0.46875
-  assert.ok(Math.abs(chords[0].globalAlpha - expected) < 0.002, `wrap alpha ${(10)} ⇒ ${expected} (${chords[0].globalAlpha})`);
+  assert.ok(Math.abs(chords[0].globalAlpha - expected) < 0.002, `10 beats elapsed ⇒ ${expected} (${chords[0].globalAlpha})`);
 }
 
 { // Exactly 0.15 at the 16 boundary + no-arc edge cases + reduced motion.
   const beats = Array.from({ length: 48 }, (_, i) => makeBeat(i));
   const layout = LAYOUT_RING(beats, { width: 800, height: 800, margin: 32 });
-  const jumps = [{ count: 1, from: beats[0], to: beats[16], fromIndex: 0, toIndex: 16, eventTSec: 5 }];
-  const ctx = paint(beats, layout, { currentBeat: beats[16], currentIndex: 16, jumps, nowSec: 6 });
+  const jumps = [{ count: 1, from: beats[0], to: beats[16], fromIndex: 0, toIndex: 16, eventTSec: 5, eventBeatCount: 0 }];
+  const ctx = paint(beats, layout, { currentIndex: 16, jumps, beatCount: 16, nowSec: 6 });
   const chords = chordStrokes(ctx);
   assert.ok(Math.abs(chords[0].globalAlpha - 0.15) < 1e-9, `exactly 0.15 at beatsSince 16 (${chords[0].globalAlpha})`);
 
   // Missing indices (unresolvable jumps): no stroke, no throw.
   const broken = paint(beats, layout, {
     currentBeat: beats[16], currentIndex: 16,
-    jumps: [{ count: 1, from: beats[0], to: beats[4], fromIndex: 200, toIndex: 16, eventTSec: 5 }], nowSec: 6,
+    jumps: [{ count: 1, from: beats[0], to: beats[4], fromIndex: 200, toIndex: 16, eventTSec: 5, eventBeatCount: 0 }], nowSec: 6,
   });
   assert.equal(chordStrokes(broken).length, 0, 'missing tile ⇒ no arc');
 
@@ -239,23 +264,23 @@ function boltStrokes(ctx, width) {
   assert.equal(boltStrokes(ctx, 2.5).length, 0, 'no bolts without a jump');
 }
 
-{ // Two overlapping jumps: each gets its own chord. Alphas follow the beat
-  // schedule, not arrival time: jump 1 (from 0, current 2) ⇒ beatsSince 2;
-  // jump 2 (from 6, current 2) ⇒ beatsSince (2−6+12)%12 = 8 ⇒ dimmer.
+{ // Two overlapping jumps: each gets its own chord. Alphas follow elapsed
+  // beats since each jump's arrival: jump 1 fired at tick 0 (7 ticks ago),
+  // jump 2 at tick 5 (2 ticks ago) ⇒ jump 2 is brighter.
   const beats = Array.from({ length: 12 }, (_, i) => makeBeat(i));
   const layout = LAYOUT_RING(beats, { width: 400, height: 400, margin: 20 });
   const jumps = [
-    { count: 1, from: beats[0], to: beats[6], fromIndex: 0, toIndex: 6, eventTSec: 5 },
-    { count: 2, from: beats[6], to: beats[2], fromIndex: 6, toIndex: 2, eventTSec: 5.2 },
+    { count: 1, from: beats[0], to: beats[6], fromIndex: 0, toIndex: 6, eventTSec: 5, eventBeatCount: 0 },
+    { count: 2, from: beats[6], to: beats[2], fromIndex: 6, toIndex: 2, eventTSec: 5.8, eventBeatCount: 5 },
   ];
-  const ctx = paint(beats, layout, { currentBeat: beats[2], currentIndex: 2, jumps, nowSec: 5.5 });
+  const ctx = paint(beats, layout, { currentIndex: 2, jumps, beatCount: 7, nowSec: 6 });
   const chords = chordStrokes(ctx);
   assert.equal(chords.length, 2, 'two chords, one per jump');
-  const a0 = 1 - 0.85 * (2 / 16);
-  const a1 = 1 - 0.85 * (8 / 16);
+  const a0 = 1 - 0.85 * (7 / 16);
+  const a1 = 1 - 0.85 * (2 / 16);
   assert.ok(Math.abs(chords[0].globalAlpha - a0) < 0.002, `jump 1 alpha == ${a0} (${chords[0].globalAlpha})`);
   assert.ok(Math.abs(chords[1].globalAlpha - a1) < 0.002, `jump 2 alpha == ${a1} (${chords[1].globalAlpha})`);
-  assert.ok(chords[0].globalAlpha > chords[1].globalAlpha, `jump 1 ${chords[0].globalAlpha} brighter than jump 2 ${chords[1].globalAlpha}`);
+  assert.ok(chords[1].globalAlpha > chords[0].globalAlpha, `jump 2 ${chords[1].globalAlpha} brighter than jump 1 ${chords[0].globalAlpha}`);
 }
 
 console.log('arcs.test.mjs OK');
