@@ -401,6 +401,7 @@ export function startTelemetry(options: StartTelemetryOptions): Telemetry {
       counters.crossfadeGainPairs++;
     },
     onPlaybackArmed: (atAudioTime) => {
+      const rearm = armedAtAudioTime !== null;
       armedAtAudioTime = atAudioTime;
       const w = worklet;
       // Re-arm alongside armAt: pause/stop disarmed the tap (arm:false), and
@@ -410,6 +411,7 @@ export function startTelemetry(options: StartTelemetryOptions): Telemetry {
         w.port.postMessage({ type: 'arm', armed: true });
         w.port.postMessage({ type: 'armAt', t: atAudioTime });
       }
+      if (rearm) logEvent('gaptap.rearmed', { atAudioTime });
     },
     onPlaybackPaused: () => {
       const w = worklet;

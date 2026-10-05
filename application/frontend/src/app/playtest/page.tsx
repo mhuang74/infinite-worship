@@ -222,10 +222,13 @@ export default function PlaytestPage() {
           void ctx.resume();
           src.start();
           loopSourceRef.current = src;
-          // Arm the gap tap at the loop's first audible moment — the worklet
-          // otherwise stays armAt=null and records nothing (the loop control
-          // is the decisive C1 fork on the Mac, it must actually measure).
-          telemetryRef.current?.hooks.onPlaybackArmed(ctx.currentTime);
+          // Arm the gap tap at the loop's first AUDIBLE moment: src.start()
+          // plays from file 0, and bruno's ~0.63 s lead-in silence would
+          // otherwise register as a spurious onset gap in the very control
+          // (C1) that decides the Mac platform fork. Offset matches the
+          // engine grid's T0.
+          const LEAD_IN_SEC = 1.0;
+          telemetryRef.current?.hooks.onPlaybackArmed(ctx.currentTime + LEAD_IN_SEC);
           setIsPlaying(true);
           setStatus('loop control playing');
           return;

@@ -217,6 +217,12 @@ reported in the matrix below.
    bruno's file-quiet stretch at 213.7–214.1 s (verified with ffprobe per-frame RMS) — source
    material, not graph dropouts. `AudioContext` state: `running` throughout, zero transitions,
    zero `interrupted` (Linux headless; the macOS watch is the one that matters).
+   Crossfade-seam ruled out by construction: in `scheduleCrossfade` both legs start at the same
+   `fadeStartTime` and overlap for the full 16-beat fade — fade-out ramps 1→1e-4 over
+   `fadeEndTime` while fade-in ramps 1e-4→1 over the first 8 beats, so mid-fade output stays
+   ~0.1× content (≫ the 1e-4 tap threshold); no silent window exists in the overlap. The
+   recurring ~0.4 s gaps track beats ~425–426 (file 213.7–214.1 s), just before the beat-427
+   crossfade trigger — source-material silence, matching the ffprobe evidence, no re-probe needed.
 7. **Memory:** flat/declining on non-zen arms; arm C (zen) +4.1 MB over 12 min with 99 distinct
    bucket values — small but the only positive trend in the matrix; tertiary signal only (bucketed,
    lazily updated), and 4 MB/12 min is nowhere near a dropout mechanism by itself.
