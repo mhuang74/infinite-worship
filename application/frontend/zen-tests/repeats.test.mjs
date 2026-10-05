@@ -60,13 +60,18 @@ const BEATS_12 = Array.from({ length: 12 }, (_, i) => makeBeat(i));
 const LAYOUT_12 = LAYOUT_RING(BEATS_12, { width: 800, height: 800, margin: 32 });
 const BAND_12 = TILE_DIAMETER_FOR(12, LAYOUT_12.radius);
 
-{ // play-growth helper: cap at 15 × 3 = 45.
-  assert.equal(PLAY_GROWTH_FOR(0), 0);
-  assert.equal(PLAY_GROWTH_FOR(1), 3);
-  assert.equal(PLAY_GROWTH_FOR(6), 18);
-  assert.equal(PLAY_GROWTH_FOR(15), 45);
-  assert.equal(PLAY_GROWTH_FOR(50), 45);
-  assert.equal(PLAY_GROWTH_FOR(50), PLAY_MAX_REPS * RIB_LINE_WIDTH);
+{ // play-growth helper: cap at 15 × 3 = 45 in rib mode; 0 in brightness mode
+  // (the dot sits at the base-band midline; no ribs exist under a floating
+  // halo).
+  assert.equal(PLAY_GROWTH_FOR(0, 'ribs'), 0);
+  assert.equal(PLAY_GROWTH_FOR(1, 'ribs'), 3);
+  assert.equal(PLAY_GROWTH_FOR(6, 'ribs'), 18);
+  assert.equal(PLAY_GROWTH_FOR(15, 'ribs'), 45);
+  assert.equal(PLAY_GROWTH_FOR(50, 'ribs'), 45);
+  assert.equal(PLAY_GROWTH_FOR(50, 'ribs'), PLAY_MAX_REPS * RIB_LINE_WIDTH);
+  for (const count of [0, 1, 4, 15, 50]) {
+    assert.equal(PLAY_GROWTH_FOR(count, 'brightness'), 0, `brightness mode: count ${count} ⇒ growth 0`);
+  }
 }
 
 { // Base annulus UNCHANGED by counts: arc at layout.radius, lineWidth = band,
@@ -217,10 +222,12 @@ function decayHalf() {
 }
 
 { // Dot-position coupling: current beat with count 4 ⇒ dot center at
-  // ringRadius − band/2 + min(9, band/2) + growth/2 (growth = min(4,6)·3 = 12).
+  // ringRadius − band/2 + min(9, band/2) + growth/2 (growth = min(4,6)·3 = 12;
+  // rib mode at 800×800/margin 32). Brightness layouts have no rib growth, so
+  // the midline point is mode-independent in position formula only.
   const counts = new Map([[0, 4]]);
   const ctx = paint(BEATS_12, LAYOUT_12, { currentBeat: BEATS_12[0], currentIndex: 0, counts, nowSec: 10 });
-  const growth = PLAY_GROWTH_FOR(4);
+  const growth = PLAY_GROWTH_FOR(4, 'ribs');
   const dot = GLOW_DOT_POSITION(LAYOUT_12, BAND_12, growth, LAYOUT_12.tiles[0]);
   const dotArcs = callsOf(ctx, 'arc').filter((a) => Math.abs(a.args[0] - dot.x) < 1e-9 && Math.abs(a.args[1] - dot.y) < 1e-9);
   assert.ok(dotArcs.length >= 2, 'halo + core arcs at the grown midline point');

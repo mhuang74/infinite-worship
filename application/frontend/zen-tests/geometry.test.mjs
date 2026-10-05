@@ -56,31 +56,36 @@ function makeBeat(id) {
 }
 
 { // v2 radius rule: radius == 0.35 × min(vw, vh) when unclamped. 800×800
-  // margin 32 ⇒ 0.35 × 800 = 280 (spec's approved reference point).
+  // margin 32 ⇒ 0.35 × 800 = 280 (spec's approved reference point); r0 280 ≥
+  // 245 ⇒ rib mode with the full 67px headroom (280 ≤ 400 − 67).
   const layout = LAYOUT_RING([makeBeat(0)], { width: 800, height: 800, margin: 32 });
   assert.ok(Math.abs(layout.radius - 280) < 1e-9, `radius ${layout.radius} == 280 at 800×800`);
+  assert.equal(layout.mode, 'ribs', 'r0 280 ≥ 245 ⇒ rib mode');
 }
 
 { // Min-side rule: same radius for a portrait and a landscape viewport of
   // the same two sides (ring stays circular, centered, no reflow). At 390
-  // min side margin 0 the ceiling binds and caps the fraction
-  // (box/2 − 67 = 195 − 67 = 128 < 0.35 × 390 = 136.5 ⇒ ceiling wins: 128).
+  // min side margin 0: r0 = 0.35 × 390 = 136.5 (brightness mode: r0 < 200 ⇒
+  // headroom = 22 = band ceiling half only), and 136.5 ≤ 195 − 22 = 173 so
+  // the fraction wins: radius 136.5.
   const portrait = LAYOUT_RING(Array.from({ length: 5 }, (_, i) => makeBeat(i)), { width: 390, height: 844, margin: 0 });
   const landscape = LAYOUT_RING(Array.from({ length: 5 }, (_, i) => makeBeat(i)), { width: 844, height: 390, margin: 0 });
   assert.equal(portrait.radius, landscape.radius, 'min-side rule: identical radii');
-  assert.ok(Math.abs(portrait.radius - 128) < 1e-9, `radius == 195 − 67 = 128 (${portrait.radius})`);
+  assert.ok(Math.abs(portrait.radius - 136.5) < 1e-9, `radius == 0.35 × 390 = 136.5 (${portrait.radius})`);
+  assert.equal(portrait.mode, 'brightness', 'r0 136.5 < 200 ⇒ brightness mode');
   assert.equal(portrait.center.x, 390 / 2);
   assert.equal(portrait.center.y, 844 / 2);
   assert.equal(landscape.center.x, 844 / 2);
   assert.equal(landscape.center.y, 390 / 2);
-  assert.ok(portrait.radius + 67 <= 390 / 2, 'ring + headroom stays inside the min side');
+  assert.ok(portrait.radius + 22 <= 390 / 2, 'ring + brightness-mode headroom stays inside the min side');
 }
 
 { // Precedence: ceiling wins over floor, floor wins over fraction. At
-  // 100×100 margin 0: box/2 − 67 = 50 − 67 = −17 (negative) < 64 floor ⇒
-  // radius 10 (the degenerate guard wins; the ceiling went negative).
+  // 100×100 margin 0: r0 = max(35, 64) = 64 (floor wins over fraction),
+  // brightness-mode headroom 22 ⇒ ceiling 50 − 22 = 28 < 64 ⇒ radius 28.
   const tiny = LAYOUT_RING([makeBeat(0)], { width: 100, height: 100, margin: 0 });
-  assert.ok(Math.abs(tiny.radius - 10) < 1e-9, `ceiling beats floor: radius ${tiny.radius} == 10`);
+  assert.ok(Math.abs(tiny.radius - 28) < 1e-9, `ceiling beats floor: radius ${tiny.radius} == 28`);
+  assert.equal(tiny.mode, 'brightness');
 }
 
 { // Realistic beat counts (a 4-minute song ≈ 450-617 beats): band thickness
