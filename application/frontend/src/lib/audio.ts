@@ -17,11 +17,17 @@ export class AudioEngine {
   private nextBeatTime = 0;
   private currentBeatIndex = 0;
   private isPlaying = false;
-  private lookaheadSeconds = 0.1; // 100ms lookahead
+  private lookaheadSeconds = 2.0; // 2s lookahead: survives main-thread stalls up to 2s
   private beatsSinceLastJump = 0;
   private totalJumps = 0;
   private mainGain: GainNode;
   private hasPlaybackStarted = false;
+  private epochGain: GainNode;
+  private scheduleTimer: number | undefined;
+  private watchdogTimer: number | undefined;
+  private uiTimers = new Map<number, number>();
+  private nextUiSeq = 0;
+  private pendingJump: JumpEvent | undefined;
 
   constructor(audioContext: AudioContext, audioBuffer: AudioBuffer, beats: Beat[], onBeatChange: (beat: Beat) => void, onJump: (jump: JumpEvent) => void, onPlaybackStarted?: () => void) {
     this.audioContext = audioContext;
@@ -32,6 +38,55 @@ export class AudioEngine {
     this.onPlaybackStarted = onPlaybackStarted || null;
     this.mainGain = this.audioContext.createGain();
     this.mainGain.connect(this.audioContext.destination);
+    this.epochGain = this.audioContext.createGain();
+    this.epochGain.connect(this.mainGain);
+  }
+
+  /**
+   * Kill ALL audio already queued on the audio clock, instantly, by cutting the
+   * generation's bus. Disconnected sources keep "playing" into nothing and
+   * self-GC when their scheduled end time passes. Called on every control-plane
+   * action (pause/stop/restart/seek/jump/play-from-idle) so no stale audio from
+   * the previous generation survives the action.
+   */
+  private newEpoch(): void {
+    this.epochGain.disconnect();
+    this.epochGain = this.audioContext.createGain();
+    this.epochGain.connect(this.mainGain);
+  }
+
+  /**
+   * Defer a UI callback to an audio-clock time so visuals pulse when the beat
+   * is heard, not when it was scheduled. Fires immediately when the tab is
+   * hidden (background timers are clamped to ≥1s and the visuals are invisible
+   * anyway — state stays roughly current on return).
+   */
+  private scheduleUiDispatch(when: number, cb: () => void): void {
+    const delay = Math.max(0, (when - this.audioContext.currentTime) * 1000);
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+      cb(); // clamped timers would lag ≥1s; state is invisible when hidden anyway
+      return;
+    }
+    const seq = this.nextUiSeq++;
+    this.uiTimers.set(seq, window.setTimeout(() => { this.uiTimers.delete(seq); cb(); }, delay));
+  }
+
+  /** Clear every pending scheduler/watchdog/UI timer. */
+  private cancelTimers(): void {
+    if (this.scheduleTimer !== undefined) {
+      clearTimeout(this.scheduleTimer);
+      this.scheduleTimer = undefined;
+    }
+    if (this.watchdogTimer !== undefined) {
+      clearTimeout(this.watchdogTimer);
+      this.watchdogTimer = undefined;
+    }
+    this.uiTimers.forEach(t => clearTimeout(t));
+    this.uiTimers.clear();
+    // A decided-but-undelivered jump must not fire into the next epoch: its
+    // landing beat was just killed (the dispatch timer above is cleared with
+    // it), so drop the carry.
+    this.pendingJump = undefined;
   }
 
   public setJumpProbability(probability: number) {
@@ -42,17 +97,35 @@ export class AudioEngine {
     if (this.isPlaying) {
       return;
     }
+    this.cancelTimers();
+    this.newEpoch();
     this.isPlaying = true;
     this.nextBeatTime = this.audioContext.currentTime;
     this.scheduleNextBeat();
   }
 
   public pause() {
+    this.cancelTimers();
+    this.newEpoch();
+    // Rewind to the beat that was audible when the user hit pause. The
+    // scheduling loop already queued beats ~lookaheadSeconds ahead, so
+    // currentBeatIndex points ~2s past what was sounding; resuming from there
+    // would skip that content.
+    while (
+      this.currentBeatIndex > 0 &&
+      this.nextBeatTime - this.beats[this.currentBeatIndex].duration >= this.audioContext.currentTime
+    ) {
+      this.nextBeatTime -= this.beats[this.currentBeatIndex].duration;
+      this.currentBeatIndex--;
+    }
+    this.nextBeatTime = Math.max(this.nextBeatTime, this.audioContext.currentTime);
     this.isPlaying = false;
     this.hasPlaybackStarted = false;
   }
 
   public stop() {
+    this.cancelTimers();
+    this.newEpoch();
     this.isPlaying = false;
     this.currentBeatIndex = 0;
     this.hasPlaybackStarted = false;
@@ -68,11 +141,20 @@ export class AudioEngine {
   }
 
   public seekToTime(time: number) {
+    this.cancelTimers();
+    this.newEpoch();
+
     // Find the beat that contains the target time
     const targetBeatIndex = this.beats.findIndex(beat => beat.start <= time && time < beat.start + beat.duration);
 
     if (targetBeatIndex === -1) {
       console.warn(`No beat found for time ${time}`);
+      // Timers were already cancelled and the epoch cut above; a failed lookup
+      // must not strand a playing engine in silence — resume scheduling from
+      // where playback was.
+      if (this.isPlaying) {
+        this.scheduleNextBeat();
+      }
       return;
     }
 
@@ -99,6 +181,8 @@ export class AudioEngine {
   public jumpToBeat(beat: Beat): void {
     const targetIndex = this.beats.indexOf(beat);
     if (targetIndex === -1 || !this.isPlaying) return;
+    this.cancelTimers();
+    this.newEpoch();
     const from = this.beats[this.currentBeatIndex];
     this.currentBeatIndex = targetIndex;
     this.nextBeatTime = this.audioContext.currentTime;
@@ -113,12 +197,53 @@ export class AudioEngine {
     return this.audioBuffer.duration;
   }
 
+  /** Cap on beats scheduled per wake; protects against pathological beat arrays with near-zero durations. */
+  private static readonly MAX_BEATS_PER_WAKE = 64;
+
+  /** Fell off the beat array without a crossfade: stop and arm the restart watchdog. */
+  private armEndOfArrayWatchdog(): void {
+    this.isPlaying = false;
+    this.watchdogTimer = window.setTimeout(() => this.restart(), 3000);
+  }
+
   private scheduleNextBeat() {
     if (!this.isPlaying) {
       return;
     }
 
+    // After any main-thread stall longer than the lookahead: skip forward to
+    // the first beat whose start time is still in the future. Skipped beats are
+    // silent (they were "played" during the stall in wall-clock terms) — do NOT
+    // backfill them: backfilling means source.start(pastTime), the exact glitch
+    // this redesign eliminates.
+    while (this.nextBeatTime < this.audioContext.currentTime) {
+      // The walk must honor the crossfade boundary exactly like the normal
+      // loop: the fade times are recomputed from the (future) nextBeatTime, so
+      // the wrap stays on-grid instead of running off the array.
+      if (this.currentBeatIndex === this.beats.length - 16) {
+        this.scheduleCrossfade();
+        return;
+      }
+
+      const skipped = this.beats[this.currentBeatIndex];
+      this.nextBeatTime += skipped.duration;
+      this.currentBeatIndex++;
+      // no playBeat, no onBeatChange: not audible, not visible
+      if (this.currentBeatIndex >= this.beats.length) {
+        // Ran off the array end during the skip walk (only reachable if the
+        // boundary check above was bypassed by a jump landing past it).
+        this.armEndOfArrayWatchdog();
+        return;
+      }
+    }
+
+    let scheduled = 0;
     while (this.nextBeatTime < this.audioContext.currentTime + this.lookaheadSeconds) {
+      if (scheduled >= AudioEngine.MAX_BEATS_PER_WAKE) {
+        // Pathological beat arrays: continue draining the lookahead next tick.
+        break;
+      }
+
       // Check if it's time to start the crossfade
       if (this.currentBeatIndex === this.beats.length - 16) {
         this.scheduleCrossfade();
@@ -127,7 +252,8 @@ export class AudioEngine {
       }
 
       const currentBeat = this.beats[this.currentBeatIndex];
-      this.onBeatChange(currentBeat);
+      // UI fires when the beat is heard, not when it is scheduled.
+      this.scheduleUiDispatch(this.nextBeatTime, () => this.onBeatChange(currentBeat));
 
       // Trigger playback started callback on first beat
       if (!this.hasPlaybackStarted && this.onPlaybackStarted) {
@@ -135,14 +261,17 @@ export class AudioEngine {
         this.hasPlaybackStarted = true;
       }
 
-      this.playBeat(this.currentBeatIndex, this.nextBeatTime, this.mainGain);
+      this.playBeat(this.currentBeatIndex, this.nextBeatTime, this.epochGain);
       this.beatsSinceLastJump++;
+      scheduled++;
 
-      console.log(
-        `Adding beat ${this.currentBeatIndex} to buffer at ${this.nextBeatTime.toFixed(
-          2
-        )}s. Nominal time: ${currentBeat.start.toFixed(2)}s`
-      );
+      if (process.env.NODE_ENV !== 'production') {
+        console.log(
+          `Adding beat ${this.currentBeatIndex} to buffer at ${this.nextBeatTime.toFixed(
+            2
+          )}s. Nominal time: ${currentBeat.start.toFixed(2)}s`
+        );
+      }
 
       const hasJumpCandidates = currentBeat.jump_candidates && currentBeat.jump_candidates.length > 0;
       const shouldJump = hasJumpCandidates && Math.random() < this.jumpProbability && this.beatsSinceLastJump >= 8;
@@ -154,7 +283,9 @@ export class AudioEngine {
           nextBeat = jumpCandidate;
           this.beatsSinceLastJump = 0;
           this.totalJumps++;
-          this.onJump({ count: this.totalJumps, from: currentBeat, to: jumpCandidate });
+          // The arc/glow fires when the landing beat sounds, so carry the
+          // event to the next loop iteration (the landing beat's dispatch).
+          this.pendingJump = { count: this.totalJumps, from: currentBeat, to: jumpCandidate };
         } else {
           nextBeat = this.beats[this.currentBeatIndex + 1];
         }
@@ -165,27 +296,36 @@ export class AudioEngine {
       if (nextBeat) {
         this.nextBeatTime += currentBeat.duration;
         this.currentBeatIndex = this.beats.indexOf(nextBeat);
+        if (this.pendingJump) {
+          const jump = this.pendingJump;
+          this.pendingJump = undefined;
+          this.scheduleUiDispatch(this.nextBeatTime, () => this.onJump(jump));
+        }
       } else {
         // This part should ideally not be reached due to the crossfade
-        this.isPlaying = false;
-        setTimeout(() => this.restart(), 3000);
+        this.armEndOfArrayWatchdog();
         break;
       }
     }
 
-    setTimeout(() => this.scheduleNextBeat(), 25);
+    this.scheduleTimer = window.setTimeout(() => this.scheduleNextBeat(), 25);
   }
 
   private scheduleCrossfade() {
-    console.log("Starting crossfade...");
-    const fadeStartTime = this.nextBeatTime;
+    if (process.env.NODE_ENV !== 'production') {
+      console.log("Starting crossfade...");
+    }
+    // Never schedule the fade into the past: the skip-forward walk (Part 1b)
+    // can hand off while nextBeatTime is still behind the audio clock; the
+    // fade times recompute from here, so clamp to the audible present.
+    const fadeStartTime = Math.max(this.nextBeatTime, this.audioContext.currentTime);
     let fadeTime = fadeStartTime;
 
     // 1. Create GainNodes for fade-out and fade-in
     const fadeOutGain = this.audioContext.createGain();
-    fadeOutGain.connect(this.mainGain);
+    fadeOutGain.connect(this.epochGain);
     const fadeInGain = this.audioContext.createGain();
-    fadeInGain.connect(this.mainGain);
+    fadeInGain.connect(this.epochGain);
 
     // 2. Schedule the final 16 beats to fade out
     for (let i = 0; i < 16; i++) {
@@ -204,7 +344,7 @@ export class AudioEngine {
     let fadeInPlayTime = fadeStartTime;
     for (let i = 0; i < 16; i++) {
       const beat = this.beats[i];
-      this.onBeatChange(beat);
+      this.scheduleUiDispatch(fadeInPlayTime, () => this.onBeatChange(beat));
       this.playBeat(i, fadeInPlayTime, fadeInGain);
       fadeInPlayTime += beat.duration;
     }
@@ -219,10 +359,25 @@ export class AudioEngine {
     this.currentBeatIndex = 16;
     this.nextBeatTime = fadeInPlayTime; // Use the end time of the 16-beat fade-in
 
-    // 7. Resume normal scheduling after the crossfade duration
-    setTimeout(() => {
+    // A jump that lands at the crossfade boundary: its landing beat is a
+    // fade-in beat, so deliver the carried event on that beat's sound time.
+    if (this.pendingJump) {
+      const jump = this.pendingJump;
+      this.pendingJump = undefined;
+      this.scheduleUiDispatch(fadeStartTime, () => this.onJump(jump));
+    }
+
+    // 7. Resume normal scheduling a full lookahead before the fade-in's final
+    // beat so the resumed loop re-enters while beats 16+ are still schedulable.
+    // Beats 0-15 of the fade-in were already scheduled here (currentBeatIndex
+    // is left at 16), so the resumed loop starts at beat 16 and never
+    // double-schedules. If less than 25ms remains before that deadline, a 25ms
+    // floor would fire late (past the deadline) and punch a silent hole in the
+    // fade-in region — re-enter immediately instead.
+    const resumeDelayMs = (fadeInPlayTime - this.lookaheadSeconds - this.audioContext.currentTime) * 1000;
+    this.scheduleTimer = window.setTimeout(() => {
       this.scheduleNextBeat();
-    }, (fadeInPlayTime - this.audioContext.currentTime) * 1000);
+    }, resumeDelayMs <= 0 ? 0 : Math.max(25, resumeDelayMs));
   }
 
   private playBeat(beatIndex: number, time: number, destination: AudioNode) {
@@ -231,6 +386,21 @@ export class AudioEngine {
     source.buffer = this.audioBuffer;
     source.connect(destination);
     source.start(time, beat.start, beat.duration);
+
+    // Dev-only instrumentation: lead time (audio-clock seconds) of every
+    // scheduled beat, in a 512-entry ring on window.__iwSchedLog. Same data
+    // shape as the 2026-10-06 incident probe, so the external CDP watcher
+    // consumes it unchanged. placement: playBeat holds this.audioContext (a
+    // prototype-patch of AudioBufferSourceNode.start could not) and sees
+    // normal + crossfade beats uniformly.
+    if (process.env.NODE_ENV !== 'production') {
+      const ahead = time - this.audioContext.currentTime;
+      const w = window as typeof window & { __iwSchedLog?: number[] };
+      const log = (w.__iwSchedLog ??= []);
+      log.push(ahead);
+      if (log.length > 512) log.shift();
+      if (ahead < 0) console.warn(`late schedule: ${(-ahead * 1000).toFixed(1)}ms`);
+    }
   }
 
   private getJumpCandidate(beat: Beat): Beat | null {
