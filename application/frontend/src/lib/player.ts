@@ -28,8 +28,19 @@ export async function loadSongForPlayback(song: Song): Promise<LoadedSong> {
     throw new Error(`Song "${song.title}" has no media URLs (status: ${song.status})`);
   }
 
+  // .catch BEFORE the Promise.all: a rejected lyrics fetch (network reset,
+  // CORS, blocked request) must not reject the shared Promise.all and fail
+  // the whole load — lyrics are an enhancement (issue #60). HTTP-level
+  // failures (404 etc.) are handled below via lyricsResponse.ok.
+  const lyricsFetch: Promise<Response | null> = song.lyrics_url
+    ? fetch(song.lyrics_url).catch((err) => {
+        console.error('LRC fetch failed; continuing without lyrics:', err);
+        return null;
+      })
+    : Promise.resolve(null);
+
   const [lyricsResponse, analysisResponse, audioResponse] = await Promise.all([
-    song.lyrics_url ? fetch(song.lyrics_url) : Promise.resolve(null),
+    lyricsFetch,
     fetch(song.analysis_url),
     fetch(song.audio_url),
   ] as const);
