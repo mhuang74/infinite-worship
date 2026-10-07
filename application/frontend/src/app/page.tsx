@@ -586,7 +586,7 @@ export default function HomePage() {
 
               <PlaybackControls
                 isPlaying={isPlaying}
-                isPlaybackPending={!isPlayerReady || isPlaybackPending}
+                isPlaybackPending={isPlaybackPending}
                 jumpProbability={jumpProbability}
                 currentBeatId={currentBeat?.id ?? null}
                 onPlayPause={handlePlayPause}

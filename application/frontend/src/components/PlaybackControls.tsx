@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from 'react';
 
 interface PlaybackControlsProps {
   isPlaying: boolean;
+  /** True only while the engine is starting (play clicked / autoplay); page-level song loading is shown elsewhere. */
   isPlaybackPending?: boolean;
   jumpProbability: number;
   /** Current beat id — drives the FAB's beat-synced glow (spec §4). */
