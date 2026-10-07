@@ -336,6 +336,7 @@ function CatalogPrototypePage() {
             : s
         )
       );
+      setPending(false);
     }, 5000);
   };
 
