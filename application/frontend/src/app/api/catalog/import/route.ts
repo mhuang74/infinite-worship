@@ -10,6 +10,7 @@ import {
   importSongId,
   insertImportRow,
   markImportFailed,
+  resetForRetry,
   resolveRecording,
   type ImportRequest,
   type ImportResponse,
@@ -24,17 +25,23 @@ export const dynamic = 'force-dynamic';
  * (or the dedupe fast path: row `ready`, no SQS, when the hash-keyed
  * Analysis already exists — re-import is free, per CONTEXT.md).
  *
- * Status-aware responses (#54): 202 { song_id, status: 'pending' } for a
- * fresh import; 200 { song_id, status: <current> } for an existing row
- * (re-pick while analyzing is a no-op); 404 when the content_hash does not
- * resolve to a qualifying recording (the browse surface never offered it).
+ * Status-aware responses (#54), by existing-row state:
+ * - no row: copy → insert → (enqueue | ready) → 202 pending / 200 ready.
+ * - `ready`: 200 ready, pure no-op (nothing left to do).
+ * - `pending`/`processing`: row + IW copies already exist (copy-then-insert
+ *   guarantees it) — skip the copy, re-enqueue (covers the enqueue-failed
+ *   edge; a duplicate analysis run on the same hash is idempotent), 202.
+ * - `failed`: the user-visible retry — re-copy (SOW side may have healed),
+ *   reset the row to `pending`, enqueue; copy failure re-marks `failed` with
+ *   the fresh reason and answers 200 failed (status-aware, #54: the row is
+ *   the state surface; the card renders it).
+ *
+ * 404 when the content_hash does not resolve to a qualifying recording
+ * (the browse surface never offered it, or curation dropped it since).
  *
  * Ordering (#55 decision 9): existing-row check → copy → insert → enqueue.
- * A failed copy is a plain 4xx/502 with no row and no SQS message — the SOW
- * object is missing at copy time → deterministic `failed` row with reason,
- * no retry loop. Enqueue failure after insert: no rollback machinery — the
- * route returns the row's status and the finalize-style re-enqueue path
- * applies on a later re-pick (same edge as the upload flow).
+ * A copy is never followed by a `ready` row without its own IW copies
+ * (fast path copies first, insert second — playback must not 404).
  *
  * Env: SOW_CATALOG_ENABLED (server-side flag, per request), the
  * SOW_CATALOG_* / SOW_IMPORT_R2_* credentials — see src/lib/sowImport.ts.
@@ -65,13 +72,17 @@ export async function POST(request: Request) {
     );
   }
 
-  // Idempotent re-pick: an existing row (any status) returns 200 with its
-  // current status — the CTA states key off this (#54 Q6).
+  // Re-pick semantics (route doc): `ready` rows are a pure no-op — 200 and
+  // done. `pending`/`processing`/`failed` fall through to the main flow:
+  // pending/processing skip the copy (copy-then-insert already ran; the
+  // enqueue-failed edge gets a fresh message) and re-enqueue; failed rows
+  // re-copy (SOW may have healed) then reset + re-enqueue — the user-visible
+  // retry.
+  let existingStatus: string | null = null;
   try {
-    const existing = await existingImportStatus(contentHash);
-    if (existing) {
-      const current = existing as ImportResponse['status'];
-      const response: ImportResponse = { song_id: importSongId(contentHash), status: current };
+    existingStatus = await existingImportStatus(contentHash);
+    if (existingStatus === 'ready') {
+      const response: ImportResponse = { song_id: importSongId(contentHash), status: 'ready' };
       return NextResponse.json(response, { status: 200 });
     }
   } catch (err) {
@@ -94,24 +105,30 @@ export async function POST(request: Request) {
   }
 
   // Copy-then-insert (#55 decision 9). A missing SOW source object fails the
-  // copy here — deterministic, no retry loop: mark the row `failed` with the
-  // reason so the Catalog card shows it, and enqueue nothing.
-  try {
-    await copyRecording(recording);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(`import ${contentHash}: R2 CopyObject failed`, err);
+  // copy here — deterministic, no retry loop inside the request: mark the
+  // row `failed` with the reason (fresh or pre-existing row alike) and
+  // answer 200 failed — status-aware (#54): the row is the state surface,
+  // the card renders the failed chip + reason; 502 with a half-written state
+  // would tell the client nothing actionable.
+  const skipCopy = existingStatus === 'pending' || existingStatus === 'processing';
+  if (!skipCopy) {
     try {
-      await insertImportRow(recording, 'pending');
-      await markImportFailed(contentHash, `Import copy failed: ${message}`);
-      const response: ImportResponse = {
-        song_id: importSongId(contentHash),
-        status: 'failed',
-      };
-      return NextResponse.json(response, { status: 502 });
-    } catch (dbErr) {
-      console.error(`import ${contentHash}: failed-row write also failed`, dbErr);
-      return NextResponse.json({ error: 'Import copy failed' }, { status: 502 });
+      await copyRecording(recording);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`import ${contentHash}: R2 CopyObject failed`, err);
+      try {
+        await insertImportRow(recording, 'pending');
+        await markImportFailed(contentHash, `Import copy failed: ${message}`);
+        const response: ImportResponse = {
+          song_id: importSongId(contentHash),
+          status: 'failed',
+        };
+        return NextResponse.json(response, { status: 200 });
+      } catch (dbErr) {
+        console.error(`import ${contentHash}: failed-row write also failed`, dbErr);
+        return NextResponse.json({ error: 'Import copy failed' }, { status: 502 });
+      }
     }
   }
 
@@ -133,6 +150,12 @@ export async function POST(request: Request) {
       return NextResponse.json(response, { status: 200 });
     }
 
+    // Recovery landing: a `failed` row that made it past the re-copy gets
+    // reset to `pending` (reason cleared) before the fresh enqueue. For
+    // `pending`/`processing` the row is already correct — re-enqueue only.
+    if (existingStatus === 'failed') {
+      await resetForRetry(contentHash);
+    }
     await insertImportRow(recording, 'pending');
     await enqueueAnalysis(importSongId(contentHash));
     const response: ImportResponse = {

@@ -2,12 +2,11 @@ import { Pool } from 'pg';
 import {
   S3Client,
   CopyObjectCommand,
-  HeadObjectCommand,
-  NoSuchKey,
-  NotFound,
-  S3ServiceException,
 } from '@aws-sdk/client-s3';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
+import { SOW_CATALOG_BPM_BAND } from '@/lib/catalogBand';
+import { MAX_DURATION_SECONDS } from '@/lib/sowCatalog';
+import { getR2Config, r2HeadObject } from '@/lib/r2';
 
 /**
  * Server-only mechanics of the SOW Song Catalog import (#55 resolution, #59):
@@ -66,6 +65,12 @@ const IMPORT_SONG_ID_PREFIX = 'imp_';
 // created_at then content_hash. DISTINCT ON keeps one row per catalog song;
 // here the card's content_hash pins the song, so this asserts the same
 // recording the browse query would have picked for it.
+//
+// The curation gates (BPM band + duration ceiling) are NOT optional here:
+// the route is the authority and the client-supplied hash is untrusted, so
+// without them an out-of-band or >MAX_SONG_SECONDS recording could be
+// imported out-of-band and the worker would then reject it (#50's whole
+// point). Same predicates, same parameter order as CATALOG_SQL.
 const PICK_SQL = `
   SELECT DISTINCT ON (s.id)
     s.id AS sow_song_id, s.title,
@@ -77,6 +82,9 @@ const PICK_SQL = `
     AND r.visibility_status IN ('published', 'review')
     AND r.r2_audio_url IS NOT NULL
     AND r.lrc_status = 'completed'
+    AND r.tempo_bpm BETWEEN $2 AND $3
+    AND r.duration_seconds IS NOT NULL
+    AND r.duration_seconds <= $4
     AND r.content_hash = $1
   ORDER BY s.id,
     (r.visibility_status = 'published') DESC,
@@ -177,24 +185,13 @@ export type ResolvedRecording = SowRecording | null;
  * import refuses — the browse surface never offered it.
  */
 export async function resolveRecording(contentHash: string): Promise<ResolvedRecording> {
-  const result = await getSowImportDb().query<SowRecording>(PICK_SQL, [contentHash]);
+  const result = await getSowImportDb().query<SowRecording>(PICK_SQL, [
+    contentHash,
+    SOW_CATALOG_BPM_BAND.min,
+    SOW_CATALOG_BPM_BAND.max,
+    MAX_DURATION_SECONDS,
+  ]);
   return result.rows[0] ?? null;
-}
-
-/** HEAD an object in the IW bucket with the dual-scope client; null on 404. */
-async function headObject(key: string): Promise<boolean> {
-  try {
-    await getImportS3().send(new HeadObjectCommand({ Bucket: importBucket(), Key: key }));
-    return true;
-  } catch (err) {
-    if (err instanceof NoSuchKey || err instanceof NotFound) {
-      return false;
-    }
-    if (err instanceof S3ServiceException && err.$metadata.httpStatusCode === 404) {
-      return false;
-    }
-    throw err;
-  }
 }
 
 /**
@@ -203,9 +200,14 @@ async function headObject(key: string): Promise<boolean> {
  * insert the row `ready`, skip SQS entirely. The row still gets its own
  * audio copy at `media/<song_id>` (#55 decision 7: one layout, no
  * existence dance on media keys).
+ *
+ * Uses the app's own R2 credentials (r2HeadObject / R2_*), NOT the
+ * dual-scope token: that token's Write on infinite-worship-media is
+ * probed (#57), but its Read on the IW bucket is not — HEAD with it could
+ * 403 in prod and the import would silently degrade to the slow path.
  */
 export function hasAnalysisFor(contentHash: string): Promise<boolean> {
-  return headObject(`analysis/${contentHash}.json`);
+  return r2HeadObject(getR2Config().s3, `analysis/${contentHash}.json`).then((head) => head !== null);
 }
 
 /**
@@ -220,6 +222,13 @@ export async function copyRecording(recording: SowRecording): Promise<void> {
   const songId = importSongId(recording.content_hash);
   const s3 = getImportS3();
   const bucket = importBucket();
+  // Source bucket comes from env (the catalog-read client's bucket, which
+  // the dual-scope token provably has Read on — #57 probes). Never a
+  // literal: dev/MinIO and staging→prod swap must both work.
+  const sourceBucket = process.env.SOW_CATALOG_R2_BUCKET;
+  if (!sourceBucket) {
+    throw new Error('Missing required env var: SOW_CATALOG_R2_BUCKET');
+  }
   const copies = [
     { key: `${recording.hash_prefix}/audio.mp3`, destination: `media/${songId}` },
     { key: `${recording.hash_prefix}/lyrics.lrc`, destination: `media/${songId}.lrc` },
@@ -229,7 +238,7 @@ export async function copyRecording(recording: SowRecording): Promise<void> {
       new CopyObjectCommand({
         Bucket: bucket,
         Key: copy.destination,
-        CopySource: `stream-of-worship/${copy.key}`,
+        CopySource: `${sourceBucket}/${copy.key}`,
       }),
     );
   }
@@ -287,7 +296,7 @@ export async function insertImportRow(
   );
 }
 
-/** Current status of an existing import row, if any (idempotent re-pick). */
+/** Current status of an existing import row, if any (re-pick recovery). */
 export async function existingImportStatus(contentHash: string): Promise<string | null> {
   const result = await getIwDb().query<{ status: string }>(
     'SELECT status FROM songs WHERE sow_recording_id = $1',
@@ -297,11 +306,25 @@ export async function existingImportStatus(contentHash: string): Promise<string 
 }
 
 /**
- * Deterministic copy-failure landing (#59): the SOW source object was missing
- * (or the copy was refused) at import time — the row goes straight to
- * `failed` with the reason so the Catalog card shows it; no SQS enqueue, no
- * retry loop (a retry would re-run a failing copy; a later re-pick after the
- * SOW side heals is the user-visible retry).
+ * Put a stuck row back in the worker's hands (re-pick recovery, #59):
+ * `pending` whose enqueue failed (endless Analyzing) or `failed` after the
+ * SOW side healed (the user-visible retry) — reset to `pending`, clear the
+ * stale reason, and let the route re-enqueue. `ready` rows never come here.
+ */
+export async function resetForRetry(contentHash: string): Promise<void> {
+  await getIwDb().query(
+    `UPDATE songs SET status = 'pending', failure_reason = NULL WHERE sow_recording_id = $1`,
+    [contentHash],
+  );
+}
+
+/**
+ * Copy-failure landing (#59): the SOW source object was missing (or the
+ * copy was refused) at import time — the row goes straight to `failed` with
+ * the reason so the Catalog card shows it; no SQS enqueue, no automatic
+ * retry loop (a retry would re-run a failing copy). The re-pick recovery
+ * path (route: a later Import press on a `failed` card re-runs copy +
+ * enqueue) is the user-visible retry once the SOW side heals.
  */
 export async function markImportFailed(contentHash: string, reason: string): Promise<void> {
   await getIwDb().query(

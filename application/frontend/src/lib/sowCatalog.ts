@@ -74,6 +74,7 @@ export function isSowCatalogEnabled(): boolean {
 
 /** Worker MAX_SONG_SECONDS (#50): never offer an import that would fail. */
 const MAX_DURATION_SECONDS = 600;
+export { MAX_DURATION_SECONDS };
 
 // The curation rule (#50): SOW's own playability gate + curated synced lyrics
 // + the BPM band (SOW_CATALOG_BPM_BAND in catalogBand.ts, calibrated against

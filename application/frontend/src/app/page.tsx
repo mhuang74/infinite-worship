@@ -479,6 +479,9 @@ export default function HomePage() {
           setSelectedSongName(null);
           setPollingSongId(result.song_id);
         }
+        // Refresh on every outcome: 200 ready adds the playable row, but a
+        // 200 failed must also re-render the card as the failed chip with
+        // its failure_reason (#53) — the row is the state surface.
         await loadSongs({ silent: true });
       } catch (err) {
         console.error('Catalog import failed:', err);

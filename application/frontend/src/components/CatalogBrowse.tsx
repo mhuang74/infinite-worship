@@ -268,7 +268,9 @@ const CatalogBrowse: React.FC<CatalogBrowseProps> = ({
                     )}
                     {state.kind === 'failed' && (
                       <div className="text-xs text-error">
-                        Analysis failed{state.song.failure_reason ? `: ${state.song.failure_reason}` : '.'}
+                        {state.song.failure_reason?.startsWith('Import copy failed')
+                          ? state.song.failure_reason
+                          : `Analysis failed${state.song.failure_reason ? `: ${state.song.failure_reason}` : '.'}`}
                       </div>
                     )}
                   </div>
