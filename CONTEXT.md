@@ -16,12 +16,16 @@ _Avoid_: SOW library, catalog DB
 The act of selecting a song from the SOW Song Catalog, making it a Song from that source. Importing the same recording twice is free: the Analysis already exists.
 _Avoid_: SOW song (as a noun), catalog song (as a noun)
 
+**Imported Song**:
+A Song created by an Import. Re-importing the same recording is free: the Analysis already exists.
+_Avoid_: SOW song (as a noun), catalog song (as a noun)
+
 **Song**:
 An audio track plus its metadata (title, duration, status), from upload or import. Immutable once ready.
 _Avoid_: track, file, upload (as a noun)
 
 **Song ID**:
-The identity of a Song. Identical audio arriving the same way is the same Song; identical audio arriving through different sources is two Songs that share their audio-derived artifacts.
+The identity of a Song. Identical audio arriving the same way is the same Song; identical audio arriving through different sources is two Songs that share their audio-derived artifacts. Both forms embed the audio's Content Hash.
 _Avoid_: upload id, file hash
 
 **Analysis**:
