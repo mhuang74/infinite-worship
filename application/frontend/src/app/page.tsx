@@ -14,7 +14,7 @@ import CatalogBrowse from '@/components/CatalogBrowse';
 import type { CatalogSong } from '@/components/CatalogBrowse';
 import { AudioEngine, createAudioBuffer } from '@/lib/audio';
 import { loadSongForPlayback } from '@/lib/player';
-import { isPlayable } from '@/lib/upload';
+import { importSong, isPlayable } from '@/lib/upload';
 import { formatClock } from '@/lib/format';
 import type { Beat, Song, JumpEvent } from '@/lib/types';
 
@@ -94,6 +94,8 @@ export default function HomePage() {
   const [beatPlayCounts, setBeatPlayCounts] = useState<Map<number, number>>(new Map());
 
   const [pollingSongId, setPollingSongId] = useState<string | null>(null);
+  // Catalog card whose import POST is in flight (CTA spinner, #59).
+  const [importingHash, setImportingHash] = useState<string | null>(null);
 
   // Song id whose Analysis + audio are already loaded into the player, so a
   // library refresh does not refetch them (they are immutable once ready).
@@ -459,13 +461,34 @@ export default function HomePage() {
     setSelectedSongName(title);
   };
 
-  // Catalog import (map #48; the import route itself is ticket #59): select
-  // the catalog song's recording for import. Until that route exists the CTA
-  // is a no-op stub — browse works end-to-end without it.
-  const handleCatalogImport = useCallback((_catalogSong: CatalogSong) => {
-    // TODO(#59): POST /api/catalog/import { content_hash } → pending row +
-    // SQS; then setPollingSongId like the upload flow.
-  }, []);
+  // Catalog import (map #48, ticket #59): POST /api/catalog/import with the
+  // card's content hash — the BFF copies audio + LRC, inserts the row
+  // (pending, or ready via the dedupe fast path), and enqueues analysis.
+  // On accepted/pending, poll the library until the Imported Song reaches a
+  // terminal status (same loop as the upload flow); the returned status
+  // already covers instant-ready (200) and existing-row (200) cases.
+  const handleCatalogImport = useCallback(
+    async (catalogSong: CatalogSong) => {
+      setError('');
+      setImportingHash(catalogSong.content_hash);
+      try {
+        const result = await importSong(catalogSong.content_hash);
+        if (result.status === 'pending') {
+          selectedSongIdRef.current = null;
+          setSelectedSongId(null);
+          setSelectedSongName(null);
+          setPollingSongId(result.song_id);
+        }
+        await loadSongs({ silent: true });
+      } catch (err) {
+        console.error('Catalog import failed:', err);
+        setError(err instanceof Error ? err.message : 'Catalog import failed');
+      } finally {
+        setImportingHash(null);
+      }
+    },
+    [loadSongs],
+  );
 
   const handlePlayRandom = useCallback(() => {
     const playable = songs.filter((s) => s.status === 'ready');
@@ -636,8 +659,11 @@ export default function HomePage() {
               songs={songs}
               selectedSongId={selectedSongId}
               loadingSong={loadingLibrarySong}
+              importingHash={importingHash}
               onPlayImported={(song) => handleSongSelect(song.song_id, song.title)}
-              onImport={handleCatalogImport}
+              onImport={(song) => {
+                void handleCatalogImport(song);
+              }}
             />
           )}
 

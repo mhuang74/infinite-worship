@@ -49,6 +49,8 @@ interface CatalogBrowseProps {
   loadingSong: boolean;
   onPlayImported: (song: Song) => void;
   onImport: (catalogSong: CatalogSong) => void;
+  /** Content hash whose import request is in flight (CTA shows the wait). */
+  importingHash?: string | null;
 }
 
 /** IW-side display state of a catalog song, joined from the library. */
@@ -78,6 +80,7 @@ const CatalogBrowse: React.FC<CatalogBrowseProps> = ({
   loadingSong,
   onPlayImported,
   onImport,
+  importingHash,
 }) => {
   const [catalog, setCatalog] = useState<CatalogSong[]>([]);
   const [loading, setLoading] = useState(true);
@@ -234,9 +237,17 @@ const CatalogBrowse: React.FC<CatalogBrowseProps> = ({
                         <button
                           type="button"
                           onClick={() => onImport(song)}
+                          disabled={importingHash === song.content_hash}
                           className="chip chip-ready shrink-0"
                         >
-                          Import
+                          {importingHash === song.content_hash ? (
+                            <span className="flex items-center gap-2">
+                              <span className="h-3 w-3 animate-spin rounded-full border-2 border-on-surface-variant/30 border-t-on-surface-variant" />
+                              Importing…
+                            </span>
+                          ) : (
+                            'Import'
+                          )}
                         </button>
                       </div>
                     )}
