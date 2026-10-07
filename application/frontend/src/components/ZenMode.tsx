@@ -84,14 +84,11 @@ const TAU = Math.PI * 2;
 
 /**
  * Ring center height fraction while the lyric line is shown (issue #60): the
- * circle moves off-center (up) to make room; the line sits below it.
+ * circle moves off-center (up) and the line sits centered at its center.y.
  * LAYOUT_RING clamps the desired center so the ring never leaks the viewport
  * (on wide-short windows the fit wins and the shift shrinks).
  */
 const LYRIC_RING_CENTER_Y = 0.35;
-
-/** The lyric line's vertical position: fraction of viewport height. */
-const LYRIC_LINE_Y = 0.8;
 
 /** Jewel palette order — matches the waveform's jewel bar mapping (§2.4). */
 const JEWEL_VARS = ['--jewel-ruby', '--jewel-gold', '--jewel-emerald', '--jewel-sapphire', '--jewel-amethyst', '--jewel-cyan'] as const;
@@ -247,6 +244,10 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch,
   }
 
   const [reducedMotion, setReducedMotion] = useState(false);
+  // Lyric overlay's vertical center = the ring circle's actual (clamped)
+  // center y as a viewport fraction; 0.35 matches LYRIC_RING_CENTER_Y so a
+  // lyrics-present mount paints at the right spot before the first relayout.
+  const [lyricCenterFrac, setLyricCenterFrac] = useState(0.35);
 
   // beat id → ring index, shared by the arc resolution and the playhead's
   // currentBeatIndex (one build per repaint instead of two).
@@ -426,14 +427,18 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch,
       canvas.height = Math.round(vh * dpr);
       canvas.style.width = `${vw}px`;
       canvas.style.height = `${vh}px`;
-      // With lyrics (issue #60) the circle shifts up so the single lyric line
-      // owns the lower band; without them it stays dead-center.
+      // With lyrics (issue #60) the circle shifts up and the lyric line is
+      // centered at its center.y; without them it stays dead-center.
       layoutRef.current = LAYOUT_RING(beats, {
         width: vw,
         height: vh,
         margin: 32,
         centerY: lyricsRef.current ? LYRIC_RING_CENTER_Y : 0.5,
       });
+      // The lyric overlay follows the layout's real center: LAYOUT_RING
+      // clamps when the requested shift would leak the ring, so the
+      // constant guess is wrong on wide-short viewports (issue #60 follow-up).
+      setLyricCenterFrac(layoutRef.current.center.y / vh);
       canvas.getContext('2d')?.setTransform(dpr, 0, 0, dpr, 0, 0);
       repaint(layoutRef.current, palette, performance.now() / 1000);
     };
@@ -645,7 +650,7 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch,
       {lyrics && (
         <div
           className="pointer-events-none absolute inset-x-0 z-10 px-6 text-center"
-          style={{ top: `${LYRIC_LINE_Y * 100}%`, transform: 'translateY(-50%)' }}
+          style={{ top: `${lyricCenterFrac * 100}%`, transform: 'translateY(-50%)' }}
           aria-live="polite"
         >
           <span className="type-headline text-on-surface">
