@@ -29,7 +29,13 @@ export interface Song {
   status: SongStatus;
   audio_url: string | null;
   analysis_url: string | null;
+  /** Public URL of the imported LRC (`media/<song_id>.lrc`); imports only (issue #60). */
+  lyrics_url: string | null;
   failure_reason?: string | null;
+  /** How the Song arrived: 'upload' or 'sow' (migration 0002; uploads get 'upload'). */
+  source: 'upload' | 'sow';
+  /** SOW recording content hash (64-hex) iff source = 'sow'. */
+  sow_recording_id: string | null;
   created_at: string;
 }
 

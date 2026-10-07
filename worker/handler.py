@@ -12,7 +12,9 @@ Consumes SQS messages enqueued by the BFF finalize step
 3. Download to /tmp, run jukebox.InfiniteJukebox (beat caches redirect to
    /tmp — the image root filesystem is read-only-sized, not /tmp).
 4. Serialize the Analysis as JSON (the legacy gzipped-pickle format is dead,
-   ADR-0001) and PUT it to the Analysis key in the same public R2 bucket.
+   ADR-0001) and PUT it to `analysis/<content_hash>.json` — hash-keyed, so
+   identical audio from any source (upload or import) shares one Analysis
+   (Q14, #62).
 5. UPDATE the Song: status='ready', duration, audio_url, analysis_url.
 
 Any validation or analysis failure marks the Song status='failed' with a
@@ -103,6 +105,19 @@ def _media_url(key: str) -> str:
     if not MEDIA_BASE_URL:
         raise RuntimeError("MEDIA_BASE_URL env var is required")
     return f"{MEDIA_BASE_URL}/{key}"
+
+
+def _content_hash_from_song_id(song_id: str) -> str:
+    """Extract the audio SHA-256 from either song_id shape.
+
+    Uploads: `<urlsafe_b64(filename)>_<64-hex sha256>` (computed client-side,
+    upload.ts). Imports: `sow_<64-hex sha256>` (sowImport.ts). Both carry the
+    hash as the trailing underscore-separated 64-hex segment.
+    """
+    sha = song_id.rsplit("_", 1)[-1]
+    if len(sha) != 64 or not all(c in "0123456789abcdef" for c in sha):
+        raise AnalysisError(f"song_id {song_id!r} does not embed a 64-hex content hash")
+    return sha
 
 
 def _mark_failed(conn, song_id: str, reason: str) -> None:
@@ -310,7 +325,13 @@ def _analyze(r2, conn, song_id: str, audio_key: str) -> None:
 
         analysis = _to_analysis_json(jukebox, os.path.basename(audio_key))
 
-    analysis_key = f"analysis/{song_id}.json"
+    # Hash-keyed (Q14/#62): identical audio from any source shares one
+    # Analysis. Both song_id shapes embed the SHA-256 as the trailing
+    # 64-hex segment (`<b64(filename)>_<sha256hex>` uploads,
+    # `sow_<sha256hex>` imports), so the key derives from the id alone —
+    # the worker never needs the DB to resolve the hash.
+    content_hash = _content_hash_from_song_id(song_id)
+    analysis_key = f"analysis/{content_hash}.json"
     r2.put_object(
         Bucket=R2_BUCKET,
         Key=analysis_key,

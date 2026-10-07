@@ -22,7 +22,7 @@ flowchart LR
     B -- "3. POST /api/songs/{id}/finalize" --> V
     V -- "SendMessage" --> Q[(SQS analysis queue)]
     Q -- "batch size 1" --> L[Lambda infinite-worship-worker]
-    L -- "analysis/&lt;song_id&gt;.json" --> R
+    L -- "analysis/&lt;content_hash&gt;.json" --> R
     L -- "status ready/failed" --> N
     B -- "4. fetch audio + analysis blobs" --> D[R2 custom domain<br/>media.yourdomain.com]
     ER[EventBridge rate(7 days)] --> RP[Lambda infinite-worship-reaper]
@@ -833,7 +833,7 @@ Against the deployed stack:
 3. **Analysis JSON is public:**
 
    ```sh
-   curl -I https://media.yourdomain.com/analysis/<song_id>.json   # expect 200
+   curl -I https://media.yourdomain.com/analysis/<content_hash>.json   # expect 200
    ```
 
 4. **Failure path** — upload audio longer than 10 minutes: the Song goes

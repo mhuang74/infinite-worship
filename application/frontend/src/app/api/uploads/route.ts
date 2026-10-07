@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getR2Config, presignPut } from '@/lib/r2';
 import { getDb } from '@/lib/db';
+import { contentHashFromSongId } from '@/lib/songId';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,6 +28,14 @@ export async function POST(request: Request) {
   if (!song_id || typeof song_id !== 'string') {
     return NextResponse.json({ error: 'song_id is required' }, { status: 400 });
   }
+  try {
+    contentHashFromSongId(song_id);
+  } catch {
+    return NextResponse.json(
+      { error: 'song_id must embed a 64-hex sha256 content hash as its final segment' },
+      { status: 400 },
+    );
+  }
   if (!title || typeof title !== 'string') {
     return NextResponse.json({ error: 'title is required' }, { status: 400 });
   }
@@ -45,10 +54,10 @@ export async function POST(request: Request) {
 
     const db = getDb();
     await db.query(
-      `INSERT INTO songs (song_id, title, status, audio_url, analysis_url)
-       VALUES ($1, $2, 'pending', $3, NULL)
+      `INSERT INTO songs (song_id, title, status, audio_url, analysis_url, source, content_hash)
+       VALUES ($1, $2, 'pending', $3, NULL, 'upload', $4)
        ON CONFLICT (song_id) DO NOTHING`,
-      [song_id, title, audio_url],
+      [song_id, title, audio_url, contentHashFromSongId(song_id)],
     );
 
     return NextResponse.json({ song_id, upload_url, key, audio_url });

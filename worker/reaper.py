@@ -69,7 +69,7 @@ def reap(connect: Callable[[], Any] | None = None, r2: Any | None = None) -> dic
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT song_id, audio_url, analysis_url FROM songs
+                SELECT song_id, audio_url FROM songs
                  WHERE status = 'pending'
                    AND created_at < %s
                 """,
@@ -78,10 +78,17 @@ def reap(connect: Callable[[], Any] | None = None, r2: Any | None = None) -> dic
             rows = cur.fetchall()
 
         reaped: list[str] = []
-        for song_id, audio_url, analysis_url in rows:
+        for song_id, audio_url in rows:
+            # A pending row uniquely owns exactly one object: media/<song_id>.
+            # The analysis key is deliberately NOT deleted (#62): since Q14 the
+            # Analysis is keyed by content hash and shared by every Song of
+            # identical audio — reaping a stuck upload whose hash has a ready
+            # sibling (an import, or a second upload) would 404 the sibling's
+            # playback while its ready row keeps the dead URL. Reaped rows are
+            # always pending (no analysis_url yet), so the old per-song-id
+            # fallback delete was a silent no-op anyway.
             keys = [
                 _key_from_url(audio_url, f"media/{song_id}"),
-                _key_from_url(analysis_url, f"analysis/{song_id}.json"),
             ]
             batch: list[dict[str, str]] = [{"Key": k} for k in keys if k]
             if not batch:

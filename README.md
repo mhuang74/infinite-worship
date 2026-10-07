@@ -16,7 +16,7 @@ Data flow (ADR-0002):
 1. `POST /api/uploads` (BFF) mints a presigned R2 PUT URL and inserts a `pending` Song row in Neon. `song_id = urlsafe_base64(filename) + '_' + sha256hex(contents)` is computed **client-side** (`src/lib/upload.ts`).
 2. The browser PUTs the audio directly to its final public key `media/<song_id>`.
 3. `POST /api/songs/{id}/finalize` (BFF) enqueues `{song_id, audio_key}` on SQS — this explicit handoff exists because R2 event notifications cannot reach SQS.
-4. The Worker Lambda downloads, analyzes, writes `analysis/<song_id>.json`, and marks the Song `ready` (or `failed` with a human-readable `failure_reason`; failures redrive to a DLQ that alarms).
+4. The Worker Lambda downloads, analyzes, writes `analysis/<content_hash>.json` (hash-keyed: identical audio from any source shares one Analysis), and marks the Song `ready` (or `failed` with a human-readable `failure_reason`; failures redrive to a DLQ that alarms).
 5. The Player loads the audio blob and Analysis JSON **directly from R2** (no BFF proxy) and schedules beats with the Web Audio API; the UI polls Song status until analysis finishes.
 
 ## Repository Layout
@@ -88,7 +88,7 @@ psql "$DATABASE_URL" -f infra/sql/migrations/0001_add_failure_reason.sql   # aft
 1. **Beat/downbeat detection** — librosa load + madmom DBN downbeat tracking.
 2. **Segmentation** — CQT chromagram → Laplacian segmentation (McFee 2014).
 3. **Clustering** — sklearn KMeans over beat features; for each beat, jump candidates among similar beats.
-4. **Playback** — the client-side `AudioEngine` schedules beats with a lookahead loop and jumps with probability 0.15 to a weighted-random candidate, crossfading — looping forever.
+4. **Playback** — the client-side `AudioEngine` schedules beats with a lookahead loop and jumps with probability 0.15 to a weighted-random candidate, crossfading — looping forever. Imported Songs also fetch their LRC (`media/<song_id>.lrc`) and Zen Mode shows the one lyric line matching the audio's source position, so lyrics stay correct across jumps.
 
 ## Technologies
 

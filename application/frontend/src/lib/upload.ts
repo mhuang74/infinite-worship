@@ -72,6 +72,23 @@ export async function uploadSong(file: File, onPhase?: (phase: UploadPhase) => v
   return ticket;
 }
 
+export async function importSong(
+  contentHash: string,
+): Promise<{ song_id: string; status: string }> {
+  const response = await fetch('/api/catalog/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content_hash: contentHash }),
+  });
+  const detail = await response.json().catch(() => null);
+  if (!response.ok) {
+    const message =
+      typeof detail?.error === 'string' ? detail.error : `Import failed: ${response.status} ${response.statusText}`;
+    throw new Error(message);
+  }
+  return { song_id: detail.song_id, status: detail.status };
+}
+
 export async function fetchSongs(): Promise<Song[]> {
   const response = await fetch('/api/songs');
   if (!response.ok) {

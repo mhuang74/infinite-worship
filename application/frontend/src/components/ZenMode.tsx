@@ -19,6 +19,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Beat, JumpEvent } from '@/lib/types';
+import { lyricAt, type LyricLine } from '@/lib/lrc';
 import {
   LAYOUT_RING,
   PAINT_FRAME,
@@ -45,6 +46,13 @@ interface ZenModeProps {
   jumpEpoch: number;
   /** Per-beat playback tallies (beat.id → count); drives growth ribs + cap pulses. */
   beatPlayCounts?: Map<number, number>;
+  /**
+   * Timed lyric lines (issue #60), sorted, on the original recording's
+   * timeline — or null when the Song has no usable LRC (no zen lyric line).
+   * The active line follows the current beat's source position (`beat.start`),
+   * so it stays correct across jumps; gap placeholders render blank.
+   */
+  lyrics: LyricLine[] | null;
   /** True while audio is actually running. */
   isPlaying: boolean;
   /** Toggle play/pause (gate resume, paused-overlay tap, corner ⏸/▶). */
@@ -73,6 +81,17 @@ const DOUBLE_TAP_SLOP_PX = 32;
 
 /** Full turn, for angle normalization. */
 const TAU = Math.PI * 2;
+
+/**
+ * Ring center height fraction while the lyric line is shown (issue #60): the
+ * circle moves off-center (up) to make room; the line sits below it.
+ * LAYOUT_RING clamps the desired center so the ring never leaks the viewport
+ * (on wide-short windows the fit wins and the shift shrinks).
+ */
+const LYRIC_RING_CENTER_Y = 0.35;
+
+/** The lyric line's vertical position: fraction of viewport height. */
+const LYRIC_LINE_Y = 0.8;
 
 /** Jewel palette order — matches the waveform's jewel bar mapping (§2.4). */
 const JEWEL_VARS = ['--jewel-ruby', '--jewel-gold', '--jewel-emerald', '--jewel-sapphire', '--jewel-amethyst', '--jewel-cyan'] as const;
@@ -160,7 +179,7 @@ const paintZenCanvas = (
   );
 };
 
-const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch, beatPlayCounts, isPlaying, onTogglePlayback, onJumpToBeat, onExit }) => {
+const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch, beatPlayCounts, lyrics, isPlaying, onTogglePlayback, onJumpToBeat, onExit }) => {
   const overlayRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [showExit, setShowExit] = useState(true);
@@ -187,6 +206,18 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch,
   // beat frequency from effects keyed by coarse deps), never props directly.
   const beatPlayCountsRef = useRef(beatPlayCounts);
   beatPlayCountsRef.current = beatPlayCounts;
+  // Ref mirror of lyrics: the relayout callback (resize effect) reads it
+  // without re-subscribing the resize listener per lyric update.
+  const lyricsRef = useRef(lyrics);
+  lyricsRef.current = lyrics;
+
+  // The active lyric line (issue #60): keyed off the CURRENT BEAT's source
+  // position (`start` on the original recording's timeline), not wall-clock —
+  // so a jump instantly shows the line the landed beat sounds under. Empty
+  // text (Gap Placeholder) renders as a blank line: the space stays reserved,
+  // stale lyrics never linger through instrumental passages. When the Song
+  // has no usable LRC the whole surface is absent (no reserved space).
+  const activeLyric = lyrics && currentBeat ? lyricAt(lyrics, currentBeat.start) : null;
 
   const clearJumpStamps = () => {
     jumpStamps.current.clear();
@@ -395,7 +426,14 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch,
       canvas.height = Math.round(vh * dpr);
       canvas.style.width = `${vw}px`;
       canvas.style.height = `${vh}px`;
-      layoutRef.current = LAYOUT_RING(beats, { width: vw, height: vh, margin: 32 });
+      // With lyrics (issue #60) the circle shifts up so the single lyric line
+      // owns the lower band; without them it stays dead-center.
+      layoutRef.current = LAYOUT_RING(beats, {
+        width: vw,
+        height: vh,
+        margin: 32,
+        centerY: lyricsRef.current ? LYRIC_RING_CENTER_Y : 0.5,
+      });
       canvas.getContext('2d')?.setTransform(dpr, 0, 0, dpr, 0, 0);
       repaint(layoutRef.current, palette, performance.now() / 1000);
     };
@@ -426,7 +464,10 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch,
       if (fadeTimer.current !== undefined) window.clearInterval(fadeTimer.current);
       fadeTimer.current = undefined;
     };
-  }, [beats, repaint, reducedMotion]);
+    // Lyric presence flips the ring's vertical position; the boolean (not the
+    // array identity) keeps line-to-line changes from re-running relayout.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [beats, repaint, reducedMotion, lyrics !== null]);
 
   const fadePassRef = useRef<(() => void) | null>(null);
 
@@ -595,6 +636,23 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch,
       aria-label="Zen mode — fullscreen visualization"
     >
       <canvas ref={canvasRef} className="absolute inset-0" />
+
+      {/* Single centered lyric line (issue #60, map decision): one line at a
+          time, blank (space reserved) on gap placeholders and before the
+          first line; aria-live keeps it announced without spamming. pointer
+          events pass through — the overlay's tap/double-tap handling owns
+          them. Absent entirely when the Song has no usable LRC. */}
+      {lyrics && (
+        <div
+          className="pointer-events-none absolute inset-x-0 z-10 px-6 text-center"
+          style={{ top: `${LYRIC_LINE_Y * 100}%`, transform: 'translateY(-50%)' }}
+          aria-live="polite"
+        >
+          <span className="type-headline text-on-surface">
+            {activeLyric?.text ?? ''}
+          </span>
+        </div>
+      )}
 
       {needsTap && (
         <button

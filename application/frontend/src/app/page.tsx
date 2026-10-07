@@ -10,9 +10,12 @@ import Visualization from '@/components/Visualization';
 import SongMetadata from '@/components/SongMetadata';
 import SongLibrary from '@/components/SongLibrary';
 import SongSearch from '@/components/SongSearch';
+import CatalogBrowse from '@/components/CatalogBrowse';
+import type { CatalogSong } from '@/components/CatalogBrowse';
 import { AudioEngine, createAudioBuffer } from '@/lib/audio';
 import { loadSongForPlayback } from '@/lib/player';
-import { isPlayable } from '@/lib/upload';
+import type { LyricLine } from '@/lib/lrc';
+import { importSong, isPlayable } from '@/lib/upload';
 import { formatClock } from '@/lib/format';
 import type { Beat, Song, JumpEvent } from '@/lib/types';
 
@@ -20,6 +23,7 @@ const TABS = [
   { id: 'library', label: 'Song Library' },
   { id: 'search', label: 'Search Songs' },
   { id: 'upload', label: 'Upload New Song' },
+  { id: 'catalog', label: 'Catalog' },
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
@@ -50,6 +54,27 @@ export default function HomePage() {
   const [songs, setSongs] = useState<Song[]>([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [libraryError, setLibraryError] = useState<string | null>(null);
+  // Catalog tab visibility (issue #58): the browse BFF route reports the
+  // server-side SOW_CATALOG_ENABLED flag per request; when off no Catalog tab
+  // renders and the app is exactly today's. The tab list filters on it below.
+  const [catalogEnabled, setCatalogEnabled] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get('/api/catalog')
+      .then((response) => {
+        if (!cancelled) setCatalogEnabled(Boolean(response.data.enabled));
+      })
+      .catch((err) => {
+        // Route failure (e.g. cold start): keep the tab hidden; the flag is
+        // re-checked on the next full page load.
+        console.error('Catalog flag check failed:', err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const visibleTabs = TABS.filter((tab) => tab.id !== 'catalog' || catalogEnabled);
   const [shouldAutoplay, setShouldAutoplay] = useState(false);
   const [totalJumps, setTotalJumps] = useState(0);
   const [totalPlayingTimeSec, setTotalPlayingTimeSec] = useState(0);
@@ -68,8 +93,14 @@ export default function HomePage() {
   // Per-beat playback tallies (beat.id → play count): drives growth ribs +
   // cap pulses in zen mode. Reset on new-song load, kept across Restart.
   const [beatPlayCounts, setBeatPlayCounts] = useState<Map<number, number>>(new Map());
+  // Timed lyric lines of the loaded Song (issue #60): imports only; null when
+  // the Song has no LRC or it failed the ≥2-line validity bar. Kept beside
+  // songData so a song switch replaces (or clears) them atomically.
+  const [lyrics, setLyrics] = useState<LyricLine[] | null>(null);
 
   const [pollingSongId, setPollingSongId] = useState<string | null>(null);
+  // Catalog card whose import POST is in flight (CTA spinner, #59).
+  const [importingHash, setImportingHash] = useState<string | null>(null);
 
   // Song id whose Analysis + audio are already loaded into the player, so a
   // library refresh does not refetch them (they are immutable once ready).
@@ -246,6 +277,7 @@ export default function HomePage() {
         loadedSongIdRef.current = null;
         setSongData(null);
         setAudioFile(null);
+        setLyrics(null);
         setCurrentBeat(null);
         setIsPlaying(false);
         setIsPlaybackPending(false);
@@ -278,6 +310,7 @@ export default function HomePage() {
         // Update state with the fetched data
         setSongData({ segments: loaded.beats });
         setAudioFile(loaded.audioFile);
+        setLyrics(loaded.lyrics);
       } catch (err) {
         console.error('Error loading song from storage:', err);
         setError('Failed to load song from storage. Please try again.');
@@ -435,6 +468,38 @@ export default function HomePage() {
     setSelectedSongName(title);
   };
 
+  // Catalog import (map #48, ticket #59): POST /api/catalog/import with the
+  // card's content hash — the BFF copies audio + LRC, inserts the row
+  // (pending, or ready via the dedupe fast path), and enqueues analysis.
+  // On accepted/pending, poll the library until the Imported Song reaches a
+  // terminal status (same loop as the upload flow); the returned status
+  // already covers instant-ready (200) and existing-row (200) cases.
+  const handleCatalogImport = useCallback(
+    async (catalogSong: CatalogSong) => {
+      setError('');
+      setImportingHash(catalogSong.content_hash);
+      try {
+        const result = await importSong(catalogSong.content_hash);
+        if (result.status === 'pending') {
+          selectedSongIdRef.current = null;
+          setSelectedSongId(null);
+          setSelectedSongName(null);
+          setPollingSongId(result.song_id);
+        }
+        // Refresh on every outcome: 200 ready adds the playable row, but a
+        // 200 failed must also re-render the card as the failed chip with
+        // its failure_reason (#53) — the row is the state surface.
+        await loadSongs({ silent: true });
+      } catch (err) {
+        console.error('Catalog import failed:', err);
+        setError(err instanceof Error ? err.message : 'Catalog import failed');
+      } finally {
+        setImportingHash(null);
+      }
+    },
+    [loadSongs],
+  );
+
   const handlePlayRandom = useCallback(() => {
     const playable = songs.filter((s) => s.status === 'ready');
     if (playable.length === 0) {
@@ -549,7 +614,7 @@ export default function HomePage() {
 
         {/* MD3 primary tabs (§5.3) with sliding gold indicator */}
         <div aria-label="Sections" className="relative mx-1 flex border-b border-outline-variant/60" role="tablist">
-          {TABS.map((tab) => (
+          {visibleTabs.map((tab) => (
             <button
               type="button"
               key={tab.id}
@@ -599,6 +664,19 @@ export default function HomePage() {
             <SongSearch onSongSelect={handleSongSelect} selectedSongId={selectedSongId} />
           )}
 
+          {activeTab === 'catalog' && (
+            <CatalogBrowse
+              songs={songs}
+              selectedSongId={selectedSongId}
+              loadingSong={loadingLibrarySong}
+              importingHash={importingHash}
+              onPlayImported={(song) => handleSongSelect(song.song_id, song.title)}
+              onImport={(song) => {
+                void handleCatalogImport(song);
+              }}
+            />
+          )}
+
           {activeTab === 'upload' && (
             <div>
               <div className="px-3 pb-2 pt-2 text-[13px] font-semibold uppercase tracking-[0.04em] text-on-surface-variant">Upload New Song</div>
@@ -635,6 +713,7 @@ export default function HomePage() {
           jumps={jumpEvents}
           jumpEpoch={jumpEpoch}
           beatPlayCounts={beatPlayCounts}
+          lyrics={lyrics}
           isPlaying={isPlaying}
           onTogglePlayback={handlePlayPause}
           onJumpToBeat={handleZenJumpToBeat}
