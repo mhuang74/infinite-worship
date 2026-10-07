@@ -82,10 +82,10 @@ const MAX_DURATION_SECONDS = 600;
 // half-time/tempo-detection artifacts) + the duration ceiling, so a user
 // never picks a song that would fail import.
 
-// Deterministic pick (#52): published recordings preferred, then most recent
-// import, ties broken by created_at then content_hash. DISTINCT ON keeps one
-// row per song; #59's import route must apply the same rule so the In-IW
-// badge (joined on content_hash) labels the same recording.
+// Deterministic pick (#52, exact rule): published preferred, then most
+// recent imported_at, ties broken by created_at then content_hash. DISTINCT
+// ON keeps one row per song; #59's import route must apply the same rule so
+// the In-IW badge (joined on content_hash) labels the same recording.
 const CATALOG_SQL = `
   SELECT DISTINCT ON (s.id)
     s.id, s.title, s.title_pinyin, s.composer, s.lyricist, s.album_name,
@@ -106,7 +106,6 @@ const CATALOG_SQL = `
     AND r.duration_seconds <= $3
   ORDER BY s.id,
     (r.visibility_status = 'published') DESC,
-    (r.imported_at::timestamptz > r.created_at) DESC NULLS LAST,
     r.imported_at::timestamptz DESC NULLS LAST,
     r.created_at DESC NULLS LAST,
     r.content_hash DESC
