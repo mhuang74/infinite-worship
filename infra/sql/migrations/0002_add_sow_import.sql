@@ -24,8 +24,8 @@ ALTER TABLE songs ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'upload'
   CONSTRAINT songs_source_valid CHECK (source IN ('upload', 'sow'));
 
 ALTER TABLE songs ADD COLUMN IF NOT EXISTS sow_recording_id text
-  CONSTRAINT songs_sow_recording_id_only_for_imports
-    CHECK (source <> 'sow' OR sow_recording_id IS NOT NULL);
+  CONSTRAINT songs_sow_recording_id_iff_import
+    CHECK ((source = 'sow') = (sow_recording_id IS NOT NULL));
 
 ALTER TABLE songs ADD COLUMN IF NOT EXISTS content_hash text;
 
