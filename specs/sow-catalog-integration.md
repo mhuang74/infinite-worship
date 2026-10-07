@@ -1,6 +1,6 @@
 # Infinite Worship — SOW Catalog Integration (Spec)
 
-Status: **approved design brief, decided via structured interview (grill-with-docs), 2026-10-06. Not yet implemented.**
+Status: **approved design brief, decided via structured interview (grill-with-docs), 2026-10-06. IMPLEMENTED 2026-10-07 (PR #64, release #61) with deviations — this file is design history, not ground truth; see CONTEXT.md, AGENTS.md, and `src/lib/sowImport.ts` docstrings. Key deviations: the BFF does the byte movement (dual-scope `SOW_IMPORT_R2_*` token, server-side CopyObject — `media/imp_<hash>`, `media/imp_<hash>.lrc`); the Worker stays SOW-blind (`{song_id, audio_key}` SQS body, no source descriptor / copy_only mode); import song id prefix is `imp_`, not `sow_`.**
 
 ## Problem Statement
 
