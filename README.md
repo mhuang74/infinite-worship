@@ -16,7 +16,7 @@ Data flow (ADR-0002):
 1. `POST /api/uploads` (BFF) mints a presigned R2 PUT URL and inserts a `pending` Song row in Neon. `song_id = urlsafe_base64(filename) + '_' + sha256hex(contents)` is computed **client-side** (`src/lib/upload.ts`).
 2. The browser PUTs the audio directly to its final public key `media/<song_id>`.
 3. `POST /api/songs/{id}/finalize` (BFF) enqueues `{song_id, audio_key}` on SQS — this explicit handoff exists because R2 event notifications cannot reach SQS.
-4. The Worker Lambda downloads, analyzes, writes `analysis/<song_id>.json`, and marks the Song `ready` (or `failed` with a human-readable `failure_reason`; failures redrive to a DLQ that alarms).
+4. The Worker Lambda downloads, analyzes, writes `analysis/<content_hash>.json` (hash-keyed: identical audio from any source shares one Analysis), and marks the Song `ready` (or `failed` with a human-readable `failure_reason`; failures redrive to a DLQ that alarms).
 5. The Player loads the audio blob and Analysis JSON **directly from R2** (no BFF proxy) and schedules beats with the Web Audio API; the UI polls Song status until analysis finishes.
 
 ## Repository Layout

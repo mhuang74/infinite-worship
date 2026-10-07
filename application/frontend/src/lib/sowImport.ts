@@ -174,6 +174,9 @@ export function importSongId(contentHash: string): string {
   return `${IMPORT_SONG_ID_PREFIX}${contentHash}`;
 }
 
+// Re-exported so callers reach both directions from one module surface.
+export { contentHashFromSongId, isContentHash } from '@/lib/songId';
+
 /** Resolved recording, or null when the hash no longer qualifies (#52 pick). */
 export type ResolvedRecording = SowRecording | null;
 

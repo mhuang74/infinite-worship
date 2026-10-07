@@ -9,6 +9,7 @@ import {
   hasAnalysisFor,
   importSongId,
   insertImportRow,
+  isContentHash,
   markImportFailed,
   promoteToReady,
   resolveRecording,
@@ -71,7 +72,7 @@ export async function POST(request: Request) {
   }
 
   const contentHash = body.content_hash;
-  if (!contentHash || typeof contentHash !== 'string' || !/^[0-9a-f]{64}$/.test(contentHash)) {
+  if (!contentHash || typeof contentHash !== 'string' || !isContentHash(contentHash)) {
     return NextResponse.json(
       { error: 'content_hash is required (64-hex SHA-256 of the recording audio)' },
       { status: 400 },
