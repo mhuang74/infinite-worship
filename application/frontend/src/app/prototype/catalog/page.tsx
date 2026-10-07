@@ -30,11 +30,12 @@ function VariantA({ songs, onImport, pending }: VariantProps) {
   const [query, setQuery] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
   const q = query.trim().toLowerCase();
-  const visible = songs.filter((s) => {
-    if (filter === '60-100' && !(s.tempo_bpm !== null && s.tempo_bpm >= 60 && s.tempo_bpm <= 100)) return false;
-    if (q && !s.title.toLowerCase().includes(q) && !(s.artist ?? '').toLowerCase().includes(q)) return false;
-    return true;
-  });
+  const inBand = (s: CatalogSong) => s.tempo_bpm !== null && s.tempo_bpm >= 60 && s.tempo_bpm <= 100;
+  const visible = songs.filter((s) => (filter === '60-100' ? inBand(s) : true) && (!q || s.title.toLowerCase().includes(q) || (s.artist ?? '').toLowerCase().includes(q)));
+  // Query + active BPM chip: out-of-band matches read as "not in the
+  // catalog" — count them instead of silently swallowing the result.
+  const queryMatches = songs.filter((s) => !q || s.title.toLowerCase().includes(q) || (s.artist ?? '').toLowerCase().includes(q));
+  const hiddenByFilter = q && filter === '60-100' ? queryMatches.filter((s) => !inBand(s)).length : 0;
 
   return (
     <div>
@@ -71,6 +72,19 @@ function VariantA({ songs, onImport, pending }: VariantProps) {
       </div>
       {q && visible.length === 0 && (
         <p className="px-3 pb-2 text-sm text-on-surface-variant">No catalog songs match &quot;{query}&quot;.</p>
+      )}
+
+      {hiddenByFilter > 0 && (
+        <p className="px-3 pb-2 text-xs text-on-surface-variant">
+          {hiddenByFilter} {hiddenByFilter === 1 ? 'song' : 'songs'} hidden by the BPM filter.{' '}
+          <button
+            type="button"
+            onClick={() => setFilter('all')}
+            className="underline decoration-2 underline-offset-4 text-gold-foreground"
+          >
+            Show all
+          </button>
+        </p>
       )}
 
       <div className="grid grid-cols-1 gap-2 p-1 sm:grid-cols-2">
