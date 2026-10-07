@@ -10,6 +10,8 @@ import Visualization from '@/components/Visualization';
 import SongMetadata from '@/components/SongMetadata';
 import SongLibrary from '@/components/SongLibrary';
 import SongSearch from '@/components/SongSearch';
+import CatalogBrowse from '@/components/CatalogBrowse';
+import type { CatalogSong } from '@/components/CatalogBrowse';
 import { AudioEngine, createAudioBuffer } from '@/lib/audio';
 import { loadSongForPlayback } from '@/lib/player';
 import { isPlayable } from '@/lib/upload';
@@ -20,6 +22,7 @@ const TABS = [
   { id: 'library', label: 'Song Library' },
   { id: 'search', label: 'Search Songs' },
   { id: 'upload', label: 'Upload New Song' },
+  { id: 'catalog', label: 'Catalog' },
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
@@ -50,6 +53,27 @@ export default function HomePage() {
   const [songs, setSongs] = useState<Song[]>([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [libraryError, setLibraryError] = useState<string | null>(null);
+  // Catalog tab visibility (issue #58): the browse BFF route reports the
+  // server-side SOW_CATALOG_ENABLED flag per request; when off no Catalog tab
+  // renders and the app is exactly today's. The tab list filters on it below.
+  const [catalogEnabled, setCatalogEnabled] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get('/api/catalog')
+      .then((response) => {
+        if (!cancelled) setCatalogEnabled(Boolean(response.data.enabled));
+      })
+      .catch((err) => {
+        // Route failure (e.g. cold start): keep the tab hidden; the flag is
+        // re-checked on the next full page load.
+        console.error('Catalog flag check failed:', err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const visibleTabs = TABS.filter((tab) => tab.id !== 'catalog' || catalogEnabled);
   const [shouldAutoplay, setShouldAutoplay] = useState(false);
   const [totalJumps, setTotalJumps] = useState(0);
   const [totalPlayingTimeSec, setTotalPlayingTimeSec] = useState(0);
@@ -435,6 +459,14 @@ export default function HomePage() {
     setSelectedSongName(title);
   };
 
+  // Catalog import (map #48; the import route itself is ticket #59): select
+  // the catalog song's recording for import. Until that route exists the CTA
+  // is a no-op stub — browse works end-to-end without it.
+  const handleCatalogImport = useCallback((_catalogSong: CatalogSong) => {
+    // TODO(#59): POST /api/catalog/import { content_hash } → pending row +
+    // SQS; then setPollingSongId like the upload flow.
+  }, []);
+
   const handlePlayRandom = useCallback(() => {
     const playable = songs.filter((s) => s.status === 'ready');
     if (playable.length === 0) {
@@ -549,7 +581,7 @@ export default function HomePage() {
 
         {/* MD3 primary tabs (§5.3) with sliding gold indicator */}
         <div aria-label="Sections" className="relative mx-1 flex border-b border-outline-variant/60" role="tablist">
-          {TABS.map((tab) => (
+          {visibleTabs.map((tab) => (
             <button
               type="button"
               key={tab.id}
@@ -597,6 +629,16 @@ export default function HomePage() {
 
           {activeTab === 'search' && (
             <SongSearch onSongSelect={handleSongSelect} selectedSongId={selectedSongId} />
+          )}
+
+          {activeTab === 'catalog' && (
+            <CatalogBrowse
+              songs={songs}
+              selectedSongId={selectedSongId}
+              loadingSong={loadingLibrarySong}
+              onPlayImported={(song) => handleSongSelect(song.song_id, song.title)}
+              onImport={handleCatalogImport}
+            />
           )}
 
           {activeTab === 'upload' && (

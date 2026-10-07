@@ -12,7 +12,7 @@ export async function GET() {
   try {
     const db = getDb();
     const result = await db.query(
-      `SELECT song_id, title, duration, status, audio_url, analysis_url, failure_reason, created_at
+      `SELECT song_id, title, duration, status, audio_url, analysis_url, failure_reason, source, sow_recording_id, created_at
        FROM songs
        ORDER BY created_at DESC`,
     );
@@ -24,6 +24,8 @@ export async function GET() {
       audio_url: row.audio_url,
       analysis_url: row.analysis_url,
       failure_reason: row.failure_reason ?? null,
+      source: row.source,
+      sow_recording_id: row.sow_recording_id ?? null,
       created_at: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
     }));
     return NextResponse.json({ songs });
