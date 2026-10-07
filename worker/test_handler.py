@@ -33,6 +33,9 @@ class _FakeCursor:
     def fetchall(self):
         return self._fetchall
 
+    def fetchone(self):
+        return self._fetchall[0] if self._fetchall else None
+
     def __enter__(self):
         return self
 
@@ -149,6 +152,31 @@ class TestAnalysisKeyIsHashKeyed(unittest.TestCase):
         update = [e for e in conn.cursor_obj.executed if "UPDATE songs" in e[0]][0]
         self.assertEqual(update[1][1], f"https://media.invalid/media/{song_id}")
         self.assertIn(f"media/{song_id}", update[1][1])
+
+
+class TestConnectSeam(unittest.TestCase):
+    """process_record must honor the injected connect() (not psycopg.connect
+    directly) — the documented test seam. Regression: the original code bound
+    `connect` then ignored it, so injected fakes never saw queries."""
+
+    def test_process_record_uses_injected_connect(self):
+        song_id = f"imp_{_SHA}"
+        conn = _FakeConn()
+        # 'ready' hits the idempotent-redrive guard: the seam is proven (the
+        # status SELECT ran through the fake) without touching the DSP.
+        conn.cursor_obj.stage_fetchall([("ready",)])
+        r2 = _FakeR2()
+        with mock.patch.dict("os.environ", {"DATABASE_URL": "postgresql://unused"}):
+            status = handler.process_record(
+                {"body": f'{{"song_id": "{song_id}", "audio_key": "media/{song_id}"}}',
+                 "messageId": "m-1"},
+                r2=r2,
+                connect=lambda: conn,
+            )
+        # The fake conn was consulted (status SELECT ran through it) and no
+        # real psycopg connection was attempted.
+        self.assertTrue(any("SELECT status" in sql for sql, _ in conn.cursor_obj.executed))
+        self.assertEqual(status, "ready")
 
 
 class TestReaperNeverDeletesAnalysis(unittest.TestCase):

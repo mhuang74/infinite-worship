@@ -111,7 +111,7 @@ def _content_hash_from_song_id(song_id: str) -> str:
     """Extract the audio SHA-256 from either song_id shape.
 
     Uploads: `<urlsafe_b64(filename)>_<64-hex sha256>` (computed client-side,
-    upload.ts). Imports: `sow_<64-hex sha256>` (sowImport.ts). Both carry the
+    upload.ts). Imports: `imp_<64-hex sha256>` (sowImport.ts). Both carry the
     hash as the trailing underscore-separated 64-hex segment.
     """
     sha = song_id.rsplit("_", 1)[-1]
@@ -154,7 +154,7 @@ def process_record(record: dict[str, Any], r2=None, connect=None) -> str:
     r2 = r2 if r2 is not None else _r2_client()
     connect = connect if connect is not None else _connect_default
 
-    with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
+    with connect() as conn:
         try:
             with conn.cursor() as cur:
                 cur.execute(
@@ -328,7 +328,7 @@ def _analyze(r2, conn, song_id: str, audio_key: str) -> None:
     # Hash-keyed (Q14/#62): identical audio from any source shares one
     # Analysis. Both song_id shapes embed the SHA-256 as the trailing
     # 64-hex segment (`<b64(filename)>_<sha256hex>` uploads,
-    # `sow_<sha256hex>` imports), so the key derives from the id alone —
+    # `imp_<sha256hex>` imports), so the key derives from the id alone —
     # the worker never needs the DB to resolve the hash.
     content_hash = _content_hash_from_song_id(song_id)
     analysis_key = f"analysis/{content_hash}.json"
