@@ -27,8 +27,14 @@ function VariantA({ songs, onImport, pending }: VariantProps) {
   // Dedicated catalog surface: dense grid of richer cards — the browse
   // destination, not a list afterthought. Filter chip = the BPM curation.
   const [filter, setFilter] = useState<'all' | '60-100'>('60-100');
+  const [query, setQuery] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
-  const visible = songs.filter((s) => (filter === 'all' ? true : s.tempo_bpm !== null && s.tempo_bpm >= 60 && s.tempo_bpm <= 100));
+  const q = query.trim().toLowerCase();
+  const visible = songs.filter((s) => {
+    if (filter === '60-100' && !(s.tempo_bpm !== null && s.tempo_bpm >= 60 && s.tempo_bpm <= 100)) return false;
+    if (q && !s.title.toLowerCase().includes(q) && !(s.artist ?? '').toLowerCase().includes(q)) return false;
+    return true;
+  });
 
   return (
     <div>
@@ -53,6 +59,19 @@ function VariantA({ songs, onImport, pending }: VariantProps) {
           </button>
         </div>
       </div>
+
+      <div className="px-3 pb-2">
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search catalog (title, artist)…"
+          className="w-full rounded-xl border border-outline-variant bg-surface-container-lowest px-3.5 py-2.5 text-sm text-on-surface placeholder:text-on-surface-variant/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-gold-foreground"
+        />
+      </div>
+      {q && visible.length === 0 && (
+        <p className="px-3 pb-2 text-sm text-on-surface-variant">No catalog songs match &quot;{query}&quot;.</p>
+      )}
 
       <div className="grid grid-cols-1 gap-2 p-1 sm:grid-cols-2">
         {visible.map((song) => {
