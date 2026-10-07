@@ -306,25 +306,30 @@ export async function existingImportStatus(contentHash: string): Promise<string 
 }
 
 /**
- * Put a stuck row back in the worker's hands (re-pick recovery, #59):
- * `pending` whose enqueue failed (endless Analyzing) or `failed` after the
- * SOW side healed (the user-visible retry) — reset to `pending`, clear the
- * stale reason, and let the route re-enqueue. `ready` rows never come here.
+ * Promote an existing row to `ready` in the dedupe fast path when it
+ * re-picks after the Analysis landed (e.g. a `failed`/`pending` row whose
+ * analysis exists from an earlier attempt): the row's own audio copy was
+ * already made by the original import (copy-then-insert), so only status,
+ * analysis_url and the stale reason need updating. Plain INSERT .. ON
+ * CONFLICT DO NOTHING would leave the old status in place and the route
+ * would report `ready` for a row the DB says is `failed`.
  */
-export async function resetForRetry(contentHash: string): Promise<void> {
+export async function promoteToReady(contentHash: string): Promise<void> {
+  const analysisUrl = `${process.env.R2_PUBLIC_BASE?.replace(/\/+$/, '')}/analysis/${contentHash}.json`;
   await getIwDb().query(
-    `UPDATE songs SET status = 'pending', failure_reason = NULL WHERE sow_recording_id = $1`,
-    [contentHash],
+    `UPDATE songs
+        SET status = 'ready', analysis_url = $2, failure_reason = NULL
+      WHERE sow_recording_id = $1`,
+    [contentHash, analysisUrl],
   );
 }
 
 /**
  * Copy-failure landing (#59): the SOW source object was missing (or the
  * copy was refused) at import time — the row goes straight to `failed` with
- * the reason so the Catalog card shows it; no SQS enqueue, no automatic
- * retry loop (a retry would re-run a failing copy). The re-pick recovery
- * path (route: a later Import press on a `failed` card re-runs copy +
- * enqueue) is the user-visible retry once the SOW side heals.
+ * the reason so the Catalog card shows it; no SQS enqueue. Re-pick is a
+ * no-op per #54 Q6 — the route never auto-retries a `failed` row; retry is
+ * a separate re-enqueue action (follow-up ticket, not #59).
  */
 export async function markImportFailed(contentHash: string, reason: string): Promise<void> {
   await getIwDb().query(

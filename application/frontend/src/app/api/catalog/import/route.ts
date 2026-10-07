@@ -10,7 +10,7 @@ import {
   importSongId,
   insertImportRow,
   markImportFailed,
-  resetForRetry,
+  promoteToReady,
   resolveRecording,
   type ImportRequest,
   type ImportResponse,
@@ -25,16 +25,22 @@ export const dynamic = 'force-dynamic';
  * (or the dedupe fast path: row `ready`, no SQS, when the hash-keyed
  * Analysis already exists — re-import is free, per CONTEXT.md).
  *
- * Status-aware responses (#54), by existing-row state:
+ * Status-aware responses (#54 Q6), by existing-row state:
  * - no row: copy → insert → (enqueue | ready) → 202 pending / 200 ready.
- * - `ready`: 200 ready, pure no-op (nothing left to do).
- * - `pending`/`processing`: row + IW copies already exist (copy-then-insert
- *   guarantees it) — skip the copy, re-enqueue (covers the enqueue-failed
- *   edge; a duplicate analysis run on the same hash is idempotent), 202.
- * - `failed`: the user-visible retry — re-copy (SOW side may have healed),
- *   reset the row to `pending`, enqueue; copy failure re-marks `failed` with
- *   the fresh reason and answers 200 failed (status-aware, #54: the row is
- *   the state surface; the card renders it).
+ * - `ready`: 200 ready, pure no-op.
+ * - `pending`: re-pick while analyzing is a no-op for the message itself,
+ *   but the enqueue-failed edge (#55 decision 9 sanctions the re-enqueue
+ *   there) needs a fresh SendMessage — a `pending` row whose enqueue 503'd
+ *   has no message in flight and would hang forever. Skip the copy (it
+ *   already ran), re-enqueue (idempotent: SQS redelivery + the worker's
+ *   redelivery guard admit duplicates), 202 pending.
+ * - `processing`: the worker provably holds the message → 200, untouched.
+ * - `failed`: NO auto-retry from the route (#54 Q6: retry is a separate
+ *   re-enqueue action, follow-up ticket) → 200 with the current status;
+ *   the card keeps rendering the failed chip + reason.
+ * - fast path (analysis exists) applies to fresh and re-picked rows alike:
+ *   promote to `ready` (UPDATE, not just the ON-CONFLICT-DO-NOTHING insert)
+ *   so a stale `failed`/`pending` row cannot linger under a `ready` report.
  *
  * 404 when the content_hash does not resolve to a qualifying recording
  * (the browse surface never offered it, or curation dropped it since).
@@ -72,22 +78,33 @@ export async function POST(request: Request) {
     );
   }
 
-  // Re-pick semantics (route doc): `ready` rows are a pure no-op — 200 and
-  // done. `pending`/`processing`/`failed` fall through to the main flow:
-  // pending/processing skip the copy (copy-then-insert already ran; the
-  // enqueue-failed edge gets a fresh message) and re-enqueue; failed rows
-  // re-copy (SOW may have healed) then reset + re-enqueue — the user-visible
-  // retry.
   let existingStatus: string | null = null;
   try {
     existingStatus = await existingImportStatus(contentHash);
-    if (existingStatus === 'ready') {
-      const response: ImportResponse = { song_id: importSongId(contentHash), status: 'ready' };
-      return NextResponse.json(response, { status: 200 });
-    }
   } catch (err) {
     console.error(`import ${contentHash}: database lookup failed`, err);
     return NextResponse.json({ error: 'Database unavailable' }, { status: 503 });
+  }
+
+  // Re-pick semantics (#54 Q6): an existing row is status-aware and a no-op
+  // by default — the CTA states key off the returned status.
+  // - `ready`: nothing to do.
+  // - `pending`/`processing`: the row exists with its IW copies (copy-then-
+  //   insert guarantees it); SQS redelivery + the worker's idempotent
+  //   redelivery guard make a duplicate analysis harmless, but per #54 Q6
+  //   re-pick while analyzing is a NO-OP — except the enqueue-failed edge
+  //   (#55 decision 9 sanctions the re-enqueue there): a `pending` row whose
+  //   enqueue 503'd has no message in flight and would hang forever, so
+  //   `pending` gets a fresh SendMessage (idempotent; the worker guard
+  //   admits redelivery). `processing` means the worker provably holds the
+  //   message → untouched.
+  // - `failed`: NO auto-retry from the route (#54 Q6: retry is a separate
+  //   re-enqueue action, a follow-up ticket) — return 200 with the current
+  //   status; the card keeps rendering the failed chip + reason.
+  if (existingStatus === 'ready' || existingStatus === 'processing' || existingStatus === 'failed') {
+    const current = existingStatus as ImportResponse['status'];
+    const response: ImportResponse = { song_id: importSongId(contentHash), status: current };
+    return NextResponse.json(response, { status: 200 });
   }
 
   let recording: ResolvedRecording;
@@ -104,13 +121,14 @@ export async function POST(request: Request) {
     );
   }
 
-  // Copy-then-insert (#55 decision 9). A missing SOW source object fails the
-  // copy here — deterministic, no retry loop inside the request: mark the
-  // row `failed` with the reason (fresh or pre-existing row alike) and
-  // answer 200 failed — status-aware (#54): the row is the state surface,
-  // the card renders the failed chip + reason; 502 with a half-written state
-  // would tell the client nothing actionable.
-  const skipCopy = existingStatus === 'pending' || existingStatus === 'processing';
+  // Copy-then-insert (#55 decision 9). Reaches here only when there is no
+  // row, or the row is `pending` (enqueue-failed edge, re-pick after the
+  // copy is already done and harmless — the copy is idempotent). A missing
+  // SOW source object fails the copy: mark the row `failed` with the reason
+  // and answer 200 failed — status-aware (#54): the row is the state
+  // surface, the card renders the failed chip + reason; a 502 with a
+  // half-written state would tell the client nothing actionable.
+  const skipCopy = existingStatus === 'pending';
   if (!skipCopy) {
     try {
       await copyRecording(recording);
@@ -142,7 +160,16 @@ export async function POST(request: Request) {
 
   try {
     if (analysisExists) {
+      // The Analysis exists: promote the row to ready regardless of its
+      // current status (a fresh insert here is a no-op via ON CONFLICT, so
+      // an existing pending/failed row is UPDATEd — reporting `ready` while
+      // the DB says `failed` would leave the card stuck). The row's own
+      // audio copy was made by the original import (copy-then-insert) or by
+      // the copy above; either way media/imp_<hash> exists.
       await insertImportRow(recording, 'ready');
+      if (existingStatus) {
+        await promoteToReady(contentHash);
+      }
       const response: ImportResponse = {
         song_id: importSongId(contentHash),
         status: 'ready',
@@ -150,12 +177,6 @@ export async function POST(request: Request) {
       return NextResponse.json(response, { status: 200 });
     }
 
-    // Recovery landing: a `failed` row that made it past the re-copy gets
-    // reset to `pending` (reason cleared) before the fresh enqueue. For
-    // `pending`/`processing` the row is already correct — re-enqueue only.
-    if (existingStatus === 'failed') {
-      await resetForRetry(contentHash);
-    }
     await insertImportRow(recording, 'pending');
     await enqueueAnalysis(importSongId(contentHash));
     const response: ImportResponse = {
