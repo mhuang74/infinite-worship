@@ -123,14 +123,18 @@ export const START_ANGLE = -Math.PI / 2;
  * over fraction — the floor never leaks the ring outside the box. Ribs grow
  * INWARD from the band's inner edge on every viewport, so the box reserve is
  * just the band's outer half.
+ *
+ * `centerY` (0..1 of viewport height, default 0.5) moves the circle's center
+ * off vertical center — the Zen lyric line (issue #60) reserves the lower
+ * band, so the host passes < 0.5 and the ring shifts up.
  */
 export function LAYOUT_RING(
   beats: Beat[],
-  viewport: { width: number; height: number; margin?: number },
+  viewport: { width: number; height: number; margin?: number; centerY?: number },
 ): RingLayout {
   const margin = viewport.margin ?? 24;
   const cx = viewport.width / 2;
-  const cy = viewport.height / 2;
+  const cy = viewport.height * clamp01(viewport.centerY ?? 0.5);
   const minSide = Math.min(viewport.width, viewport.height);
   const box = minSide - margin * 2;
   // Desktop optimization ramp: below an 820px min side everything matches the
@@ -148,6 +152,14 @@ export function LAYOUT_RING(
   // margin absorbs all but ≤2px at the cardinal extremes of ≤28-beat rings.)
   const headroom = TILE_MAX_DIAMETER_PX / 2;
   const radius = Math.max(10, Math.min(r0, box / 2 - headroom));
+  // An off-center host (Zen lyric line, centerY ≠ 0.5) must not leak the ring
+  // out of the viewport: clamp the center so [cy − radius, cy + radius] stays
+  // inside the margin box — the fit wins over the desired shift. Candidate
+  // dots may still exceed it by ≤2px at cardinals, exactly as at center.
+  const cyClamped = Math.min(
+    Math.max(cy, margin + radius),
+    viewport.height - margin - radius,
+  );
 
   const spacing = TAU / beats.length;
   const tiles: TilePosition[] = beats.map((_, i) => {
@@ -155,11 +167,11 @@ export function LAYOUT_RING(
     return {
       angle,
       x: cx + Math.cos(angle) * radius,
-      y: cy + Math.sin(angle) * radius,
+      y: cyClamped + Math.sin(angle) * radius,
     };
   });
 
-  return { center: { x: cx, y: cy }, radius, tiles, ribWidth };
+  return { center: { x: cx, y: cyClamped }, radius, tiles, ribWidth };
 }
 
 /**

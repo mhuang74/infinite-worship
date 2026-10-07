@@ -14,6 +14,7 @@ import CatalogBrowse from '@/components/CatalogBrowse';
 import type { CatalogSong } from '@/components/CatalogBrowse';
 import { AudioEngine, createAudioBuffer } from '@/lib/audio';
 import { loadSongForPlayback } from '@/lib/player';
+import type { LyricLine } from '@/lib/lrc';
 import { importSong, isPlayable } from '@/lib/upload';
 import { formatClock } from '@/lib/format';
 import type { Beat, Song, JumpEvent } from '@/lib/types';
@@ -92,6 +93,10 @@ export default function HomePage() {
   // Per-beat playback tallies (beat.id → play count): drives growth ribs +
   // cap pulses in zen mode. Reset on new-song load, kept across Restart.
   const [beatPlayCounts, setBeatPlayCounts] = useState<Map<number, number>>(new Map());
+  // Timed lyric lines of the loaded Song (issue #60): imports only; null when
+  // the Song has no LRC or it failed the ≥2-line validity bar. Kept beside
+  // songData so a song switch replaces (or clears) them atomically.
+  const [lyrics, setLyrics] = useState<LyricLine[] | null>(null);
 
   const [pollingSongId, setPollingSongId] = useState<string | null>(null);
   // Catalog card whose import POST is in flight (CTA spinner, #59).
@@ -272,6 +277,7 @@ export default function HomePage() {
         loadedSongIdRef.current = null;
         setSongData(null);
         setAudioFile(null);
+        setLyrics(null);
         setCurrentBeat(null);
         setIsPlaying(false);
         setIsPlaybackPending(false);
@@ -304,6 +310,7 @@ export default function HomePage() {
         // Update state with the fetched data
         setSongData({ segments: loaded.beats });
         setAudioFile(loaded.audioFile);
+        setLyrics(loaded.lyrics);
       } catch (err) {
         console.error('Error loading song from storage:', err);
         setError('Failed to load song from storage. Please try again.');
@@ -706,6 +713,7 @@ export default function HomePage() {
           jumps={jumpEvents}
           jumpEpoch={jumpEpoch}
           beatPlayCounts={beatPlayCounts}
+          lyrics={lyrics}
           isPlaying={isPlaying}
           onTogglePlayback={handlePlayPause}
           onJumpToBeat={handleZenJumpToBeat}

@@ -16,7 +16,7 @@ export async function GET(request: Request) {
     const q = new URL(request.url).searchParams.get('q') ?? '';
     const db = getDb();
     const result = await db.query(
-      `SELECT song_id, title, duration, status, failure_reason, audio_url, analysis_url, source, sow_recording_id, created_at
+      `SELECT song_id, title, duration, status, failure_reason, audio_url, analysis_url, lyrics_url, source, sow_recording_id, created_at
        FROM songs
        WHERE title ILIKE '%' || $1 || '%'
        ORDER BY created_at DESC`,
@@ -30,6 +30,7 @@ export async function GET(request: Request) {
       failure_reason: row.failure_reason === undefined ? undefined : row.failure_reason,
       audio_url: row.audio_url,
       analysis_url: row.analysis_url,
+      lyrics_url: row.lyrics_url ?? null,
       source: row.source,
       sow_recording_id: row.sow_recording_id ?? null,
       created_at: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
