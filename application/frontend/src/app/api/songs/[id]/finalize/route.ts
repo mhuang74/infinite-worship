@@ -113,9 +113,9 @@ export async function POST(
   // earlier upload of the byte-identical file — needs no new analysis job.
   // `processing` means a job is provably in flight (finalize ran before) —
   // idempotent no-op, not an error.
-  // `failed` is reset to `pending` and re-enqueued: a deliberate re-upload of
-  // the identical bytes is a retry (transient storage 503 / worker timeout /
-  // reaped must not bake a permanent dead-end into the content hash).
+  // `failed` keeps the #54 Q6 contract: NO auto-retry from finalize (retry is
+  // the separate re-enqueue action, follow-up ticket); the browser surfaces
+  // the 409 with the stored reason.
   if (song.status === 'ready' || song.status === 'processing') {
     const response = NextResponse.json(
       { song_id: id, status: song.status === 'ready' ? 'ready' : 'queued' },
@@ -126,19 +126,11 @@ export async function POST(
     }
     return response;
   }
-  if (song.status === 'failed') {
-    try {
-      await getDb().query(
-        `UPDATE songs SET status = 'pending', failure_reason = NULL WHERE song_id = $1`,
-        [id],
-      );
-    } catch (err) {
-      console.error(`finalize ${id}: failed-status reset failed`, err);
-      return NextResponse.json(
-        { error: 'Database unavailable' },
-        { status: 503 },
-      );
-    }
+  if (song.status !== 'pending') {
+    return NextResponse.json(
+      { error: `Song ${id} is not pending (status: ${song.status})` },
+      { status: 409 },
+    );
   }
 
   // Cheap existence check before enqueueing so a browser that never completed
