@@ -9,7 +9,9 @@
  *    (canvas cannot consume utility classes; values differ per scheme),
  *  - enters OS fullscreen / requests the Screen Wake Lock (both
  *    progressive enhancements, silently skipped where unsupported), and
- *  - shows the auto-hiding exit ✕ (3s idle) + tap-to-begin gate fallback.
+ *  - shows the auto-hiding exit ✕ (3s idle) + tap-to-begin gate fallback, and
+ *  - shows a persistent footer brand mark (icon + "Infinite Worship") that is
+ *    NOT auto-hidden — fullscreen sessions must still identify the player.
  *
  * The Player instance is NOT touched: zen is a view of the same playing
  * session; audio, jump counters and listening time continue on exit.
@@ -738,12 +740,24 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch,
             className="grid h-11 w-11 place-items-center rounded-full border border-outline-variant bg-surface-container-high/80 text-on-surface-variant transition-opacity duration-200 hover:bg-on-surface/10"
             aria-label="Exit zen mode"
           >
-            <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-              <path fill="currentColor" d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+          <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path fill="currentColor" d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 19 17.59 13.41 12z" />
             </svg>
           </button>
         </div>
       )}
+
+      {/* Footer brand mark (variant B, PR #68): persistent, always visible —
+          deliberately NOT tied to the ✕ auto-hide cycle, since identifying
+          the player is the point of fullscreen branding. pointer-events-none
+          so the overlay's tap/double-tap handling owns the surface. */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex select-none items-center justify-center gap-1.5 text-on-surface-variant">
+        {/* eslint-disable-next-line @next/next/no-img-element -- static local icon, no optimization needed */}
+        <img src="/icon.svg" width={20} height={20} alt="" aria-hidden="true" style={{ opacity: 0.55 }} />
+        <span className="type-card-title" style={{ fontSize: 15, opacity: 0.6 }}>
+          Infinite Worship
+        </span>
+      </div>
     </div>
   );
 };
