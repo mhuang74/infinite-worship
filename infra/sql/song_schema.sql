@@ -6,7 +6,7 @@
 -- Only `ready` Songs are playable.
 
 CREATE TABLE songs (
-    song_id      text PRIMARY KEY,               -- base64(filename) + '_' + sha256(contents)
+    song_id      text PRIMARY KEY,               -- 'up_' + sha256(contents) for uploads; 'imp_' + sha256 for imports (legacy rows: base64(filename) + '_' + sha256)
     title        text NOT NULL,
     duration     real,                           -- seconds
     status       text NOT NULL DEFAULT 'pending'
@@ -16,6 +16,6 @@ CREATE TABLE songs (
     created_at   timestamptz NOT NULL DEFAULT now()
 );
 
-COMMENT ON COLUMN songs.song_id IS 'base64(filename) + ''_'' + sha256(contents); content-addressed, immutable once ready';
+COMMENT ON COLUMN songs.song_id IS '''up_'' + sha256(contents) for uploads (content-addressed), ''imp_'' + sha256 for imports; content-addressed, immutable once ready';
 COMMENT ON COLUMN songs.audio_url IS 'Public R2 custom-domain URL of the uploaded audio object';
 COMMENT ON COLUMN songs.analysis_url IS 'Public R2 custom-domain URL of the Analysis JSON object';
