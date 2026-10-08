@@ -22,6 +22,8 @@ import type { Beat, JumpEvent } from '@/lib/types';
 import { lyricAt, type LyricLine } from '@/lib/lrc';
 import {
   LAYOUT_RING,
+  MOBILE_LYRIC_COLUMN_WIDTH,
+  MOBILE_MIN_SIDE,
   PAINT_FRAME,
   FADE_SECONDS,
   GLOW_DOT_POSITION,
@@ -244,10 +246,17 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch,
   }
 
   const [reducedMotion, setReducedMotion] = useState(false);
-  // Lyric overlay's vertical center = the ring circle's actual (clamped)
-  // center y as a viewport fraction; 0.35 matches LYRIC_RING_CENTER_Y so a
-  // lyrics-present mount paints at the right spot before the first relayout.
-  const [lyricCenterFrac, setLyricCenterFrac] = useState(0.35);
+  // Lyric overlay placement, set by relayout from the layout result:
+  // - 'legacy': centered at the ring circle's (clamped) center.y fraction —
+  //   ≥ MOBILE_MIN_SIDE viewports or the pre-relayout mount (0.35 matches
+  //   LYRIC_RING_CENTER_Y so a lyrics-present mount paints at the right spot).
+  // - 'stacked': portrait phone — px y of the lyric band's center (above the circle).
+  // - 'side': landscape phone — px x of the fixed-width lyric column's center.
+  type LyricPlacement =
+    | { kind: 'legacy'; frac: number }
+    | { kind: 'stacked'; bandCenterY: number }
+    | { kind: 'side'; columnCenterX: number };
+  const [lyricPlacement, setLyricPlacement] = useState<LyricPlacement>({ kind: 'legacy', frac: 0.35 });
 
   // beat id → ring index, shared by the arc resolution and the playhead's
   // currentBeatIndex (one build per repaint instead of two).
@@ -428,17 +437,33 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch,
       canvas.style.width = `${vw}px`;
       canvas.style.height = `${vh}px`;
       // With lyrics (issue #60) the circle shifts up and the lyric line is
-      // centered at its center.y; without them it stays dead-center.
+      // centered at its center.y; without them it stays dead-center. On
+      // phones (min side < MOBILE_MIN_SIDE) with lyrics the layout instead
+      // goes stacked (portrait: lyric band above) or side (landscape: column
+      // beside the circle) — songs without lyrics keep the ring centered.
+      const mobile = Math.min(vw, vh) < MOBILE_MIN_SIDE;
+      const portrait = vh >= vw;
+      const mode =
+        lyricsRef.current && mobile ? (portrait ? ('stacked' as const) : ('side' as const)) : undefined;
       layoutRef.current = LAYOUT_RING(beats, {
         width: vw,
         height: vh,
         margin: 32,
         centerY: lyricsRef.current ? LYRIC_RING_CENTER_Y : 0.5,
+        mode,
       });
-      // The lyric overlay follows the layout's real center: LAYOUT_RING
-      // clamps when the requested shift would leak the ring, so the
-      // constant guess is wrong on wide-short viewports (issue #60 follow-up).
-      setLyricCenterFrac(layoutRef.current.center.y / vh);
+      // The lyric overlay follows the layout result: on mobile the layout's
+      // `lyric` anchor places the band/column; otherwise the ring's real
+      // center.y (LAYOUT_RING clamps when the requested shift would leak the
+      // ring, so the constant guess is wrong on wide-short viewports).
+      const placed = layoutRef.current.lyric;
+      if (placed?.bandCenterY !== undefined) {
+        setLyricPlacement({ kind: 'stacked', bandCenterY: placed.bandCenterY });
+      } else if (placed?.columnCenterX !== undefined) {
+        setLyricPlacement({ kind: 'side', columnCenterX: placed.columnCenterX });
+      } else {
+        setLyricPlacement({ kind: 'legacy', frac: layoutRef.current.center.y / vh });
+      }
       canvas.getContext('2d')?.setTransform(dpr, 0, 0, dpr, 0, 0);
       repaint(layoutRef.current, palette, performance.now() / 1000);
     };
@@ -649,8 +674,19 @@ const ZenMode: React.FC<ZenModeProps> = ({ beats, currentBeat, jumps, jumpEpoch,
           them. Absent entirely when the Song has no usable LRC. */}
       {lyrics && (
         <div
-          className="pointer-events-none absolute inset-x-0 z-10 px-6 text-center"
-          style={{ top: `${lyricCenterFrac * 100}%`, transform: 'translateY(-50%)' }}
+          className="pointer-events-none absolute z-10 px-6 text-center"
+          style={
+            lyricPlacement.kind === 'stacked'
+              ? { left: 0, right: 0, top: lyricPlacement.bandCenterY, transform: 'translateY(-50%)' }
+              : lyricPlacement.kind === 'side'
+                ? {
+                    left: lyricPlacement.columnCenterX,
+                    top: '50%',
+                    width: MOBILE_LYRIC_COLUMN_WIDTH,
+                    transform: 'translate(-50%, -50%)',
+                  }
+                : { left: 0, right: 0, top: `${lyricPlacement.frac * 100}%`, transform: 'translateY(-50%)' }
+          }
           aria-live="polite"
         >
           <span className="type-headline text-on-surface">
