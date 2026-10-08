@@ -128,12 +128,16 @@ export class AudioEngine {
       gaps.push(this.lineTimes[i] - this.lineTimes[i - 1]);
     }
     gaps.sort((a, b) => a - b);
-    const medianLineGap = gaps[Math.floor((gaps.length - 1) / 2)];
+    const gapMid = gaps.length >> 1;
+    const medianLineGap = gaps.length % 2 ? gaps[gapMid] : (gaps[gapMid - 1] + gaps[gapMid]) / 2;
     // Both in seconds: the 8 s cap keeps a sparse LRC (few section-marker
     // lines, huge gaps) from blanket-covering the whole song.
     this.lineExtent = Math.min(medianLineGap, 8);
     const durations = this.beats.map(b => b.duration).sort((a, b) => a - b);
-    const medianBeatDuration = durations[Math.floor((durations.length - 1) / 2)];
+    const durMid = durations.length >> 1;
+    const medianBeatDuration = durations.length % 2
+      ? durations[durMid]
+      : (durations[durMid - 1] + durations[durMid]) / 2;
     this.entryWindowMs = Math.max(500, 1000 * medianBeatDuration);
     this.timelineOffsetSec = estimateLeadingSilenceOffset(this.audioBuffer);
     if (process.env.NODE_ENV !== 'production') {
