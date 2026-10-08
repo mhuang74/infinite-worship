@@ -27,6 +27,11 @@ export interface RingLayout {
   tiles: TilePosition[];
   /** Rib stroke width in px; ramps 3 → 7 over minSide 820 → 920 (see LAYOUT_RING). */
   ribWidth: number;
+  /** Where the host should place the Zen lyric overlay in px, or null when the
+   *  layout has no mobile lyric placement (legacy center/inside-ring rendering).
+   *  `bandCenterY`: portrait stacked — y of the lyric band's vertical center.
+   *  `columnCenterX`: landscape side — x of the lyric column's horizontal center. */
+  lyric: { bandCenterY?: number; columnCenterX?: number } | null;
 }
 
 export interface TilePosition {
@@ -81,6 +86,14 @@ const TILE_MAX_DIAMETER_PX = 44;
 export const FADE_SECONDS = 1.0;
 /** Ring radius floor (never smaller than this unless the viewport ceiling is tighter). */
 const MIN_RING_RADIUS = 64;
+/** Mobile (phone) threshold: min(viewport) below this is a phone. */
+export const MOBILE_MIN_SIDE = 500;
+/** Portrait stacked: reserved height of the lyric block (2 wrapped lines @ 23px mobile font). */
+export const MOBILE_LYRIC_BLOCK_HEIGHT = 56;
+/** Landscape side: width of the fixed lyric column. */
+export const MOBILE_LYRIC_COLUMN_WIDTH = 240;
+/** Mobile: max lyric↔ring gap (the 1.5 middle band of the 1 : 1.5 : 0.75 ratio). */
+export const MOBILE_GAP_CAP = 120;
 /** Brightness mode: never-played band alpha. */
 const COUNT_DIM_ALPHA = 0.35;
 /** Brightness mode: count at which the band reaches full alpha / max mix. */
@@ -127,14 +140,27 @@ export const START_ANGLE = -Math.PI / 2;
  * `centerY` (0..1 of viewport height, default 0.5) moves the circle's center
  * off vertical center — the Zen lyric line (issue #60) reserves the lower
  * band, so the host passes < 0.5 and the ring shifts up.
+ *
+ * `mode` selects the mobile lyric layout (min(viewport) < MOBILE_MIN_SIDE only,
+ * enforced by the host): 'stacked' puts the lyric in a band above the circle
+ * (portrait), 'side' puts a fixed-width lyric column beside the circle
+ * (landscape). Both split the leftover whitespace edge:gap:edge = 1 : 1.5 : 0.75
+ * with the gap capped (see the `gap` helper below); when set, `centerY` is
+ * ignored and `lyric` carries the px anchor for the overlay.
  */
 export function LAYOUT_RING(
   beats: Beat[],
-  viewport: { width: number; height: number; margin?: number; centerY?: number },
+  viewport: {
+    width: number;
+    height: number;
+    margin?: number;
+    centerY?: number;
+    /** Mobile lyric layout: 'stacked' = portrait (lyric band above, circle below),
+     *  'side' = landscape (circle left, lyric column right). undefined = legacy. */
+    mode?: 'stacked' | 'side';
+  },
 ): RingLayout {
   const margin = viewport.margin ?? 24;
-  const cx = viewport.width / 2;
-  const cy = viewport.height * clamp01(viewport.centerY ?? 0.5);
   const minSide = Math.min(viewport.width, viewport.height);
   const box = minSide - margin * 2;
   // Desktop optimization ramp: below an 820px min side everything matches the
@@ -152,6 +178,37 @@ export function LAYOUT_RING(
   // margin absorbs all but ≤2px at the cardinal extremes of ≤28-beat rings.)
   const headroom = TILE_MAX_DIAMETER_PX / 2;
   const radius = Math.max(10, Math.min(r0, box / 2 - headroom));
+  // Mobile edge:gap:edge whitespace split 1 : 1.5 : 0.75 with the gap capped at
+  // MOBILE_GAP_CAP; any surplus above the cap re-splits by the 1 : 0.75 edge
+  // weights (gap band stays at its capped size). Derived: gap = 1.5/3.25 × free.
+  const gap = (free: number): number => Math.min((1.5 / 3.25) * free, MOBILE_GAP_CAP);
+
+  let cx: number;
+  let cy: number;
+  let lyric: RingLayout['lyric'] = null;
+
+  if (viewport.mode === 'stacked') {
+    // Portrait phone, lyrics: radius math unchanged (user decision), then the
+    // leftover height splits edge : gap : edge around the lyric band and circle.
+    cx = viewport.width / 2;
+    const free = Math.max(0, viewport.height - 2 * margin - MOBILE_LYRIC_BLOCK_HEIGHT - 2 * radius);
+    const g = gap(free);
+    const surplus = free - g;
+    const topBand = margin + surplus * (1 / 1.75);
+    cy = topBand + MOBILE_LYRIC_BLOCK_HEIGHT + g + radius;
+    lyric = { bandCenterY: topBand + MOBILE_LYRIC_BLOCK_HEIGHT / 2 };
+  } else if (viewport.mode === 'side') {
+    // Landscape phone, lyrics: same grammar rotated — circle left, lyric column right.
+    const free = Math.max(0, viewport.width - 2 * margin - MOBILE_LYRIC_COLUMN_WIDTH - 2 * radius);
+    const g = gap(free);
+    const surplus = free - g;
+    cx = margin + surplus * (1 / 1.75) + radius;
+    cy = viewport.height / 2;
+    lyric = { columnCenterX: cx + radius + g + MOBILE_LYRIC_COLUMN_WIDTH / 2 };
+  } else {
+    cx = viewport.width / 2;
+    cy = viewport.height * clamp01(viewport.centerY ?? 0.5);
+  }
   // An off-center host (Zen lyric line, centerY ≠ 0.5) must not leak the ring
   // out of the viewport: clamp the center so [cy − radius, cy + radius] stays
   // inside the margin box — the fit wins over the desired shift. Candidate
@@ -171,7 +228,7 @@ export function LAYOUT_RING(
     };
   });
 
-  return { center: { x: cx, y: cyClamped }, radius, tiles, ribWidth };
+  return { center: { x: cx, y: cyClamped }, radius, tiles, ribWidth, lyric };
 }
 
 /**
