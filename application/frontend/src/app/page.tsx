@@ -9,7 +9,6 @@ import ZenMode from '@/components/ZenMode';
 import Visualization from '@/components/Visualization';
 import SongMetadata from '@/components/SongMetadata';
 import SongLibrary from '@/components/SongLibrary';
-import SongSearch from '@/components/SongSearch';
 import CatalogBrowse from '@/components/CatalogBrowse';
 import type { CatalogSong } from '@/components/CatalogBrowse';
 import { AudioEngine, createAudioBuffer } from '@/lib/audio';
@@ -21,7 +20,6 @@ import type { Beat, Song, JumpEvent } from '@/lib/types';
 
 const TABS = [
   { id: 'library', label: 'Song Library' },
-  { id: 'search', label: 'Search Songs' },
   { id: 'upload', label: 'Upload New Song' },
   { id: 'catalog', label: 'Catalog' },
 ] as const;
@@ -54,6 +52,8 @@ export default function HomePage() {
   const [songs, setSongs] = useState<Song[]>([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [libraryError, setLibraryError] = useState<string | null>(null);
+  // Library filter text; lives here so switching tabs and back keeps it.
+  const [libraryFilter, setLibraryFilter] = useState('');
   // Catalog tab visibility (issue #58): the browse BFF route reports the
   // server-side SOW_CATALOG_ENABLED flag per request; when off no Catalog tab
   // renders and the app is exactly today's. The tab list filters on it below.
@@ -709,11 +709,9 @@ export default function HomePage() {
               }}
               refreshing={libraryLoading}
               selectedSongId={selectedSongId}
+              filter={libraryFilter}
+              onFilterChange={setLibraryFilter}
             />
-          )}
-
-          {activeTab === 'search' && (
-            <SongSearch onSongSelect={handleSongSelect} selectedSongId={selectedSongId} />
           )}
 
           {activeTab === 'catalog' && (

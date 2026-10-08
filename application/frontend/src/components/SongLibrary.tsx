@@ -17,6 +17,9 @@ interface SongLibraryProps {
   onRefresh: () => void;
   refreshing: boolean;
   selectedSongId?: string | null;
+  /** Case-insensitive title filter; empty string shows the full list. */
+  filter: string;
+  onFilterChange: (value: string) => void;
 }
 
 const SongLibrary: React.FC<SongLibraryProps> = ({
@@ -29,7 +32,13 @@ const SongLibrary: React.FC<SongLibraryProps> = ({
   onRefresh,
   refreshing,
   selectedSongId = null,
+  filter,
+  onFilterChange,
 }) => {
+  const normalizedFilter = filter.trim().toLowerCase();
+  const visibleSongs = normalizedFilter
+    ? songs.filter((s) => s.title.toLowerCase().includes(normalizedFilter))
+    : songs;
   const showInitialLoading = loading && songs.length === 0;
   const showRefreshing = refreshing && songs.length > 0;
 
@@ -57,6 +66,17 @@ const SongLibrary: React.FC<SongLibraryProps> = ({
         </button>
       </div>
 
+      <div className="relative px-3 pb-2">
+        <input
+          type="text"
+          value={filter}
+          onChange={(e) => onFilterChange(e.target.value)}
+          placeholder="Filter songs..."
+          aria-label="Filter songs by title"
+          className="w-full rounded-xl border border-outline-variant bg-surface-container-lowest px-3.5 py-2.5 text-sm text-on-surface placeholder:text-on-surface-variant/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-gold-foreground"
+        />
+      </div>
+
       {showInitialLoading && (
         <p className="px-3 py-2 text-sm text-on-surface-variant">Loading song library...</p>
       )}
@@ -75,9 +95,13 @@ const SongLibrary: React.FC<SongLibraryProps> = ({
         <p className="px-3 py-2 text-sm text-on-surface-variant">No songs in library. Upload a song first.</p>
       )}
 
-      {songs.length > 0 && (
+      {!showInitialLoading && songs.length > 0 && visibleSongs.length === 0 && !error && (
+        <p className="px-3 py-2 text-sm text-on-surface-variant">No songs match &quot;{filter}&quot;</p>
+      )}
+
+      {visibleSongs.length > 0 && (
         <div className="mt-1 max-h-[300px] space-y-1 overflow-y-auto p-1">
-          {songs.map((song) => {
+          {visibleSongs.map((song) => {
             const failed = song.status === 'failed';
             const selected = song.song_id === selectedSongId;
             const hasMeta = song.duration !== null || (failed && song.failure_reason);
