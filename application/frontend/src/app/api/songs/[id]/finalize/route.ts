@@ -26,6 +26,7 @@ import { NextResponse } from 'next/server';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { getR2Config, r2HeadObject } from '@/lib/r2';
 import { getDb } from '@/lib/db';
+import { ensureUser, userCookieHeader, type UserIdentity } from '@/lib/user';
 
 export const runtime = 'nodejs';
 
@@ -45,6 +46,17 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   const { id } = await params;
+
+  let userIdentity: UserIdentity;
+  try {
+    userIdentity = await ensureUser(request);
+  } catch (err) {
+    console.error(`finalize ${id}: user resolution failed`, err);
+    return NextResponse.json(
+      { error: 'Database unavailable' },
+      { status: 503 },
+    );
+  }
 
   if (!process.env.SQS_QUEUE_URL) {
     return NextResponse.json(
@@ -71,11 +83,62 @@ export async function POST(
   if (!song) {
     return NextResponse.json({ error: `Song ${id} not found` }, { status: 404 });
   }
-  if (song.status !== 'pending') {
-    return NextResponse.json(
-      { error: `Song ${id} is not pending (status: ${song.status})` },
-      { status: 409 },
+
+  // The Library entry is the user-visible fact (issue #63): finalize is what
+  // the browser calls after its PUT, and it must put the Song in the
+  // uploading User's Library (nobody else's). The entry is created by
+  // POST /api/uploads; here it must ALREADY exist — a User finalizing a Song
+  // they never uploaded gets 403, and never gains membership in someone
+  // else's upload (Upload Visibility, CONTEXT.md).
+  try {
+    const owned = await getDb().query(
+      `SELECT 1 FROM library_entries WHERE user_id = $1 AND song_id = $2`,
+      [userIdentity.userId, id],
     );
+    if (owned.rowCount === 0) {
+      return NextResponse.json(
+        { error: `Song ${id} is not in your library` },
+        { status: 403 },
+      );
+    }
+  } catch (err) {
+    console.error(`finalize ${id}: library ownership check failed`, err);
+    return NextResponse.json(
+      { error: 'Database unavailable' },
+      { status: 503 },
+    );
+  }
+
+  // Short-circuit (issue #63): a Song that already finished analysis — an
+  // earlier upload of the byte-identical file — needs no new analysis job.
+  // `processing` means a job is provably in flight (finalize ran before) —
+  // idempotent no-op, not an error.
+  // `failed` is reset to `pending` and re-enqueued: a deliberate re-upload of
+  // the identical bytes is a retry (transient storage 503 / worker timeout /
+  // reaped must not bake a permanent dead-end into the content hash).
+  if (song.status === 'ready' || song.status === 'processing') {
+    const response = NextResponse.json(
+      { song_id: id, status: song.status === 'ready' ? 'ready' : 'queued' },
+      { status: song.status === 'ready' ? 200 : 202 },
+    );
+    if (userIdentity.minted) {
+      response.headers.set('Set-Cookie', userCookieHeader(userIdentity.userId));
+    }
+    return response;
+  }
+  if (song.status === 'failed') {
+    try {
+      await getDb().query(
+        `UPDATE songs SET status = 'pending', failure_reason = NULL WHERE song_id = $1`,
+        [id],
+      );
+    } catch (err) {
+      console.error(`finalize ${id}: failed-status reset failed`, err);
+      return NextResponse.json(
+        { error: 'Database unavailable' },
+        { status: 503 },
+      );
+    }
   }
 
   // Cheap existence check before enqueueing so a browser that never completed
@@ -120,8 +183,12 @@ export async function POST(
     );
   }
 
-  return NextResponse.json(
+  const response = NextResponse.json(
     { song_id: id, status: 'queued' },
     { status: 202 },
   );
+  if (userIdentity.minted) {
+    response.headers.set('Set-Cookie', userCookieHeader(userIdentity.userId));
+  }
+  return response;
 }

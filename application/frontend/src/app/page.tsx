@@ -15,7 +15,7 @@ import type { CatalogSong } from '@/components/CatalogBrowse';
 import { AudioEngine, createAudioBuffer } from '@/lib/audio';
 import { loadSongForPlayback } from '@/lib/player';
 import type { LyricLine } from '@/lib/lrc';
-import { importSong, isPlayable } from '@/lib/upload';
+import { importSong, isPlayable, removeSong } from '@/lib/upload';
 import { formatClock } from '@/lib/format';
 import type { Beat, Song, JumpEvent } from '@/lib/types';
 
@@ -57,8 +57,15 @@ export default function HomePage() {
   // Catalog tab visibility (issue #58): the browse BFF route reports the
   // server-side SOW_CATALOG_ENABLED flag per request; when off no Catalog tab
   // renders and the app is exactly today's. The tab list filters on it below.
+  // Fired only AFTER the first Library load resolves (issue #63): on a
+  // cookie-less first visit the parallel mount fetches would each hit the
+  // mint path; sequencing keeps /api/songs as the identity-establishing
+  // request (its Set-Cookie is in the jar before anything else calls the
+  // BFF).
   const [catalogEnabled, setCatalogEnabled] = useState(false);
+  const [libraryLoadedOnce, setLibraryLoadedOnce] = useState(false);
   useEffect(() => {
+    if (!libraryLoadedOnce) return;
     let cancelled = false;
     api
       .get('/api/catalog')
@@ -73,7 +80,7 @@ export default function HomePage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [libraryLoadedOnce]);
   const visibleTabs = TABS.filter((tab) => tab.id !== 'catalog' || catalogEnabled);
   const [shouldAutoplay, setShouldAutoplay] = useState(false);
   const [totalJumps, setTotalJumps] = useState(0);
@@ -101,6 +108,9 @@ export default function HomePage() {
   const [pollingSongId, setPollingSongId] = useState<string | null>(null);
   // Catalog card whose import POST is in flight (CTA spinner, #59).
   const [importingHash, setImportingHash] = useState<string | null>(null);
+  // Library row whose removal is in flight (issue #63); row button disabled
+  // until the entry delete resolves.
+  const [removingSongId, setRemovingSongId] = useState<string | null>(null);
 
   // Song id whose Analysis + audio are already loaded into the player, so a
   // library refresh does not refetch them (they are immutable once ready).
@@ -121,6 +131,7 @@ export default function HomePage() {
       const response = await api.get('/api/songs');
       const fetchedSongs: Song[] = response.data.songs || [];
       setSongs(fetchedSongs);
+      setLibraryLoadedOnce(true);
 
       if (selectedSongIdRef.current) {
         const matchingSong = fetchedSongs.find((song: Song) => song.song_id === selectedSongIdRef.current);
@@ -500,6 +511,43 @@ export default function HomePage() {
     [loadSongs],
   );
 
+  // Library removal (issue #63): delete the Library entry only — the Song
+  // row stays (invisible infrastructure). If the removed Song is the one
+  // playing, stop playback and clear the player: nothing keeps playing from
+  // a Library the user just removed it from. Catalog cards for imports flip
+  // back to "Add to Library" on the next loadSongs() since the entry is the
+  // join key (CatalogBrowse joins against the library list).
+  const handleRemoveSong = useCallback(
+    async (songId: string) => {
+      setError('');
+      setRemovingSongId(songId);
+      try {
+        await removeSong(songId);
+        if (selectedSongIdRef.current === songId) {
+          selectedSongIdRef.current = null;
+          setSelectedSongId(null);
+          setSelectedSongName(null);
+          audioEngineRef.current?.stop();
+          audioEngineRef.current = null;
+          loadedSongIdRef.current = null;
+          setSongData(null);
+          setAudioFile(null);
+          setLyrics(null);
+          setCurrentBeat(null);
+          setIsPlaying(false);
+          setIsPlaybackPending(false);
+        }
+        setSongs((prev) => prev.filter((s) => s.song_id !== songId));
+      } catch (err) {
+        console.error('Library removal failed:', err);
+        setError(err instanceof Error ? err.message : 'Failed to remove song');
+      } finally {
+        setRemovingSongId(null);
+      }
+    },
+    [],
+  );
+
   const handlePlayRandom = useCallback(() => {
     const playable = songs.filter((s) => s.status === 'ready');
     if (playable.length === 0) {
@@ -649,6 +697,10 @@ export default function HomePage() {
           {activeTab === 'library' && (
             <SongLibrary
               onSongSelect={handleSongSelect}
+              onRemove={(songId) => {
+                void handleRemoveSong(songId);
+              }}
+              removingSongId={removingSongId}
               songs={songs}
               loading={libraryLoading}
               error={libraryError}

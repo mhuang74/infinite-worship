@@ -2,26 +2,18 @@ import type { Song, SongStatus, UploadRequest, UploadTicket } from './types';
 
 /**
  * Client-side helpers for the presigned-upload flow (ADR-0002).
- * song_id = base64(filename) + '_' + sha256(contents) (CONTEXT.md), using the
- * URL-safe base64 variant the legacy backend used (app.py:
- * base64.urlsafe_b64encode(filename utf-8), ascii output — kept identical for
- * id stability).
+ * song_id = 'up_' + sha256(contents) — content-addressed (issue #63, Q5):
+ * byte-identical audio is ONE Song regardless of filename; the filename
+ * lives on as the Song title only.
  */
 
 export async function computeSongId(file: File): Promise<string> {
-  const bytes = new TextEncoder().encode(file.name);
-  let binary = '';
-  bytes.forEach((b) => {
-    binary += String.fromCharCode(b);
-  });
-  const encodedFilename = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_');
-
   const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
   const hash = Array.from(new Uint8Array(digest))
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
 
-  return `${encodedFilename}_${hash}`;
+  return `up_${hash}`;
 }
 
 /** Phases of the presign → PUT → finalize flow, for progress display. */
@@ -89,13 +81,28 @@ export async function importSong(
   return { song_id: detail.song_id, status: detail.status };
 }
 
+/** Shape of GET /api/songs and GET /api/songs/search responses. */
+interface SongsResponse {
+  songs: Song[];
+}
+
 export async function fetchSongs(): Promise<Song[]> {
   const response = await fetch('/api/songs');
   if (!response.ok) {
     const detail = await response.json().catch(() => null);
     throw new Error(detail?.error || `Request failed: ${response.status} ${response.statusText}`);
   }
-  return ((await response.json()) as { songs: Song[] }).songs;
+  const payload: SongsResponse = await response.json();
+  return payload.songs;
+}
+
+/** Remove the Song from the caller's Library (issue #63): entry delete only. */
+export async function removeSong(songId: string): Promise<void> {
+  const response = await fetch(`/api/songs/${encodeURIComponent(songId)}`, { method: 'DELETE' });
+  if (!response.ok) {
+    const detail = await response.json().catch(() => null);
+    throw new Error(detail?.error || `Request failed: ${response.status} ${response.statusText}`);
+  }
 }
 
 export function isPlayable(status: SongStatus): boolean {

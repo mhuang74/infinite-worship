@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import {
   isSowCatalogEnabled,
 } from '@/lib/sowCatalog';
+import { getDb } from '@/lib/db';
 import {
   copyRecording,
   enqueueAnalysis,
@@ -17,6 +18,7 @@ import {
   type ImportResponse,
   type ResolvedRecording,
 } from '@/lib/sowImport';
+import { ensureUser, userCookieHeader, type UserIdentity } from '@/lib/user';
 
 export const dynamic = 'force-dynamic';
 
@@ -64,6 +66,33 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
+  let userIdentity: UserIdentity;
+  try {
+    userIdentity = await ensureUser(request);
+  } catch (err) {
+    console.error('import: user resolution failed:', err);
+    return NextResponse.json({ error: 'Database unavailable' }, { status: 503 });
+  }
+
+  /** Add the Library entry for the User importing (issue #63): Import =
+   * membership, on every outcome where the Song row exists. Idempotent —
+   * re-importing a Song already in the Library is a pure no-op. */
+  const addEntry = async (songId: string): Promise<void> => {
+    await getDb().query(
+      `INSERT INTO library_entries (user_id, song_id) VALUES ($1, $2)
+       ON CONFLICT (user_id, song_id) DO NOTHING`,
+      [userIdentity.userId, songId],
+    );
+  };
+
+  /** Stamp Set-Cookie on success responses when this request minted the ID. */
+  const done = (response: NextResponse): NextResponse => {
+    if (userIdentity.minted) {
+      response.headers.set('Set-Cookie', userCookieHeader(userIdentity.userId));
+    }
+    return response;
+  };
+
   let body: ImportBody;
   try {
     body = (await request.json()) as ImportBody;
@@ -89,23 +118,30 @@ export async function POST(request: Request) {
 
   // Re-pick semantics (#54 Q6): an existing row is status-aware and a no-op
   // by default — the CTA states key off the returned status.
-  // - `ready`: nothing to do.
-  // - `pending`/`processing`: the row exists with its IW copies (copy-then-
-  //   insert guarantees it); SQS redelivery + the worker's idempotent
-  //   redelivery guard make a duplicate analysis harmless, but per #54 Q6
-  //   re-pick while analyzing is a NO-OP — except the enqueue-failed edge
-  //   (#55 decision 9 sanctions the re-enqueue there): a `pending` row whose
+  // - `ready`/`processing`: nothing to do (but the Library entry is ensured:
+  //   importing a Song someone else imported first just adds YOUR entry,
+  //   issue #63).
+  // - `pending`: the row exists with its IW copies (copy-then-insert
+  //   guarantees it); SQS redelivery + the worker's idempotent redelivery
+  //   guard make a duplicate analysis harmless, but per #54 Q6 re-pick
+  //   while analyzing is a NO-OP — except the enqueue-failed edge (#55
+  //   decision 9 sanctions the re-enqueue there): a `pending` row whose
   //   enqueue 503'd has no message in flight and would hang forever, so
   //   `pending` gets a fresh SendMessage (idempotent; the worker guard
-  //   admits redelivery). `processing` means the worker provably holds the
-  //   message → untouched.
+  //   admits redelivery).
   // - `failed`: NO auto-retry from the route (#54 Q6: retry is a separate
-  //   re-enqueue action, a follow-up ticket) — return 200 with the current
-  //   status; the card keeps rendering the failed chip + reason.
+  //   re-enqueue action, follow-up ticket) — ensure the entry + 200 with the
+  //   current status; the card keeps rendering the failed chip + reason.
   if (existingStatus === 'ready' || existingStatus === 'processing' || existingStatus === 'failed') {
     const current = existingStatus as ImportResponse['status'];
+    try {
+      await addEntry(importSongId(contentHash));
+    } catch (err) {
+      console.error(`import ${contentHash}: library entry insert failed`, err);
+      return NextResponse.json({ error: 'Failed to add song to your library' }, { status: 503 });
+    }
     const response: ImportResponse = { song_id: importSongId(contentHash), status: current };
-    return NextResponse.json(response, { status: 200 });
+    return done(NextResponse.json(response, { status: 200 }));
   }
 
   let recording: ResolvedRecording;
@@ -139,11 +175,12 @@ export async function POST(request: Request) {
       try {
         await insertImportRow(recording, 'pending');
         await markImportFailed(contentHash, `Import copy failed: ${message}`);
+        await addEntry(importSongId(contentHash));
         const response: ImportResponse = {
           song_id: importSongId(contentHash),
           status: 'failed',
         };
-        return NextResponse.json(response, { status: 200 });
+        return done(NextResponse.json(response, { status: 200 }));
       } catch (dbErr) {
         console.error(`import ${contentHash}: failed-row write also failed`, dbErr);
         return NextResponse.json({ error: 'Import copy failed' }, { status: 502 });
@@ -171,20 +208,22 @@ export async function POST(request: Request) {
       if (existingStatus) {
         await promoteToReady(contentHash);
       }
+      await addEntry(importSongId(contentHash));
       const response: ImportResponse = {
         song_id: importSongId(contentHash),
         status: 'ready',
       };
-      return NextResponse.json(response, { status: 200 });
+      return done(NextResponse.json(response, { status: 200 }));
     }
 
     await insertImportRow(recording, 'pending');
     await enqueueAnalysis(importSongId(contentHash));
+    await addEntry(importSongId(contentHash));
     const response: ImportResponse = {
       song_id: importSongId(contentHash),
       status: 'pending',
     };
-    return NextResponse.json(response, { status: 202 });
+    return done(NextResponse.json(response, { status: 202 }));
   } catch (err) {
     console.error(`import ${contentHash}: insert/enqueue failed`, err);
     return NextResponse.json({ error: 'Failed to import recording' }, { status: 503 });
