@@ -233,7 +233,11 @@ export default function HomePage() {
             setIsPlaybackPending(false);
           };
 
-          audioEngineRef.current = new AudioEngine(audioContextRef.current, audioBuffer, songData.segments, onBeatChange, onJump, onPlaybackStarted);
+          // Lyrics are an immutable engine input (issue #69): known before the
+          // engine exists (the loader sets them in the same batched update as
+          // songData/audioFile, so this effect's closure already has the value
+          // belonging to the loaded Song) — no setter.
+          audioEngineRef.current = new AudioEngine(audioContextRef.current, audioBuffer, songData.segments, onBeatChange, onJump, onPlaybackStarted, lyrics);
 
           // Set initial state
           setCurrentBeat(songData.segments[0]);
@@ -264,7 +268,7 @@ export default function HomePage() {
     return () => {
       audioEngineRef.current?.stop();
     };
-  }, [audioFile, songData]);
+  }, [audioFile, songData, lyrics]);
 
   // Effect to fetch song data when a song is selected from the library.
   // Serverless stack (issue #22): load the Analysis JSON + audio blob directly

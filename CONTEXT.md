@@ -63,3 +63,7 @@ _Avoid_: song hash, file hash (ambiguous with Song ID)
 **Lyrics**:
 Time-synced lyric lines for a Song's original linear recording, displayed one line at a time during playback, following the source position of the audio currently sounding — so they remain correct across jumps. Only Songs whose catalog recording has curated Lyrics are offered from the SOW Song Catalog.
 _Avoid_: LRC (storage format), karaoke overlay
+
+**Line Boundary**:
+The moment a Lyrics line begins on the source recording. All parsed line times count as Line Boundaries — including Gap Placeholder lines with empty text. The Player's automatic jumps are lyric-aligned: a jump's cut and its landing coincide with Line Boundaries (within the alignment windows), while instrumental stretches — intro, mid-song break, outro — jump freely as before.
+_Avoid_: lyric timestamp, line start time

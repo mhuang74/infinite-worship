@@ -1,10 +1,53 @@
 
 import { Beat, JumpEvent } from './types';
+import { LyricLine } from './lrc';
 
 export const createAudioBuffer = async (file: File, audioContext: AudioContext): Promise<AudioBuffer> => {
   const arrayBuffer = await file.arrayBuffer();
   return audioContext.decodeAudioData(arrayBuffer);
 };
+
+/**
+ * Estimate the leading-silence offset δ between the worker's trimmed analysis
+ * timeline (beat `start` values, `remixatron.py` `librosa.effects.trim`) and
+ * the original recording (LRC line times, the full decoded buffer the player
+ * plays). δ = the time of the first frame whose max |sample| exceeds the
+ * global peak by −60 dB — approximating the trim's default `top_db=60`
+ * frame-RMS trim — scanned over 1024-sample frames with a 512-sample hop
+ * (channel 0 is enough). Frame accuracy ≈23 ms at 44.1 kHz, an order of
+ * magnitude inside the 500 ms alignment windows. Returns 0 for exact-zero and
+ * all-silence buffers (degenerate); trailing silence does not shift beat
+ * starts and is ignored. Alignment-only: playback timing never uses δ.
+ */
+export function estimateLeadingSilenceOffset(audioBuffer: AudioBuffer): number {
+  const data = audioBuffer.getChannelData(0);
+  const frame = 1024;
+  const hop = 512;
+  const sampleRate = audioBuffer.sampleRate;
+  let peak = 0;
+  // Strided pass over frame maxima: peak = max frame max (the global peak can
+  // only be ≥ any frame max, and a frame max > 0 implies the global peak > 0).
+  const frameMaxes: number[] = [];
+  for (let offset = 0; offset + frame <= data.length; offset += hop) {
+    let m = 0;
+    for (let i = offset; i < offset + frame; i++) {
+      const a = Math.abs(data[i]);
+      if (a > m) m = a;
+    }
+    frameMaxes.push(m);
+    if (m > peak) peak = m;
+  }
+  if (peak === 0) {
+    return 0; // exact zero or all-silence degenerate
+  }
+  const threshold = peak * Math.pow(10, -60 / 20); // global peak − 60 dB
+  for (let f = 0; f < frameMaxes.length; f++) {
+    if (frameMaxes[f] > threshold) {
+      return f * hop / sampleRate;
+    }
+  }
+  return 0; // content never exceeds the threshold (pure near-silence noise)
+}
 
 export class AudioEngine {
   private audioContext: AudioContext;
@@ -28,18 +71,74 @@ export class AudioEngine {
   private uiTimers = new Map<number, number>();
   private nextUiSeq = 0;
   private pendingJump: JumpEvent | undefined;
+  // Lyric alignment (issue #69): immutable Lyrics; null short-circuits every
+  // predicate so uploads behave exactly as before the feature existed.
+  private lyrics: LyricLine[] | null;
+  private lineTimes: number[] = [];
+  private lineExtent = 0;
+  private entryWindowMs = 500;
+  private exitWindowMs = 500;
+  private timelineOffsetSec = 0;
 
-  constructor(audioContext: AudioContext, audioBuffer: AudioBuffer, beats: Beat[], onBeatChange: (beat: Beat) => void, onJump: (jump: JumpEvent) => void, onPlaybackStarted?: () => void) {
+  constructor(
+    audioContext: AudioContext,
+    audioBuffer: AudioBuffer,
+    beats: Beat[],
+    onBeatChange: (beat: Beat) => void,
+    onJump: (jump: JumpEvent) => void,
+    onPlaybackStarted?: () => void,
+    lyrics: LyricLine[] | null = null
+  ) {
     this.audioContext = audioContext;
     this.audioBuffer = audioBuffer;
     this.beats = beats;
     this.onBeatChange = onBeatChange;
     this.onJump = onJump;
     this.onPlaybackStarted = onPlaybackStarted || null;
+    this.lyrics = lyrics;
     this.mainGain = this.audioContext.createGain();
     this.mainGain.connect(this.audioContext.destination);
     this.epochGain = this.audioContext.createGain();
     this.epochGain.connect(this.mainGain);
+    this.prepareLyricAlignment();
+  }
+
+  /**
+   * Precompute every lyric-alignment constant once at construction (issue #69
+   * spec Part 1): sorted line times, the LRC's own estimate of line duration
+   * (median consecutive gap, capped at 8 s so a sparse LRC cannot
+   * blanket-cover the song), the beat-scaled entry window (a fixed 0.5 s is
+   * narrower than the beat grid on slow worship songs and would starve half
+   * the Line Boundaries as landings), the fixed 0.5 s exit window, and the
+   * leading-silence offset δ between the worker's trimmed timeline and the
+   * original recording the LRC timestamps live on. Line times are compared
+   * against beats as `beat.start + δ`. All lookups later are binary searches
+   * — O(log n), no allocation, safe inside the 25 ms scheduling loop.
+   * `lyrics === null` (uploads, LRC failures) short-circuits: no predicates,
+   * no offset scan, behavior identical to a lyric-less engine.
+   */
+  private prepareLyricAlignment(): void {
+    if (!this.lyrics || this.lyrics.length < 2) {
+      this.lyrics = null;
+      return;
+    }
+    this.lineTimes = this.lyrics.map(l => l.time);
+    const gaps: number[] = [];
+    for (let i = 1; i < this.lineTimes.length; i++) {
+      gaps.push(this.lineTimes[i] - this.lineTimes[i - 1]);
+    }
+    gaps.sort((a, b) => a - b);
+    const medianLineGap = gaps[Math.floor((gaps.length - 1) / 2)];
+    // Both in seconds: the 8 s cap keeps a sparse LRC (few section-marker
+    // lines, huge gaps) from blanket-covering the whole song.
+    this.lineExtent = Math.min(medianLineGap, 8);
+    const durations = this.beats.map(b => b.duration).sort((a, b) => a - b);
+    const medianBeatDuration = durations[Math.floor((durations.length - 1) / 2)];
+    this.entryWindowMs = Math.max(500, 1000 * medianBeatDuration);
+    this.timelineOffsetSec = estimateLeadingSilenceOffset(this.audioBuffer);
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`[lyric-align] leading-silence offset δ = ${(this.timelineOffsetSec * 1000).toFixed(1)} ms`);
+    }
   }
 
   /**
@@ -403,6 +502,95 @@ export class AudioEngine {
     }
   }
 
+  /**
+   * Binary search: the index of the last line time ≤ `t`, or −1. Mirrors
+   * `lyricAt`'s lo/hi walk in lrc.ts — O(log n), no allocation.
+   */
+  private lineIndexAtOrBefore(t: number): number {
+    let lo = 0;
+    let hi = this.lineTimes.length - 1;
+    let found = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (this.lineTimes[mid] <= t) {
+        found = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    return found;
+  }
+
+  /**
+   * A moment `m` on the TRIMMED analysis timeline is lyric-covered iff, on the
+   * original recording (`m + δ`), it lies within
+   * `[l − exitWindow, l + lineExtent]` of some line time `l` (issue #69 Part
+   * 2). Sung lines and their musical tails are covered; intro, mid-song
+   * instrumental breaks, and the true outro (past the final line's extent) are
+   * not — uncovered moments jump freely, exactly as a lyric-less song does.
+   */
+  private isLyricCovered(m: number): boolean {
+    if (this.lyrics === null) {
+      return false;
+    }
+    const t = m + this.timelineOffsetSec;
+    const exitSec = this.exitWindowMs / 1000;
+    const i = this.lineIndexAtOrBefore(t + exitSec); // latest line that could cover t
+    return i !== -1 && t <= this.lineTimes[i] + this.lineExtent;
+  }
+
+  /**
+   * A covered landing beat with source start `bs` is lyric-clean iff it starts
+   * at or just-before a Line Boundary: `bs + δ ∈ [l − entryWindow, l]` for
+   * some line `l`. A just-after landing would play the previous line's tail
+   * with no beginning. Uncovered landings are instrumental — always clean.
+   */
+  private isEntryClean(bs: number): boolean {
+    if (this.lyrics === null) {
+      return true;
+    }
+    if (!this.isLyricCovered(bs)) {
+      return true;
+    }
+    const t = bs + this.timelineOffsetSec;
+    const entrySec = this.entryWindowMs / 1000;
+    // First line AT OR AFTER t (lower bound): the boundary the landing sits at
+    // or just-before. t ≤ l must hold; l − t ≤ entry makes it "just before".
+    let lo = 0;
+    let hi = this.lineTimes.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (this.lineTimes[mid] < t) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    return lo < this.lineTimes.length && this.lineTimes[lo] - t <= entrySec;
+  }
+
+  /**
+   * A covered exit moment `m` (a beat's `start + duration`) is lyric-clean iff
+   * it sits within the fixed exit window of some Line Boundary — just-started
+   * and about-to-start cuts are both acceptable; only deep mid-line cuts are
+   * suppressed. Uncovered exits are instrumental — always clean.
+   */
+  private isExitClean(m: number): boolean {
+    if (this.lyrics === null) {
+      return true;
+    }
+    if (!this.isLyricCovered(m)) {
+      return true;
+    }
+    const t = m + this.timelineOffsetSec;
+    const exitSec = this.exitWindowMs / 1000;
+    const i = this.lineIndexAtOrBefore(t + exitSec);
+    // i = latest line that could satisfy t ≥ l − exit; the remaining bound is
+    // t ≤ l + exit (about-to-start side).
+    return i !== -1 && t <= this.lineTimes[i] + exitSec;
+  }
+
   private getJumpCandidate(beat: Beat): Beat | null {
     if (!beat.jump_candidates || beat.jump_candidates.length === 0) {
       console.log(`No jump candidates available for beat ${beat.id}.`);
@@ -410,11 +598,22 @@ export class AudioEngine {
     }
 
     const currentIndex = this.beats.indexOf(beat);
+
+    // Exit gate first (issue #69 Part 3): if this attempt's own exit cuts
+    // mid-line, suppress before the roulette — no random draw is consumed and
+    // the caller's fall-through keeps beatsSinceLastJump counting.
+    if (!this.isExitClean(beat.start + beat.duration)) {
+      return null;
+    }
+
     const validCandidates = beat.jump_candidates.filter(beatId => {
       const candidateBeat = this.beats.find(b => b.id === beatId);
       if (!candidateBeat) return false;
       const candidateIndex = this.beats.indexOf(candidateBeat);
-      return Math.abs(candidateIndex - currentIndex) >= 16;
+      if (Math.abs(candidateIndex - currentIndex) < 16) return false;
+      // Lyric alignment: the landing must start at/just-before a Line
+      // Boundary (or be instrumental). Unfiltered when lyrics are null.
+      return this.isEntryClean(candidateBeat.start);
     });
 
     if (validCandidates.length === 0) {
