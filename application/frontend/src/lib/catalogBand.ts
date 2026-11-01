@@ -4,4 +4,4 @@
  * SQL filter (src/lib/sowCatalog.ts) and the Catalog tab's chip/filter
  * (src/components/CatalogBrowse.tsx) so the two cannot drift.
  */
-export const SOW_CATALOG_BPM_BAND = Object.freeze({ min: 60, max: 100 });
+export const IW_CATALOG_BPM_BAND = Object.freeze({ min: 60, max: 100 });

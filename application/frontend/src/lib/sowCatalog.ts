@@ -1,6 +1,6 @@
 import { Pool } from 'pg';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
-import { SOW_CATALOG_BPM_BAND } from '@/lib/catalogBand';
+import { IW_CATALOG_BPM_BAND } from '@/lib/catalogBand';
 
 /**
  * Server-only access to the SOW Song Catalog (Stream of Worship's Neon
@@ -12,8 +12,8 @@ import { SOW_CATALOG_BPM_BAND } from '@/lib/catalogBand';
  * *reference*, not a playable URL — playback uses IW's own copied object.
  *
  * Env vars (server-side only, never NEXT_PUBLIC):
- * - SOW_CATALOG_DATABASE_URL — SOW Neon read-role connection string.
- * - SOW_CATALOG_ENABLED — server-side feature flag, read per request (a
+ * - IW_CATALOG_DATABASE_URL — SOW Neon read-role connection string.
+ * - IW_CATALOG_ENABLED — server-side feature flag, read per request (a
  *   NEXT_PUBLIC_ var would be build-time inlined: flipping it in the Vercel
  *   dashboard would no-op until a redeploy — #56 amendment).
  *
@@ -54,9 +54,9 @@ let sowPool: Pool | null = null;
 
 function getSowDb(): Pool {
   if (!sowPool) {
-    const connectionString = process.env.SOW_CATALOG_DATABASE_URL;
+    const connectionString = process.env.IW_CATALOG_DATABASE_URL;
     if (!connectionString) {
-      throw new Error('Missing required env var: SOW_CATALOG_DATABASE_URL');
+      throw new Error('Missing required env var: IW_CATALOG_DATABASE_URL');
     }
     sowPool = new Pool({
       connectionString,
@@ -69,7 +69,7 @@ function getSowDb(): Pool {
 
 /** Server-side feature flag, evaluated per request (never build-time-inlined). */
 export function isSowCatalogEnabled(): boolean {
-  return process.env.SOW_CATALOG_ENABLED === 'true';
+  return process.env.IW_CATALOG_ENABLED === 'true';
 }
 
 /** Worker MAX_SONG_SECONDS (#50): never offer an import that would fail. */
@@ -77,7 +77,7 @@ const MAX_DURATION_SECONDS = 600;
 export { MAX_DURATION_SECONDS };
 
 // The curation rule (#50): SOW's own playability gate + curated synced lyrics
-// + the BPM band (SOW_CATALOG_BPM_BAND in catalogBand.ts, calibrated against
+// + the BPM band (IW_CATALOG_BPM_BAND in catalogBand.ts, calibrated against
 // the staging distribution — 442 eligible recordings: min 58.7, p25 66.3,
 // p75 99.4, max 143.6; 60–100 keeps 346 and excludes the sub-60
 // half-time/tempo-detection artifacts) + the duration ceiling, so a user
@@ -199,8 +199,8 @@ function firstDbLyricLine(lyricsLines: string | null): string | null {
 }
 
 async function fetchLrcFirstLines(hashPrefixes: string[]): Promise<Record<string, string | null>> {
-  const endpoint = process.env.SOW_CATALOG_R2_ENDPOINT_URL;
-  const bucket = process.env.SOW_CATALOG_R2_BUCKET;
+  const endpoint = process.env.IW_CATALOG_R2_ENDPOINT_URL;
+  const bucket = process.env.IW_CATALOG_R2_BUCKET;
   const result: Record<string, string | null> = {};
   if (!endpoint || !bucket) {
     // Without R2 creds the preview falls back to the DB lyric lines.
@@ -211,8 +211,8 @@ async function fetchLrcFirstLines(hashPrefixes: string[]): Promise<Record<string
     region: 'auto',
     endpoint,
     credentials: {
-      accessKeyId: process.env.SOW_CATALOG_R2_ACCESS_KEY_ID ?? '',
-      secretAccessKey: process.env.SOW_CATALOG_R2_SECRET_ACCESS_KEY ?? '',
+      accessKeyId: process.env.IW_CATALOG_R2_ACCESS_KEY_ID ?? '',
+      secretAccessKey: process.env.IW_CATALOG_R2_SECRET_ACCESS_KEY ?? '',
     },
   });
   await Promise.all(
@@ -267,8 +267,8 @@ export async function getCatalog(): Promise<CatalogSong[]> {
 
   const db = getSowDb();
   const result = await db.query<CatalogRow>(CATALOG_SQL, [
-    SOW_CATALOG_BPM_BAND.min,
-    SOW_CATALOG_BPM_BAND.max,
+    IW_CATALOG_BPM_BAND.min,
+    IW_CATALOG_BPM_BAND.max,
     MAX_DURATION_SECONDS,
   ]);
   const rows = result.rows;

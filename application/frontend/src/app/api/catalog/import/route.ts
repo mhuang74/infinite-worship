@@ -52,8 +52,8 @@ export const dynamic = 'force-dynamic';
  * A copy is never followed by a `ready` row without its own IW copies
  * (fast path copies first, insert second — playback must not 404).
  *
- * Env: SOW_CATALOG_ENABLED (server-side flag, per request), the
- * SOW_CATALOG_* / SOW_IMPORT_R2_* credentials — see src/lib/sowImport.ts.
+ * Env: IW_CATALOG_ENABLED (server-side flag, per request), the
+ * IW_CATALOG_* / IW_IMPORT_R2_* credentials — see src/lib/sowImport.ts.
  */
 
 /** Body of the request the Catalog card's Import CTA sends. */
