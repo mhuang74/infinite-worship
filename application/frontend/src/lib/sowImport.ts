@@ -4,7 +4,7 @@ import {
   CopyObjectCommand,
 } from '@aws-sdk/client-s3';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
-import { SOW_CATALOG_BPM_BAND } from '@/lib/catalogBand';
+import { IW_CATALOG_BPM_BAND } from '@/lib/catalogBand';
 import { MAX_DURATION_SECONDS } from '@/lib/sowCatalog';
 import { getR2Config, r2HeadObject } from '@/lib/r2';
 
@@ -20,16 +20,16 @@ import { getR2Config, r2HeadObject } from '@/lib/r2';
  * src/lib/sowCatalog.ts (the Import component).
  *
  * Env vars (server-side only, never NEXT_PUBLIC):
- * - SOW_CATALOG_ENABLED — feature flag, read per request by the route
+ * - IW_CATALOG_ENABLED — feature flag, read per request by the route
  *   (#56: NOT NEXT_PUBLIC_, which Next.js would inline at build so a
  *   dashboard flip would no-op until a redeploy).
- * - SOW_CATALOG_DATABASE_URL — SOW Neon read-role connection string.
- * - SOW_IMPORT_R2_ENDPOINT_URL — R2 S3 endpoint for the dual-scope token
+ * - IW_CATALOG_DATABASE_URL — SOW Neon read-role connection string.
+ * - IW_IMPORT_R2_ENDPOINT_URL — R2 S3 endpoint for the dual-scope token
  *   (minted in the env ticket: Read on stream-of-worship + Read/Write on
  *   infinite-worship-media; the S3 probes in that ticket verified both
  *   scopes and that SOW PUT stays AccessDenied).
- * - SOW_IMPORT_R2_BUCKET — IW's own bucket name (copy destination).
- * - SOW_IMPORT_R2_ACCESS_KEY_ID / SOW_IMPORT_R2_SECRET_ACCESS_KEY — the
+ * - IW_IMPORT_R2_BUCKET — IW's own bucket name (copy destination).
+ * - IW_IMPORT_R2_ACCESS_KEY_ID / IW_IMPORT_R2_SECRET_ACCESS_KEY — the
  *   dual-scope token's S3 credentials.
  * - SQS_QUEUE_URL, AWS_REGION, SQS_ENDPOINT — same enqueue wiring as
  *   finalize (SQS_ENDPOINT is the localstack override for emulator runs).
@@ -97,9 +97,9 @@ let sowDbPool: Pool | null = null;
 
 function getSowImportDb(): Pool {
   if (!sowDbPool) {
-    const connectionString = process.env.SOW_CATALOG_DATABASE_URL;
+    const connectionString = process.env.IW_CATALOG_DATABASE_URL;
     if (!connectionString) {
-      throw new Error('Missing required env var: SOW_CATALOG_DATABASE_URL');
+      throw new Error('Missing required env var: IW_CATALOG_DATABASE_URL');
     }
     sowDbPool = new Pool({
       connectionString,
@@ -120,34 +120,34 @@ function importEnv(): { endpoint: string; bucket: string; accessKeyId: string; s
   const env = process.env;
   const missing = (
     [
-      ['SOW_IMPORT_R2_ENDPOINT_URL', env.SOW_IMPORT_R2_ENDPOINT_URL],
-      ['SOW_IMPORT_R2_BUCKET', env.SOW_IMPORT_R2_BUCKET],
-      ['SOW_IMPORT_R2_ACCESS_KEY_ID', env.SOW_IMPORT_R2_ACCESS_KEY_ID],
-      ['SOW_IMPORT_R2_SECRET_ACCESS_KEY', env.SOW_IMPORT_R2_SECRET_ACCESS_KEY],
+      ['IW_IMPORT_R2_ENDPOINT_URL', env.IW_IMPORT_R2_ENDPOINT_URL],
+      ['IW_IMPORT_R2_BUCKET', env.IW_IMPORT_R2_BUCKET],
+      ['IW_IMPORT_R2_ACCESS_KEY_ID', env.IW_IMPORT_R2_ACCESS_KEY_ID],
+      ['IW_IMPORT_R2_SECRET_ACCESS_KEY', env.IW_IMPORT_R2_SECRET_ACCESS_KEY],
     ] as const
   )
     .filter((pair) => !pair[1])
     .map((pair) => pair[0]);
   if (missing.length > 0) {
-    throw new Error(`Missing required SOW_IMPORT_R2_* env vars: ${missing.join(', ')}`);
+    throw new Error(`Missing required IW_IMPORT_R2_* env vars: ${missing.join(', ')}`);
   }
   // Presence validated above; assemble the typed snapshot from the checked
   // keys (env vars are outside the compiler's reach — the missing-list above
   // is the runtime validation for exactly these four names).
   const snapshot: Record<
-    'SOW_IMPORT_R2_ENDPOINT_URL' | 'SOW_IMPORT_R2_BUCKET' | 'SOW_IMPORT_R2_ACCESS_KEY_ID' | 'SOW_IMPORT_R2_SECRET_ACCESS_KEY',
+    'IW_IMPORT_R2_ENDPOINT_URL' | 'IW_IMPORT_R2_BUCKET' | 'IW_IMPORT_R2_ACCESS_KEY_ID' | 'IW_IMPORT_R2_SECRET_ACCESS_KEY',
     string
   > = {
-    SOW_IMPORT_R2_ENDPOINT_URL: env.SOW_IMPORT_R2_ENDPOINT_URL as string,
-    SOW_IMPORT_R2_BUCKET: env.SOW_IMPORT_R2_BUCKET as string,
-    SOW_IMPORT_R2_ACCESS_KEY_ID: env.SOW_IMPORT_R2_ACCESS_KEY_ID as string,
-    SOW_IMPORT_R2_SECRET_ACCESS_KEY: env.SOW_IMPORT_R2_SECRET_ACCESS_KEY as string,
+    IW_IMPORT_R2_ENDPOINT_URL: env.IW_IMPORT_R2_ENDPOINT_URL as string,
+    IW_IMPORT_R2_BUCKET: env.IW_IMPORT_R2_BUCKET as string,
+    IW_IMPORT_R2_ACCESS_KEY_ID: env.IW_IMPORT_R2_ACCESS_KEY_ID as string,
+    IW_IMPORT_R2_SECRET_ACCESS_KEY: env.IW_IMPORT_R2_SECRET_ACCESS_KEY as string,
   };
   return {
-    endpoint: snapshot.SOW_IMPORT_R2_ENDPOINT_URL,
-    bucket: snapshot.SOW_IMPORT_R2_BUCKET,
-    accessKeyId: snapshot.SOW_IMPORT_R2_ACCESS_KEY_ID,
-    secretAccessKey: snapshot.SOW_IMPORT_R2_SECRET_ACCESS_KEY,
+    endpoint: snapshot.IW_IMPORT_R2_ENDPOINT_URL,
+    bucket: snapshot.IW_IMPORT_R2_BUCKET,
+    accessKeyId: snapshot.IW_IMPORT_R2_ACCESS_KEY_ID,
+    secretAccessKey: snapshot.IW_IMPORT_R2_SECRET_ACCESS_KEY,
   };
 }
 
@@ -190,8 +190,8 @@ export type ResolvedRecording = SowRecording | null;
 export async function resolveRecording(contentHash: string): Promise<ResolvedRecording> {
   const result = await getSowImportDb().query<SowRecording>(PICK_SQL, [
     contentHash,
-    SOW_CATALOG_BPM_BAND.min,
-    SOW_CATALOG_BPM_BAND.max,
+    IW_CATALOG_BPM_BAND.min,
+    IW_CATALOG_BPM_BAND.max,
     MAX_DURATION_SECONDS,
   ]);
   return result.rows[0] ?? null;
@@ -228,9 +228,9 @@ export async function copyRecording(recording: SowRecording): Promise<void> {
   // Source bucket comes from env (the catalog-read client's bucket, which
   // the dual-scope token provably has Read on — #57 probes). Never a
   // literal: dev/MinIO and staging→prod swap must both work.
-  const sourceBucket = process.env.SOW_CATALOG_R2_BUCKET;
+  const sourceBucket = process.env.IW_CATALOG_R2_BUCKET;
   if (!sourceBucket) {
-    throw new Error('Missing required env var: SOW_CATALOG_R2_BUCKET');
+    throw new Error('Missing required env var: IW_CATALOG_R2_BUCKET');
   }
   const copies = [
     { key: `${recording.hash_prefix}/audio.mp3`, destination: `media/${songId}` },

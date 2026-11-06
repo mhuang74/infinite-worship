@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import type React from 'react';
 import api from '@/lib/api';
 import { formatClock } from '@/lib/format';
-import { SOW_CATALOG_BPM_BAND } from '@/lib/catalogBand';
+import { IW_CATALOG_BPM_BAND } from '@/lib/catalogBand';
 import type { Song } from '@/lib/types';
 
 /**
@@ -21,8 +21,8 @@ import type { Song } from '@/lib/types';
  * bar) → Play / failed chip with reason.
  */
 
-const BPM_BAND_MIN = SOW_CATALOG_BPM_BAND.min;
-const BPM_BAND_MAX = SOW_CATALOG_BPM_BAND.max;
+const BPM_BAND_MIN = IW_CATALOG_BPM_BAND.min;
+const BPM_BAND_MAX = IW_CATALOG_BPM_BAND.max;
 
 export interface CatalogSong {
   song_id: string;

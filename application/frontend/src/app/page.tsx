@@ -55,7 +55,7 @@ export default function HomePage() {
   // Library filter text; lives here so switching tabs and back keeps it.
   const [libraryFilter, setLibraryFilter] = useState('');
   // Catalog tab visibility (issue #58): the browse BFF route reports the
-  // server-side SOW_CATALOG_ENABLED flag per request; when off no Catalog tab
+  // server-side IW_CATALOG_ENABLED flag per request; when off no Catalog tab
   // renders and the app is exactly today's. The tab list filters on it below.
   // Fired only AFTER the first Library load resolves (issue #63): on a
   // cookie-less first visit the parallel mount fetches would each hit the
