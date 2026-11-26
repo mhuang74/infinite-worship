@@ -761,6 +761,8 @@ Three phases per run:
    `aws lambda wait function-updated`, then a final `terraform apply` with
    `-var worker_image_uri=<pushed URI>` so state pins the new tag.
 
+The registry is private ECR (`infinite-worship-worker`, `us-west-2`), not GHCR: Lambda pulls container images from ECR with the function's execution role (`EcrPull` in `infra/worker.tf`), and Terraform owns the repo lifecycle — see ADR-0004. The legacy Flask/compose stack was the only user of public ECR (`public.ecr.aws/u4p9h6o7/mhuang74/infinite-worship`, 16 images awaiting deletion); the serverless stack's only app image is the worker in private ECR.
+
 The frontend is **not** deployed here — Vercel's git integration owns it.
 
 ## Phase 6 — Vercel (frontend + BFF)
